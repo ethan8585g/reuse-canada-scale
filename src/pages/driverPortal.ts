@@ -47,8 +47,8 @@ export function renderDriverPortal(): string {
             <a href="#" onclick="showDriverTab('scaletickets')" id="nav-scaletickets" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-green-100 hover:bg-white/10 transition-colors text-sm">
               <i class="fas fa-weight w-5 text-center"></i> Scale Tickets
             </a>
-            <a href="/employee/field-form" id="nav-fieldform" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-green-100 hover:bg-white/10 transition-colors text-sm">
-              <i class="fas fa-tablet-alt w-5 text-center"></i> iPad Field Form
+            <a href="/employee/field-form?from=driver" id="nav-fieldform" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-green-100 hover:bg-white/10 transition-colors text-sm">
+              <i class="fas fa-camera w-5 text-center"></i> Field Form
             </a>
           </div>
         </nav>
@@ -163,8 +163,8 @@ export function renderDriverPortal(): string {
               <h2 class="font-bold text-gray-800"><i class="fas fa-weight text-rc-orange mr-2"></i> Scale Tickets</h2>
               <div class="flex items-center gap-2">
                 <button onclick="loadDriverScaleTickets()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-sync-alt"></i></button>
-                <a href="/employee/field-form" class="px-3 py-1.5 bg-rc-orange text-white text-sm font-semibold rounded-lg hover:bg-rc-orange-light transition-all">
-                  <i class="fas fa-plus mr-1"></i> New (iPad Form)
+                <a href="/employee/field-form?from=driver" class="px-3 py-1.5 bg-rc-orange text-white text-sm font-semibold rounded-lg hover:bg-rc-orange-light transition-all">
+                  <i class="fas fa-plus mr-1"></i> New Field Form
                 </a>
               </div>
             </div>
@@ -397,8 +397,8 @@ export function renderDriverPortal(): string {
                 <i class="fas fa-check"></i> Done
               </button>
             \` : ''}
-            <a href="/employee/field-form?pickup_id=\${p.id}" class="px-3 py-2 bg-blue-100 text-blue-700 text-sm font-semibold rounded-lg hover:bg-blue-200 text-center">
-              <i class="fas fa-tablet-alt"></i>
+            <a href="/employee/field-form?pickup_id=\${p.id}&from=driver" class="px-3 py-2 bg-blue-100 text-blue-700 text-sm font-semibold rounded-lg hover:bg-blue-200 text-center">
+              <i class="fas fa-camera"></i>
             </a>
           </div>
         </div>

@@ -81,8 +81,8 @@ export function employeeSidebar(activePage: string): string {
               ? 'bg-rc-orange/30 text-white border-r-4 border-rc-orange font-semibold' 
               : 'text-orange-200/70 hover:bg-rc-orange/20 hover:text-white'
           }">
-          <i class="fas fa-tablet-alt w-5 text-center"></i>
-          <span>Field Form (iPad)</span>
+          <i class="fas fa-camera w-5 text-center"></i>
+          <span>Field Form</span>
         </a>
       </nav>
 

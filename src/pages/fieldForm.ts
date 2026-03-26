@@ -6,7 +6,7 @@ export function renderFieldForm(): string {
     <!-- Top Bar (iPad optimized) -->
     <div class="bg-rc-green text-white px-4 py-3 flex items-center justify-between sticky top-0 z-40 shadow-lg">
       <div class="flex items-center gap-3">
-        <a href="/employee/dashboard" class="text-white/80 hover:text-white"><i class="fas fa-arrow-left text-lg"></i></a>
+        <a href="#" onclick="goBack(); return false;" class="text-white/80 hover:text-white"><i class="fas fa-arrow-left text-lg"></i></a>
         <div>
           <div class="font-bold text-lg">Field Pickup Form</div>
           <div class="text-xs text-green-200">Reuse Canada Tire Pickup</div>
@@ -211,7 +211,7 @@ export function renderFieldForm(): string {
           <div class="space-y-3">
             <p class="text-sm text-gray-500">Complete the scale ticket at the yard with weight-in / weight-out</p>
             <div class="flex gap-3 mt-4">
-              <a href="/employee/scale-tickets" class="flex-1 bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl transition-all text-center">
+              <a href="#" onclick="goToTicketsAfterSubmit(); return false;" class="flex-1 bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl transition-all text-center">
                 <i class="fas fa-weight mr-1"></i> Go to Scale Tickets
               </a>
               <button onclick="resetForm()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-all">
@@ -257,9 +257,20 @@ export function renderFieldForm(): string {
     let isDrawing = false;
     let hasSigned = false;
 
-    // Get pickup_id from URL if coming from pickup management
+    // Get URL params
     const urlParams = new URLSearchParams(window.location.search);
     const pickupId = urlParams.get('pickup_id');
+    const cameFrom = urlParams.get('from');
+
+    // Smart back navigation: drivers go to driver portal, everyone else to employee dashboard
+    function goBack() {
+      const sess = JSON.parse(localStorage.getItem('rc_session') || '{}');
+      if (cameFrom === 'driver' || sess.role === 'driver') {
+        window.location.href = '/driver/portal';
+      } else {
+        window.location.href = '/employee/dashboard';
+      }
+    }
 
     // Update time
     function updateTime() {
@@ -509,6 +520,16 @@ export function renderFieldForm(): string {
       document.getElementById('camera-input').value = '';
       document.getElementById('gallery-input').value = '';
       updateStepIndicator(1);
+    }
+
+    // Navigate to appropriate tickets page after submission
+    function goToTicketsAfterSubmit() {
+      const sess = JSON.parse(localStorage.getItem('rc_session') || '{}');
+      if (cameFrom === 'driver' || sess.role === 'driver') {
+        window.location.href = '/driver/portal';
+      } else {
+        window.location.href = '/employee/scale-tickets';
+      }
     }
 
     // If coming from a pickup, pre-fill customer info

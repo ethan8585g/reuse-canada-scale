@@ -15,6 +15,11 @@ export function renderScaleHouse(): string {
           <span id="scale-status-text" class="text-sm text-red-600 font-medium">Disconnected</span>
         </div>
         <div class="w-px h-6 bg-gray-200"></div>
+        <!-- Connection Mode Badge -->
+        <div id="connection-mode-badge" class="hidden px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600">
+          <i class="fas fa-plug mr-1"></i> <span id="connection-mode-text">—</span>
+        </div>
+        <div class="w-px h-6 bg-gray-200"></div>
         <!-- Live Weight -->
         <div class="flex items-center gap-2">
           <i class="fas fa-weight text-rc-orange"></i>
@@ -23,17 +28,32 @@ export function renderScaleHouse(): string {
           <span id="weight-stable" class="hidden px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full">STABLE</span>
         </div>
       </div>
-      <div class="flex items-center gap-2">
-        <button onclick="connectScale()" id="btn-connect-scale" class="px-4 py-2 bg-rc-green text-white text-sm font-semibold rounded-lg hover:bg-rc-green-light transition-all flex items-center gap-2">
-          <i class="fab fa-bluetooth-b"></i> Connect Apex Scale
+      <div class="flex items-center gap-2 flex-wrap">
+        <!-- USB Serial Connect (primary — hardwired) -->
+        <button onclick="connectUSBSerial()" id="btn-connect-usb" class="px-4 py-2 bg-rc-green text-white text-sm font-semibold rounded-lg hover:bg-rc-green-light transition-all flex items-center gap-2">
+          <i class="fas fa-usb"></i> USB / Serial
         </button>
+        <!-- Bluetooth Connect (secondary — wireless) -->
+        <button onclick="connectBluetooth()" id="btn-connect-bt" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-all flex items-center gap-2">
+          <i class="fab fa-bluetooth-b"></i> Bluetooth
+        </button>
+        <!-- Disconnect -->
         <button onclick="disconnectScale()" id="btn-disconnect-scale" class="hidden px-4 py-2 bg-red-500 text-white text-sm font-semibold rounded-lg hover:bg-red-600 transition-all flex items-center gap-2">
           <i class="fas fa-unlink"></i> Disconnect
         </button>
+        <!-- Sim (dev) -->
         <button onclick="simulateWeight()" class="px-3 py-2 bg-gray-100 text-gray-600 text-xs rounded-lg hover:bg-gray-200 transition-all" title="Simulate weight reading (dev mode)">
           <i class="fas fa-flask"></i> Sim
         </button>
       </div>
+    </div>
+    <!-- Serial Data Log (collapsible) -->
+    <div id="serial-log-section" class="hidden mt-3 border-t border-gray-100 pt-3">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">AM-413 Data Feed</span>
+        <button onclick="document.getElementById('serial-log').textContent=''" class="text-xs text-gray-400 hover:text-gray-600">Clear</button>
+      </div>
+      <div id="serial-log" class="bg-gray-900 text-green-400 font-mono text-xs p-3 rounded-lg max-h-24 overflow-y-auto whitespace-pre-wrap"></div>
     </div>
   </div>
 
@@ -281,44 +301,145 @@ export function renderScaleHouse(): string {
   // ══════════════════════════════════════════
   let bluetoothDevice = null;
   let weightCharacteristic = null;
+  let serialPort = null;
+  let serialReader = null;
+  let serialReadLoop = null;     // AbortController for serial read loop
+  let connectionMode = null;     // 'usb' | 'bluetooth' | 'sim' | null
   let currentLiveWeight = 0;
   let isWeightStable = false;
-  let activeTicket = null;     // full ticket object
-  let pricingData = [];        // pricing table from DB
+  let serialBuffer = '';         // Buffer for incoming serial data
+  let weightHistory = [];        // Last N weight readings for stability check
+  let lastPrintTrigger = 0;      // Timestamp of last Epson print-trigger detection
+  let activeTicket = null;       // full ticket object
+  let pricingData = [];          // pricing table from DB
   let customersCache = [];
   let vehiclesCache = [];
 
-  // ══════════════════════════════════════════
-  // BLUETOOTH — ACCUREN APEX INDICATOR
-  // ══════════════════════════════════════════
-  // The Accuren Apex indicator broadcasts weight data via Bluetooth LE.
-  // It uses a standard serial/SPP-like BLE profile.
-  // We try common weight-scale GATT services.
+  // ══════════════════════════════════════════════════════════
+  // ACCUREN AM-413 SCALE INDICATOR — DUAL CONNECTION
+  // ══════════════════════════════════════════════════════════
+  //
+  // The Western / Accuren AM-413 truck scale indicator sends
+  // weight data over RS-232 serial (DB9, 9600/8N1 typical).
+  //
+  // Physical setup:
+  //   AM-413 indicator ──DB9/RS-232──► Bluetooth module (HC-05/06/JDY)
+  //         └───also───────USB-C/USB──► Scale ticketing desktop computer
+  //   Epson thermal printer connected to indicator via serial
+  //
+  // TWO connection methods supported:
+  //   1. USB / Serial (Web Serial API) — hardwired, most reliable
+  //   2. Bluetooth (Web Bluetooth BLE) — wireless via BT module
+  //
+  // AM-413 serial protocol patterns (common Western/Accuren formats):
+  //   Continuous mode:  "ST,GS,   12340 kg\\r\\n"
+  //   Print command:    "ST,GS,   12340 kg\\r\\n" (stable flag)
+  //   ASCII:            "+  12340 kg\\r\\n" or "  12340\\r\\n"
+  //   Raw numeric:      "12340\\r\\n" (weight in kg, sometimes x10)
+  //
+  // The Epson printer receives the same serial stream. When the
+  // operator presses PRINT on the indicator, the indicator sends
+  // a print record with a stable-weight flag. We detect this to
+  // auto-create a new scale ticket.
+  // ══════════════════════════════════════════════════════════
 
+  // Serial baud rates to try for AM-413 (most common first)
+  const AM413_BAUD_RATES = [9600, 19200, 4800, 2400, 115200];
+  let currentBaudIndex = 0;
+
+  // BLE service/char UUIDs (Bluetooth module connected to AM-413 RS-232)
   const SCALE_SERVICE_UUIDS = [
+    '0000ffe0-0000-1000-8000-00805f9b34fb',  // JDY / HC-series BLE module (most common)
     '0000fff0-0000-1000-8000-00805f9b34fb',  // Common weight scale service
-    '0000ffe0-0000-1000-8000-00805f9b34fb',  // JDY-series BLE module (common in indicators)
-    '00001820-0000-1000-8000-00805f9b34fb',  // Internet Protocol Support
-    '0000181d-0000-1000-8000-00805f9b34fb',  // Weight Scale Service (BLE SIG)
     '49535343-fe7d-4ae5-8fa9-9fafd205e455',  // Nordic UART Service
+    '0000181d-0000-1000-8000-00805f9b34fb',  // BLE SIG Weight Scale Service
+    '00001101-0000-1000-8000-00805f9b34fb',  // SPP-like
   ];
-
   const NOTIFY_CHAR_UUIDS = [
+    '0000ffe1-0000-1000-8000-00805f9b34fb',  // JDY / HC notify char
     '0000fff1-0000-1000-8000-00805f9b34fb',
-    '0000ffe1-0000-1000-8000-00805f9b34fb',
-    '00002a9d-0000-1000-8000-00805f9b34fb',  // Weight Measurement char
     '49535343-1e4d-4bd9-ba61-23c647249616',  // Nordic UART TX
+    '00002a9d-0000-1000-8000-00805f9b34fb',  // Weight Measurement char
   ];
 
-  async function connectScale() {
-    if (!navigator.bluetooth) {
-      alert('Web Bluetooth is not supported in this browser.\\nPlease use Chrome or Edge on a desktop/laptop with Bluetooth.');
+  // ─── CONNECTION METHOD 1: USB / Web Serial API ────────────
+  async function connectUSBSerial() {
+    if (!('serial' in navigator)) {
+      alert('Web Serial API is not supported in this browser.\\nPlease use Chrome or Edge (version 89+) on desktop.');
       return;
     }
     try {
       updateScaleUI('connecting');
+      logSerial('[USB] Requesting serial port...');
 
-      // Request any BLE device — Apex may use any of these service UUIDs
+      // Prompt user to select the USB serial device
+      serialPort = await navigator.serial.requestPort();
+      
+      // Try connecting at most common baud rate for AM-413
+      const baudRate = AM413_BAUD_RATES[currentBaudIndex];
+      await serialPort.open({
+        baudRate: baudRate,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none',
+        flowControl: 'none'
+      });
+
+      logSerial('[USB] Port opened at ' + baudRate + ' baud (8N1)');
+      connectionMode = 'usb';
+      updateScaleUI('connected', 'USB Serial @ ' + baudRate + ' baud');
+      showConnectionMode('USB Serial');
+
+      // Start reading serial data
+      readSerialStream();
+
+    } catch (err) {
+      console.error('USB Serial connect error:', err);
+      if (err.name === 'NotFoundError') {
+        updateScaleUI('disconnected');
+      } else {
+        updateScaleUI('error', err.message);
+        logSerial('[USB] Error: ' + err.message);
+      }
+    }
+  }
+
+  async function readSerialStream() {
+    if (!serialPort || !serialPort.readable) return;
+    const decoder = new TextDecoderStream();
+    const readableStream = serialPort.readable.pipeTo(decoder.writable);
+    const reader = decoder.readable.getReader();
+    serialReader = reader;
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          serialBuffer += value;
+          processSerialBuffer();
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'TypeError' && err.message !== 'The device has been lost.') {
+        console.error('Serial read error:', err);
+        logSerial('[USB] Read error: ' + err.message);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  // ─── CONNECTION METHOD 2: Bluetooth / Web Bluetooth API ───
+  async function connectBluetooth() {
+    if (!navigator.bluetooth) {
+      alert('Web Bluetooth is not supported in this browser.\\nPlease use Chrome or Edge on a desktop with Bluetooth.');
+      return;
+    }
+    try {
+      updateScaleUI('connecting');
+      logSerial('[BT] Requesting Bluetooth device...');
+
       bluetoothDevice = await navigator.bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: SCALE_SERVICE_UUIDS
@@ -326,126 +447,234 @@ export function renderScaleHouse(): string {
 
       bluetoothDevice.addEventListener('gattserverdisconnected', onScaleDisconnected);
       const server = await bluetoothDevice.gatt.connect();
+      logSerial('[BT] Connected to: ' + (bluetoothDevice.name || 'Unknown device'));
 
-      // Try each service UUID until we find one
+      // Find service
       let service = null;
       for (const uuid of SCALE_SERVICE_UUIDS) {
         try {
           service = await server.getPrimaryService(uuid);
-          console.log('Found service:', uuid);
+          logSerial('[BT] Found service: ' + uuid.substring(0,8));
           break;
         } catch (e) { /* try next */ }
       }
-
       if (!service) {
-        // Fallback: get all services and use the first one
         const services = await server.getPrimaryServices();
         if (services.length > 0) {
           service = services[0];
-          console.log('Using first available service:', service.uuid);
+          logSerial('[BT] Using fallback service: ' + service.uuid.substring(0,8));
         } else {
-          throw new Error('No compatible BLE services found on this device.');
+          throw new Error('No BLE services found. Check Bluetooth module pairing.');
         }
       }
 
-      // Find the notify characteristic
+      // Find notify characteristic
       let characteristic = null;
       for (const uuid of NOTIFY_CHAR_UUIDS) {
         try {
           characteristic = await service.getCharacteristic(uuid);
-          console.log('Found characteristic:', uuid);
+          logSerial('[BT] Found characteristic: ' + uuid.substring(0,8));
           break;
         } catch (e) { /* try next */ }
       }
-
       if (!characteristic) {
-        // Fallback: get all characteristics and use first one with notify
         const chars = await service.getCharacteristics();
         for (const ch of chars) {
           if (ch.properties.notify || ch.properties.indicate) {
             characteristic = ch;
-            console.log('Using first notify characteristic:', ch.uuid);
+            logSerial('[BT] Using fallback notify char: ' + ch.uuid.substring(0,8));
             break;
           }
         }
       }
-
       if (!characteristic) {
-        throw new Error('No weight data characteristic found. Device may need different pairing.');
+        throw new Error('No data characteristic found. Module may need re-pairing.');
       }
 
-      // Subscribe to notifications
       await characteristic.startNotifications();
-      characteristic.addEventListener('characteristicvaluechanged', handleWeightData);
+      characteristic.addEventListener('characteristicvaluechanged', handleBLEData);
       weightCharacteristic = characteristic;
-
-      updateScaleUI('connected', bluetoothDevice.name || 'Apex Indicator');
+      connectionMode = 'bluetooth';
+      updateScaleUI('connected', bluetoothDevice.name || 'BT Module');
+      showConnectionMode('Bluetooth');
 
     } catch (err) {
       console.error('Bluetooth connect error:', err);
-      if (err.name !== 'NotFoundError') { // User cancelled picker
+      if (err.name !== 'NotFoundError') {
         updateScaleUI('error', err.message);
+        logSerial('[BT] Error: ' + err.message);
       } else {
         updateScaleUI('disconnected');
       }
     }
   }
 
-  function disconnectScale() {
-    if (bluetoothDevice && bluetoothDevice.gatt.connected) {
-      bluetoothDevice.gatt.disconnect();
-    }
-    updateScaleUI('disconnected');
-  }
-
-  function onScaleDisconnected() {
-    updateScaleUI('disconnected');
-    weightCharacteristic = null;
-  }
-
-  function handleWeightData(event) {
+  function handleBLEData(event) {
     const value = event.target.value;
-    // Try to parse weight from the raw BLE data
-    // Accuren Apex typically sends ASCII text like "  12345 kg\\r\\n"
-    // Or raw bytes representing the weight value
-    let weight = 0;
-    
-    // Method 1: Try as ASCII text
     const decoder = new TextDecoder('utf-8');
     const text = decoder.decode(value.buffer);
-    const numMatch = text.match(/([-\\d.]+)/);
-    if (numMatch) {
-      weight = parseFloat(numMatch[1]);
-    }
+    serialBuffer += text;
+    processSerialBuffer();
+  }
 
-    // Method 2: If no ASCII, try as 16/32-bit integer (little-endian)
-    if (weight === 0 && value.byteLength >= 2) {
-      if (value.byteLength >= 4) {
-        weight = value.getInt32(0, true) / 10; // Often tenths of kg
-      } else {
-        weight = value.getInt16(0, true) / 10;
+  // ─── UNIFIED SERIAL DATA PARSER (AM-413 protocol) ────────
+  function processSerialBuffer() {
+    // Split on line endings (\\r\\n, \\r, or \\n)
+    const lines = serialBuffer.split(/\\r?\\n|\\r/);
+    // Keep the last incomplete chunk in the buffer
+    serialBuffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      logSerial(trimmed);
+      parseWeightLine(trimmed);
+    }
+  }
+
+  function parseWeightLine(line) {
+    let weight = 0;
+    let isStable = false;
+    let isPrintCommand = false;
+
+    // ── Pattern 1: Western/Accuren format "ST,GS,  12340 kg"
+    // ST = Stable, US = Unstable, GS = Gross, NT = Net
+    const westernMatch = line.match(/(ST|US)\\s*,\\s*(GS|NT)\\s*,\\s*([-+]?[\\d.]+)\\s*(kg|lb)?/i);
+    if (westernMatch) {
+      isStable = westernMatch[1].toUpperCase() === 'ST';
+      weight = parseFloat(westernMatch[3]);
+      if (westernMatch[4] && westernMatch[4].toLowerCase() === 'lb') {
+        weight = weight * 0.453592; // Convert lbs to kg
       }
     }
 
-    if (weight > 0) {
+    // ── Pattern 2: Simple signed format "+  12340 kg" or "- 1234 kg"
+    if (weight === 0) {
+      const simpleMatch = line.match(/([+-]?)\\s*(\\d+\\.?\\d*)\\s*(kg|lb|t)?/i);
+      if (simpleMatch) {
+        weight = parseFloat(simpleMatch[2]);
+        if (simpleMatch[1] === '-') weight = -weight;
+        if (simpleMatch[3]) {
+          const unit = simpleMatch[3].toLowerCase();
+          if (unit === 'lb') weight = weight * 0.453592;
+          if (unit === 't') weight = weight * 1000;
+        }
+      }
+    }
+
+    // ── Pattern 3: Raw number only "12340"
+    if (weight === 0) {
+      const rawMatch = line.match(/^\\s*(\\d{3,7})\\s*$/);
+      if (rawMatch) {
+        weight = parseFloat(rawMatch[1]);
+        // If > 50000, likely in 0.1kg increments
+        if (weight > 50000) weight = weight / 10;
+      }
+    }
+
+    // ── Detect print trigger from indicator/Epson
+    // When operator presses PRINT on AM-413, it sends a stable reading
+    // often preceded by STX (0x02) or "P" flag, or a repeated stable line
+    if (line.includes('\\x02') || line.match(/^P[\\s,]/i) || (isStable && line.includes('ST'))) {
+      isPrintCommand = isStable;
+    }
+
+    // ── Update weight if valid
+    if (weight > 0 && weight <= 80000) { // AM-413 max capacity 30,000 kg (pad to 80k)
       const prevWeight = currentLiveWeight;
-      currentLiveWeight = weight;
-      isWeightStable = Math.abs(weight - prevWeight) < 0.5; // stable if delta < 0.5kg
+      currentLiveWeight = Math.round(weight * 10) / 10;
+
+      // Track stability over last 5 readings
+      weightHistory.push(currentLiveWeight);
+      if (weightHistory.length > 5) weightHistory.shift();
+      const maxDelta = weightHistory.length >= 3
+        ? Math.max(...weightHistory) - Math.min(...weightHistory)
+        : 999;
+      isWeightStable = isStable || maxDelta < 20; // 20 kg tolerance for truck scale
+
       updateLiveWeightDisplay();
+
+      // ── Auto-trigger: if PRINT command detected and weight is stable
+      if (isPrintCommand && isWeightStable && (Date.now() - lastPrintTrigger > 5000)) {
+        lastPrintTrigger = Date.now();
+        logSerial('>>> PRINT TRIGGER: ' + currentLiveWeight + ' kg (stable)');
+        onPrintTrigger(currentLiveWeight);
+      }
     }
   }
 
-  // Simulate weight for development/testing
-  function simulateWeight() {
-    const baseWeight = activeTicket && activeTicket.weight_in ? 
-      (3000 + Math.random() * 2000) : // tare range if weigh-in done
-      (8000 + Math.random() * 12000);  // gross range
-    currentLiveWeight = Math.round(baseWeight * 10) / 10;
-    isWeightStable = true;
-    updateLiveWeightDisplay();
-    updateScaleUI('connected', 'SIMULATED');
+  // Called when the indicator's PRINT button is pressed (via Epson)
+  function onPrintTrigger(weight) {
+    // If there's an active ticket waiting for weigh-in or weigh-out, auto-capture
+    if (activeTicket) {
+      const hasWeighIn = activeTicket.weight_in && activeTicket.weight_in > 0;
+      if (!hasWeighIn) {
+        logSerial('>>> Auto-capturing WEIGHT IN: ' + weight + ' kg');
+        captureWeight('in');
+      } else {
+        const hasWeighOut = activeTicket.weight_out && activeTicket.weight_out > 0;
+        if (!hasWeighOut) {
+          logSerial('>>> Auto-capturing WEIGHT OUT: ' + weight + ' kg');
+          captureWeight('out');
+        }
+      }
+    } else {
+      // No active ticket — prompt to create one with this weight
+      logSerial('>>> No active ticket. Opening new ticket dialog...');
+      openNewTicketModal();
+    }
   }
 
+  // ─── DISCONNECT (both modes) ──────────────────────────────
+  async function disconnectScale() {
+    // Bluetooth
+    if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+      bluetoothDevice.gatt.disconnect();
+    }
+    bluetoothDevice = null;
+    weightCharacteristic = null;
+
+    // USB Serial
+    if (serialReader) {
+      try { await serialReader.cancel(); } catch(e) {}
+      serialReader = null;
+    }
+    if (serialPort) {
+      try { await serialPort.close(); } catch(e) {}
+      serialPort = null;
+    }
+
+    serialBuffer = '';
+    connectionMode = null;
+    updateScaleUI('disconnected');
+    document.getElementById('connection-mode-badge').classList.add('hidden');
+    document.getElementById('serial-log-section').classList.add('hidden');
+  }
+
+  function onScaleDisconnected() {
+    logSerial('[BT] Device disconnected');
+    weightCharacteristic = null;
+    bluetoothDevice = null;
+    connectionMode = null;
+    updateScaleUI('disconnected');
+    document.getElementById('connection-mode-badge').classList.add('hidden');
+  }
+
+  // ─── SIMULATE (for development / testing) ─────────────────
+  function simulateWeight() {
+    const baseWeight = activeTicket && activeTicket.weight_in ? 
+      (3000 + Math.random() * 2000) :
+      (8000 + Math.random() * 12000);
+    currentLiveWeight = Math.round(baseWeight * 10) / 10;
+    isWeightStable = true;
+    connectionMode = 'sim';
+    updateLiveWeightDisplay();
+    updateScaleUI('connected', 'SIMULATED');
+    showConnectionMode('Simulated');
+  }
+
+  // ─── UI HELPERS ───────────────────────────────────────────
   function updateLiveWeightDisplay() {
     document.getElementById('live-weight').textContent = currentLiveWeight.toLocaleString('en-CA', {minimumFractionDigits:1, maximumFractionDigits:1}) + ' kg';
     const stableEl = document.getElementById('weight-stable');
@@ -456,10 +685,40 @@ export function renderScaleHouse(): string {
     }
   }
 
+  function showConnectionMode(mode) {
+    const badge = document.getElementById('connection-mode-badge');
+    const text = document.getElementById('connection-mode-text');
+    badge.classList.remove('hidden');
+    text.textContent = mode;
+    if (mode.includes('USB')) {
+      badge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700';
+    } else if (mode.includes('Blue')) {
+      badge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-700';
+    } else {
+      badge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600';
+    }
+    // Show serial log
+    document.getElementById('serial-log-section').classList.remove('hidden');
+  }
+
+  function logSerial(msg) {
+    const logEl = document.getElementById('serial-log');
+    if (!logEl) return;
+    const ts = new Date().toLocaleTimeString('en-CA', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    logEl.textContent += '[' + ts + '] ' + msg + '\\n';
+    logEl.scrollTop = logEl.scrollHeight;
+    // Trim if too long
+    const lines = logEl.textContent.split('\\n');
+    if (lines.length > 200) {
+      logEl.textContent = lines.slice(-100).join('\\n');
+    }
+  }
+
   function updateScaleUI(state, info) {
     const dot = document.getElementById('scale-status-dot');
     const text = document.getElementById('scale-status-text');
-    const btnConnect = document.getElementById('btn-connect-scale');
+    const btnUSB = document.getElementById('btn-connect-usb');
+    const btnBT = document.getElementById('btn-connect-bt');
     const btnDisconnect = document.getElementById('btn-disconnect-scale');
 
     switch(state) {
@@ -472,21 +731,24 @@ export function renderScaleHouse(): string {
         dot.className = 'w-3 h-3 rounded-full bg-green-400 pulse-green';
         text.textContent = 'Connected' + (info ? ' — ' + info : '');
         text.className = 'text-sm text-green-600 font-medium';
-        btnConnect.classList.add('hidden');
+        btnUSB.classList.add('hidden');
+        btnBT.classList.add('hidden');
         btnDisconnect.classList.remove('hidden');
         break;
       case 'error':
         dot.className = 'w-3 h-3 rounded-full bg-red-400';
         text.textContent = 'Error: ' + (info || 'Unknown');
         text.className = 'text-sm text-red-600 font-medium';
-        btnConnect.classList.remove('hidden');
+        btnUSB.classList.remove('hidden');
+        btnBT.classList.remove('hidden');
         btnDisconnect.classList.add('hidden');
         break;
       default:
         dot.className = 'w-3 h-3 rounded-full bg-red-400';
         text.textContent = 'Disconnected';
         text.className = 'text-sm text-red-600 font-medium';
-        btnConnect.classList.remove('hidden');
+        btnUSB.classList.remove('hidden');
+        btnBT.classList.remove('hidden');
         btnDisconnect.classList.add('hidden');
         currentLiveWeight = 0;
         isWeightStable = false;
