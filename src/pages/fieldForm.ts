@@ -3,7 +3,7 @@ import { layout } from '../utils/layout'
 export function renderFieldForm(): string {
   return layout('Field Form', `
   <div class="min-h-screen bg-gray-50">
-    <!-- Top Bar (iPad optimized) -->
+    <!-- Top Bar -->
     <div class="bg-rc-green text-white px-4 py-3 flex items-center justify-between sticky top-0 z-40 shadow-lg">
       <div class="flex items-center gap-3">
         <a href="#" onclick="goBack(); return false;" class="text-white/80 hover:text-white"><i class="fas fa-arrow-left text-lg"></i></a>
@@ -94,7 +94,7 @@ export function renderFieldForm(): string {
           <h2 class="text-xl font-bold text-gray-800 mb-2 flex items-center gap-2">
             <i class="fas fa-clipboard-list text-blue-600"></i> Customer Information
           </h2>
-          <p class="text-gray-500 text-sm mb-6">Have the customer fill out this form on the iPad</p>
+          <p class="text-gray-500 text-sm mb-6">Have the customer fill out this form</p>
           
           <div class="space-y-5">
             <div>

@@ -90,42 +90,50 @@ export function renderCustomerDashboard(): string {
       </div>
       <div class="p-6">
         <form id="pickup-form" onsubmit="submitPickupRequest(event)">
-          <div class="grid md:grid-cols-2 gap-x-6 gap-y-5">
-            <div class="relative z-0">
+          <div class="grid md:grid-cols-2 gap-x-6 gap-y-6" style="overflow:visible;">
+            <div>
               <label class="block text-sm font-semibold text-gray-700 mb-2">Estimated Number of Tires</label>
               <input type="number" id="tire-count" min="1" required
                 class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white"
                 placeholder="e.g. 50">
             </div>
-            <div class="relative z-10">
+            <div>
               <label class="block text-sm font-semibold text-gray-700 mb-2">Tire Type</label>
-              <select id="tire-type" required
-                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white appearance-none cursor-pointer"
-                style="background-image: url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 20 20%27 fill=%27%236b7280%27%3E%3Cpath fill-rule=%27evenodd%27 d=%27M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%27 clip-rule=%27evenodd%27/%3E%3C/svg%3E'); background-position: right 12px center; background-repeat: no-repeat; background-size: 20px; padding-right: 40px;">
-                <option value="">Select type...</option>
-                <option value="passenger">Passenger / Light Truck</option>
-                <option value="truck">Commercial Truck</option>
-                <option value="mixed">Mixed</option>
-                <option value="off-road">Off-Road / Agricultural</option>
-              </select>
+              <div class="relative">
+                <select id="tire-type" required
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white appearance-none cursor-pointer pr-10">
+                  <option value="">Select type...</option>
+                  <option value="passenger">Passenger / Light Truck</option>
+                  <option value="truck">Commercial Truck</option>
+                  <option value="mixed">Mixed</option>
+                  <option value="off-road">Off-Road / Agricultural</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                  <i class="fas fa-chevron-down text-gray-400 text-sm"></i>
+                </div>
+              </div>
             </div>
-            <div class="relative z-0">
+            <div>
               <label class="block text-sm font-semibold text-gray-700 mb-2">Preferred Pickup Date</label>
               <input type="date" id="pickup-date" required
                 class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white">
             </div>
-            <div class="relative z-10">
+            <div>
               <label class="block text-sm font-semibold text-gray-700 mb-2">Time Preference</label>
-              <select id="time-slot"
-                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white appearance-none cursor-pointer"
-                style="background-image: url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 20 20%27 fill=%27%236b7280%27%3E%3Cpath fill-rule=%27evenodd%27 d=%27M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%27 clip-rule=%27evenodd%27/%3E%3C/svg%3E'); background-position: right 12px center; background-repeat: no-repeat; background-size: 20px; padding-right: 40px;">
-                <option value="anytime">Anytime</option>
-                <option value="morning">Morning (8AM - 12PM)</option>
-                <option value="afternoon">Afternoon (12PM - 5PM)</option>
-              </select>
+              <div class="relative">
+                <select id="time-slot"
+                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white appearance-none cursor-pointer pr-10">
+                  <option value="anytime">Anytime</option>
+                  <option value="morning">Morning (8AM - 12PM)</option>
+                  <option value="afternoon">Afternoon (12PM - 5PM)</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                  <i class="fas fa-chevron-down text-gray-400 text-sm"></i>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="mt-4">
+          <div class="mt-6">
             <label class="block text-sm font-semibold text-gray-700 mb-2">Additional Notes</label>
             <textarea id="pickup-notes" rows="2"
               class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none"
