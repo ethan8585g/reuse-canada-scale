@@ -272,6 +272,105 @@ scaleTicketRoutes.post('/:id/payment', async (c) => {
   }
 })
 
+// Quick-create ticket from scale PRINT trigger (weight-in only, no customer yet)
+scaleTicketRoutes.post('/print-trigger', async (c) => {
+  try {
+    const { weight } = await c.req.json()
+    if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+
+    const employeeId = c.get('userId')
+    const ticketNumber = await generateTicketNumber(c.env.DB)
+    const now = new Date().toISOString()
+
+    const result = await c.env.DB.prepare(
+      `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, status)
+       VALUES (?, 0, ?, 'mixed', ?, ?, 'weighed_in')`
+    ).bind(ticketNumber, employeeId, weight, now).run()
+
+    return c.json({ 
+      success: true, 
+      id: result.meta.last_row_id, 
+      ticket_number: ticketNumber,
+      weight_in: weight,
+      weight_in_at: now
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
+})
+
+// Merge weigh-out with an existing open ticket
+scaleTicketRoutes.post('/:id/merge-out', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const { weight } = await c.req.json()
+    if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+
+    const ticket = await c.env.DB.prepare(
+      'SELECT * FROM scale_tickets WHERE id = ?'
+    ).bind(id).first()
+    if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
+    if (!ticket.weight_in) return c.json({ error: 'Ticket has no weight-in recorded' }, 400)
+
+    const netWeight = Math.abs((ticket.weight_in as number) - weight)
+    const now = new Date().toISOString()
+
+    // Get pricing for this material
+    const pricing = await c.env.DB.prepare(
+      'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
+    ).bind(ticket.tire_type || 'mixed').first()
+    const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
+    const subtotal = netWeight * pricePerKg
+    const tax = subtotal * 0.05
+    const grandTotal = subtotal + tax
+
+    await c.env.DB.prepare(
+      `UPDATE scale_tickets SET 
+        weight_out = ?, weight_out_at = ?, net_weight = ?,
+        price_per_kg = ?, total_amount = ?, tax_rate = 0.05, tax_amount = ?, grand_total = ?,
+        status = 'completed', updated_at = datetime('now')
+       WHERE id = ?`
+    ).bind(weight, now, netWeight, pricePerKg, subtotal, tax, grandTotal, id).run()
+
+    // Complete linked pickup request
+    if (ticket.pickup_request_id) {
+      await c.env.DB.prepare(
+        "UPDATE pickup_requests SET status = 'completed', updated_at = datetime('now') WHERE id = ?"
+      ).bind(ticket.pickup_request_id).run()
+    }
+
+    return c.json({ 
+      success: true, 
+      net_weight: netWeight,
+      price_per_kg: pricePerKg,
+      subtotal, tax, grand_total: grandTotal
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
+})
+
+// Update ticket customer/material (used after print-trigger creates a blank ticket)
+scaleTicketRoutes.post('/:id/assign', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const { customer_id, tire_type, notes } = await c.req.json()
+    
+    await c.env.DB.prepare(
+      `UPDATE scale_tickets SET 
+        customer_id = COALESCE(?, customer_id),
+        tire_type = COALESCE(?, tire_type),
+        notes = COALESCE(?, notes),
+        updated_at = datetime('now')
+       WHERE id = ?`
+    ).bind(customer_id || null, tire_type || null, notes || null, id).run()
+
+    return c.json({ success: true })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
+})
+
 // Void a ticket
 scaleTicketRoutes.post('/:id/void', async (c) => {
   const id = c.req.param('id')
