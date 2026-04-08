@@ -5,51 +5,50 @@ export function renderEmployeeDashboard(): string {
   return layout('Employee Dashboard', employeePageWrapper('dashboard', 'Operations Dashboard', `
     <!-- Stats Grid - ALL CLICKABLE -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-      <a href="/employee/pickups" class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover cursor-pointer block group">
+      <a href="/employee/pickups" class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-5 shadow-card border border-amber-100/60 card-hover cursor-pointer block group">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Pending Pickups</div>
-            <div class="text-3xl font-bold text-yellow-600 mt-1" id="stat-pending">-</div>
+            <div class="text-3xl font-extrabold text-gray-900 mt-1" id="stat-pending">-</div>
           </div>
-          <div class="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center group-hover:bg-yellow-200 transition-colors">
-            <i class="fas fa-clock text-xl text-yellow-600"></i>
+          <div class="w-11 h-11 bg-white/80 rounded-lg shadow-sm ring-1 ring-black/5 flex items-center justify-center">
+            <i class="fas fa-clock text-lg text-rc-orange"></i>
           </div>
         </div>
         <div class="text-xs text-gray-400 mt-2 group-hover:text-rc-green transition-colors">Click to manage <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
-      <a href="/employee/routing" class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover cursor-pointer block group">
+      <a href="/employee/routing" class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-5 shadow-card border border-emerald-100/60 card-hover cursor-pointer block group">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Today's Routes</div>
-            <div class="text-3xl font-bold text-blue-600 mt-1" id="stat-routes">-</div>
+            <div class="text-3xl font-extrabold text-gray-900 mt-1" id="stat-routes">-</div>
           </div>
-          <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
-            <i class="fas fa-route text-xl text-blue-600"></i>
+          <div class="w-11 h-11 bg-white/80 rounded-lg shadow-sm ring-1 ring-black/5 flex items-center justify-center">
+            <i class="fas fa-route text-lg text-rc-green"></i>
           </div>
         </div>
         <div class="text-xs text-gray-400 mt-2 group-hover:text-rc-green transition-colors">Click to view <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
-      <a href="/employee/scale-tickets" class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover cursor-pointer block group">
+      <a href="/employee/scale-tickets" class="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-5 shadow-card border border-orange-100/60 card-hover cursor-pointer block group">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Open Scale Tickets</div>
-            <div class="text-3xl font-bold text-rc-orange mt-1" id="stat-tickets">-</div>
+            <div class="text-3xl font-extrabold text-gray-900 mt-1" id="stat-tickets">-</div>
           </div>
-          <div class="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center group-hover:bg-orange-200 transition-colors">
-            <i class="fas fa-weight text-xl text-rc-orange"></i>
+          <div class="w-11 h-11 bg-white/80 rounded-lg shadow-sm ring-1 ring-black/5 flex items-center justify-center">
+            <i class="fas fa-weight text-lg text-rc-orange"></i>
           </div>
         </div>
         <div class="text-xs text-gray-400 mt-2 group-hover:text-rc-green transition-colors">Click to view <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
-      <!-- Completed Today card with mini-graph -->
-      <a href="/employee/scale-house" class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover cursor-pointer block group relative overflow-hidden">
+      <a href="/employee/scale-house" class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5 shadow-card border border-green-100/60 card-hover cursor-pointer block group relative overflow-hidden">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Completed Today</div>
-            <div class="text-3xl font-bold text-green-600 mt-1" id="stat-completed">-</div>
+            <div class="text-3xl font-extrabold text-gray-900 mt-1" id="stat-completed">-</div>
           </div>
-          <div class="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center group-hover:bg-green-200 transition-colors">
-            <i class="fas fa-check-circle text-xl text-green-600"></i>
+          <div class="w-11 h-11 bg-white/80 rounded-lg shadow-sm ring-1 ring-black/5 flex items-center justify-center">
+            <i class="fas fa-check-circle text-lg text-rc-green"></i>
           </div>
         </div>
         <div class="text-xs text-gray-400 mt-1" id="completed-summary"></div>
@@ -60,7 +59,7 @@ export function renderEmployeeDashboard(): string {
     <!-- Performance Micro-Graph -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
       <div class="flex items-center justify-between mb-3">
-        <h2 class="font-bold text-gray-800 flex items-center gap-2">
+        <h2 class="font-semibold text-gray-900 text-[15px] flex items-center gap-2">
           <i class="fas fa-chart-bar text-rc-green"></i> Today's Performance
         </h2>
         <span class="text-xs text-gray-400" id="perf-date"></span>
@@ -71,7 +70,7 @@ export function renderEmployeeDashboard(): string {
           <div class="text-xs text-gray-500">Pickups</div>
         </div>
         <div class="text-center">
-          <div class="text-2xl font-bold text-blue-600" id="perf-tires">0</div>
+          <div class="text-2xl font-bold text-rc-gray" id="perf-tires">0</div>
           <div class="text-xs text-gray-500">~Tires</div>
         </div>
         <div class="text-center">
@@ -79,7 +78,7 @@ export function renderEmployeeDashboard(): string {
           <div class="text-xs text-gray-500">kg Weighed</div>
         </div>
         <div class="text-center">
-          <div class="text-2xl font-bold text-purple-600" id="perf-tickets">0</div>
+          <div class="text-2xl font-bold text-rc-green" id="perf-tickets">0</div>
           <div class="text-xs text-gray-500">Tickets</div>
         </div>
       </div>
@@ -95,8 +94,8 @@ export function renderEmployeeDashboard(): string {
       <!-- Dashboard Mini-Map for Today's Pickups -->
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="p-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 class="font-bold text-gray-800 flex items-center gap-2">
-            <i class="fas fa-map-marked-alt text-blue-600"></i> Today's Scheduled Pickups
+          <h2 class="font-semibold text-gray-900 text-[15px] flex items-center gap-2">
+            <i class="fas fa-map-marked-alt text-rc-green"></i> Today's Scheduled Pickups
           </h2>
           <span class="text-xs text-gray-400" id="map-pickup-count">0 pickups</span>
         </div>
@@ -114,7 +113,7 @@ export function renderEmployeeDashboard(): string {
       <!-- Recent Pickup Requests -->
       <div class="bg-white rounded-xl shadow-sm border border-gray-100">
         <div class="p-5 border-b border-gray-100 flex items-center justify-between">
-          <h2 class="font-bold text-gray-800 flex items-center gap-2">
+          <h2 class="font-semibold text-gray-900 text-[15px] flex items-center gap-2">
             <i class="fas fa-truck-pickup text-rc-green"></i> Recent Pickup Requests
             <span id="pickups-badge" class="hidden bg-yellow-400 text-yellow-900 text-xs font-bold px-2 py-0.5 rounded-full animate-pulse"></span>
           </h2>
@@ -134,7 +133,7 @@ export function renderEmployeeDashboard(): string {
     <!-- Recent Scale Tickets (full width) -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-100">
       <div class="p-5 border-b border-gray-100 flex items-center justify-between">
-        <h2 class="font-bold text-gray-800 flex items-center gap-2">
+        <h2 class="font-semibold text-gray-900 text-[15px] flex items-center gap-2">
           <i class="fas fa-weight text-rc-orange"></i> Recent Scale Tickets
         </h2>
         <a href="/employee/scale-tickets" class="text-sm text-rc-green hover:text-rc-green-light font-medium">View All <i class="fas fa-arrow-right ml-1"></i></a>
@@ -191,7 +190,7 @@ export function renderEmployeeDashboard(): string {
           // Recent pickups
           if (d.recent_pickups && d.recent_pickups.length > 0) {
             pickupsDiv.innerHTML = d.recent_pickups.map(p => \`
-              <a href="/employee/pickups" class="px-5 py-4 flex items-center justify-between hover:bg-green-50 cursor-pointer transition-colors block">
+              <a href="/employee/pickups" class="px-5 py-4 flex items-center justify-between hover:bg-green-50 cursor-pointer transition-colors duration-150 block">
                 <div class="flex items-center gap-3">
                   <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 \${p.status === 'pending' ? 'bg-yellow-100' : 'bg-gray-100'}">
                     <i class="fas fa-\${p.status === 'pending' ? 'clock text-yellow-600' : 'truck-pickup text-gray-500'} text-xs"></i>
@@ -207,13 +206,13 @@ export function renderEmployeeDashboard(): string {
               </a>
             \`).join('');
           } else {
-            pickupsDiv.innerHTML = '<div class="p-6 text-center text-gray-400"><i class="fas fa-inbox text-2xl mb-2 block"></i>No recent pickup requests</div>';
+            pickupsDiv.innerHTML = '<div class="py-8 text-center"><div class="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-inbox text-xl text-gray-300"></i></div><p class="text-sm font-medium text-gray-400">No recent pickup requests</p><p class="text-xs text-gray-300 mt-1">New requests will appear here</p></div>';
           }
 
           // Recent tickets
           if (d.recent_tickets && d.recent_tickets.length > 0) {
             ticketsDiv.innerHTML = d.recent_tickets.map(t => \`
-              <a href="/employee/scale-tickets" class="px-5 py-4 flex items-center justify-between hover:bg-orange-50 cursor-pointer transition-colors block">
+              <a href="/employee/scale-tickets" class="px-5 py-4 flex items-center justify-between hover:bg-orange-50 cursor-pointer transition-colors duration-150 block">
                 <div>
                   <div class="font-semibold text-sm text-gray-800">\${t.ticket_number}</div>
                   <div class="text-xs text-gray-500">\${t.field_store_name || t.company_name || 'N/A'} - \${t.net_weight ? t.net_weight + ' kg' : 'Pending weigh'}</div>
@@ -224,7 +223,7 @@ export function renderEmployeeDashboard(): string {
               </a>
             \`).join('');
           } else {
-            ticketsDiv.innerHTML = '<div class="p-6 text-center text-gray-400"><i class="fas fa-inbox text-2xl mb-2 block"></i>No recent scale tickets</div>';
+            ticketsDiv.innerHTML = '<div class="py-8 text-center"><div class="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-receipt text-xl text-gray-300"></i></div><p class="text-sm font-medium text-gray-400">No recent scale tickets</p><p class="text-xs text-gray-300 mt-1">Completed tickets will appear here</p></div>';
           }
 
           // Load map data

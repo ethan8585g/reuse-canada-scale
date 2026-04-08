@@ -1,14 +1,17 @@
 // ── Employee Sidebar Navigation Component ──
 export function employeeSidebar(activePage: string): string {
-  const navItems = [
-    { id: 'dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', href: '/employee/dashboard' },
-    { id: 'scale-house', icon: 'fas fa-balance-scale', label: 'Scale House', href: '/employee/scale-house' },
-    { id: 'scale-tickets', icon: 'fas fa-receipt', label: 'Ticket History', href: '/employee/scale-tickets' },
-    { id: 'pickups', icon: 'fas fa-truck-pickup', label: 'Pickup Requests', href: '/employee/pickups' },
-    { id: 'routing', icon: 'fas fa-route', label: 'Routing', href: '/employee/routing' },
-    { id: 'customers', icon: 'fas fa-users', label: 'Customers', href: '/employee/customers' },
-    { id: 'drivers', icon: 'fas fa-id-badge', label: 'Drivers & Staff', href: '/employee/drivers' },
+  // Role-based nav: drivers see less, yard_operators see scale-focused items
+  const allNavItems = [
+    { id: 'dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', href: '/employee/dashboard', roles: ['admin','manager','yard_operator'] },
+    { id: 'scale-house', icon: 'fas fa-balance-scale', label: 'Scale House', href: '/employee/scale-house', roles: ['admin','manager','yard_operator'] },
+    { id: 'scale-tickets', icon: 'fas fa-receipt', label: 'Ticket History', href: '/employee/scale-tickets', roles: ['admin','manager','yard_operator'] },
+    { id: 'pickups', icon: 'fas fa-truck-pickup', label: 'Pickup Requests', href: '/employee/pickups', roles: ['admin','manager'] },
+    { id: 'routing', icon: 'fas fa-route', label: 'Routing', href: '/employee/routing', roles: ['admin','manager'] },
+    { id: 'customers', icon: 'fas fa-users', label: 'Customers', href: '/employee/customers', roles: ['admin','manager'] },
+    { id: 'drivers', icon: 'fas fa-id-badge', label: 'Drivers & Staff', href: '/employee/drivers', roles: ['admin','manager'] },
   ];
+  // Filter based on role stored in localStorage (checked client-side for nav visibility)
+  const navItems = allNavItems;
 
   return `
   <!-- Mobile Header -->
@@ -36,7 +39,7 @@ export function employeeSidebar(activePage: string): string {
       <!-- Logo -->
       <div class="p-6 border-b border-white/10">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center">
+          <div class="w-10 h-10 bg-rc-lime/20 rounded-xl flex items-center justify-center ring-1 ring-white/10">
             <i class="fas fa-recycle text-xl text-rc-lime"></i>
           </div>
           <div>
@@ -62,11 +65,11 @@ export function employeeSidebar(activePage: string): string {
       <!-- Navigation -->
       <nav class="flex-1 py-4 overflow-y-auto">
         ${navItems.map(item => `
-        <a href="${item.href}" 
-          class="flex items-center gap-3 px-6 py-3 text-sm transition-all ${
-            activePage === item.id 
-              ? 'bg-white/15 text-white border-r-4 border-rc-lime font-semibold' 
-              : 'text-green-100/70 hover:bg-white/10 hover:text-white'
+        <a href="${item.href}" data-roles="${item.roles.join(',')}"
+          class="nav-role-item flex items-center gap-3 px-6 py-3 text-sm transition-all ${
+            activePage === item.id
+              ? 'bg-white/10 text-white border-l-[3px] border-rc-lime font-semibold rounded-r-lg'
+              : 'text-green-100/70 hover:bg-white/8 hover:text-white hover:translate-x-0.5 transition-all duration-200'
           }">
           <i class="${item.icon} w-5 text-center"></i>
           <span>${item.label}</span>
@@ -77,9 +80,9 @@ export function employeeSidebar(activePage: string): string {
         
         <a href="/employee/field-form" 
           class="flex items-center gap-3 px-6 py-3 text-sm transition-all ${
-            activePage === 'field-form' 
-              ? 'bg-rc-orange/30 text-white border-r-4 border-rc-orange font-semibold' 
-              : 'text-orange-200/70 hover:bg-rc-orange/20 hover:text-white'
+            activePage === 'field-form'
+              ? 'bg-rc-orange/20 text-white border-l-[3px] border-rc-orange font-semibold rounded-r-lg'
+              : 'text-orange-200/70 hover:bg-rc-orange/15 hover:text-white hover:translate-x-0.5 transition-all duration-200'
           }">
           <i class="fas fa-camera w-5 text-center"></i>
           <span>Field Form</span>
@@ -88,7 +91,7 @@ export function employeeSidebar(activePage: string): string {
 
       <!-- Live Driver Status Widget -->
       <div class="px-4 py-3 border-t border-white/10">
-        <div class="bg-white/10 rounded-xl p-3">
+        <div class="bg-white/5 rounded-xl p-3 border border-white/10 backdrop-blur-sm">
           <div class="flex items-center gap-2 mb-2">
             <div class="w-2 h-2 bg-green-400 rounded-full pulse-green"></div>
             <span class="text-xs font-bold text-green-200 uppercase tracking-wide">Live Driver Status</span>
@@ -188,9 +191,9 @@ export function employeePageWrapper(activePage: string, pageTitle: string, conte
   <!-- Main Content -->
   <main class="lg:ml-64 min-h-screen pt-14 lg:pt-0">
     <!-- Top bar -->
-    <div class="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 lg:top-0 z-30">
+    <div class="bg-white/80 backdrop-blur-lg border-b border-gray-100 px-6 py-4 sticky top-0 lg:top-0 z-30">
       <div class="flex items-center justify-between">
-        <h1 class="text-xl font-bold text-gray-800">${pageTitle}</h1>
+        <h1 class="text-xl font-semibold tracking-tight text-gray-900">${pageTitle}</h1>
         <div class="flex items-center gap-4">
           <span class="text-sm text-gray-500" id="current-datetime"></span>
           <div class="w-2 h-2 bg-green-400 rounded-full pulse-green" title="Connected"></div>
@@ -208,6 +211,18 @@ export function employeePageWrapper(activePage: string, pageTitle: string, conte
     // Set user info in sidebar
     document.getElementById('sidebar-user-name').textContent = session.name || 'Employee';
     document.getElementById('sidebar-user-role').textContent = (session.role || 'staff').replace('_', ' ').toUpperCase();
+
+    // Role-based nav filtering
+    const userRole = session.role || 'yard_operator';
+    document.querySelectorAll('.nav-role-item').forEach(el => {
+      const allowedRoles = (el.getAttribute('data-roles') || '').split(',');
+      if (!allowedRoles.includes(userRole)) el.style.display = 'none';
+    });
+
+    // Kiosk mode detection
+    if (window.location.search.includes('kiosk')) {
+      document.body.classList.add('kiosk-mode');
+    }
     
     // Update datetime
     function updateDateTime() {

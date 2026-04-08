@@ -16,13 +16,20 @@ export function layout(title: string, bodyContent: string, extraHead: string = '
               green: '#1B5E20',
               'green-light': '#2E7D32',
               'green-dark': '#0D3B0F',
+              'green-50': '#E8F5E9',
               lime: '#7CB342',
               orange: '#F57C00',
               'orange-light': '#FF9800',
+              'orange-50': '#FFF3E0',
               gray: '#37474F',
               'gray-light': '#546E7A',
               white: '#FAFAFA',
             }
+          },
+          boxShadow: {
+            'card': '0 1px 3px 0 rgba(0,0,0,0.04), 0 1px 2px -1px rgba(0,0,0,0.04)',
+            'card-hover': '0 10px 25px -5px rgba(0,0,0,0.08), 0 8px 10px -6px rgba(0,0,0,0.04)',
+            'modal': '0 25px 50px -12px rgba(0,0,0,0.25)',
           }
         }
       }
@@ -45,8 +52,11 @@ export function layout(title: string, bodyContent: string, extraHead: string = '
     .rc-gradient { background: linear-gradient(135deg, #1B5E20 0%, #2E7D32 50%, #7CB342 100%); }
     .rc-gradient-dark { background: linear-gradient(135deg, #0D3B0F 0%, #1B5E20 100%); }
     .glass { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); }
-    .card-hover { transition: all 0.3s ease; }
-    .card-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 24px rgba(0,0,0,0.15); }
+    .card-hover { transition: all 0.25s ease; }
+    .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08), 0 8px 10px -6px rgba(0,0,0,0.04); }
+    .btn-press:active { transform: scale(0.97); }
+    .modal-enter { animation: modalEnter 0.2s ease-out; }
+    @keyframes modalEnter { from { opacity:0; transform:scale(0.95) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
     .pulse-green { animation: pulseGreen 2s infinite; }
     @keyframes pulseGreen {
       0%, 100% { box-shadow: 0 0 0 0 rgba(27, 94, 32, 0.4); }
@@ -58,10 +68,11 @@ export function layout(title: string, bodyContent: string, extraHead: string = '
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #f1f1f1; }
     ::-webkit-scrollbar-thumb { background: #1B5E20; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2E7D32; }
   </style>
   ${extraHead}
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-[#F8FAFB] min-h-screen">
   ${bodyContent}
 </body>
 </html>`

@@ -43,3 +43,26 @@ export async function customerOnly(c: any, next: any) {
   }
   await next()
 }
+
+// Role-based access middleware — pass allowed roles
+export function roleRequired(...roles: string[]) {
+  return async (c: any, next: any) => {
+    const userId = c.get('userId')
+    const userType = c.get('userType')
+    if (userType !== 'employee') {
+      return c.json({ error: 'Employee access required' }, 403)
+    }
+    try {
+      const employee = await c.env.DB.prepare(
+        'SELECT role FROM employees WHERE id = ?'
+      ).bind(userId).first()
+      if (!employee || !roles.includes(employee.role as string)) {
+        return c.json({ error: 'Insufficient permissions' }, 403)
+      }
+      c.set('userRole', employee.role)
+      await next()
+    } catch (err) {
+      return c.json({ error: 'Permission check failed' }, 500)
+    }
+  }
+}
