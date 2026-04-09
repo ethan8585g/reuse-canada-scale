@@ -9,6 +9,7 @@ export function employeeSidebar(activePage: string): string {
     { id: 'routing', icon: 'fas fa-route', label: 'Routing', href: '/employee/routing', roles: ['admin','manager'] },
     { id: 'customers', icon: 'fas fa-users', label: 'Customers', href: '/employee/customers', roles: ['admin','manager'] },
     { id: 'drivers', icon: 'fas fa-id-badge', label: 'Drivers & Staff', href: '/employee/drivers', roles: ['admin','manager'] },
+    { id: 'junk-removal', icon: 'fas fa-dumpster', label: 'Junk Removal Quoting', href: '/employee/junk-removal', roles: ['admin','manager','yard_operator'] },
   ];
   // Filter based on role stored in localStorage (checked client-side for nav visibility)
   const navItems = allNavItems;

@@ -8,6 +8,7 @@ import { pickupRoutes } from './routes/pickups'
 import { routeRoutes } from './routes/routing'
 import { squareRoutes } from './routes/square'
 import { pricingRoutes } from './routes/pricing'
+import { junkRemovalRoutes } from './routes/junkRemoval'
 import { renderLogin } from './pages/login'
 import { renderCustomerDashboard } from './pages/customerDashboard'
 import { renderEmployeeDashboard } from './pages/employeeDashboard'
@@ -19,12 +20,14 @@ import { renderFieldForm } from './pages/fieldForm'
 import { renderCustomerManagement } from './pages/customerManagement'
 import { renderDriverManagement } from './pages/driverManagement'
 import { renderDriverPortal } from './pages/driverPortal'
+import { renderJunkRemovalQuoting } from './pages/junkRemovalQuoting'
 
 type Bindings = {
   DB: D1Database
   GOOGLE_MAPS_API_KEY: string
   SQUARE_APP_ID: string
   SQUARE_ACCESS_TOKEN: string
+  OPENAI_API_KEY: string
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -41,6 +44,7 @@ app.route('/api/pickups', pickupRoutes)
 app.route('/api/routes', routeRoutes)
 app.route('/api/square', squareRoutes)
 app.route('/api/pricing', pricingRoutes)
+app.route('/api/junk-removal', junkRemovalRoutes)
 
 // ── Config endpoint (serves safe public keys) ──
 app.get('/api/config/maps-key', (c) => {
@@ -79,6 +83,7 @@ app.get('/employee/pickups', (c) => c.html(renderPickupManagement()))
 app.get('/employee/routing', (c) => c.html(renderRouting()))
 app.get('/employee/customers', (c) => c.html(renderCustomerManagement()))
 app.get('/employee/drivers', (c) => c.html(renderDriverManagement()))
+app.get('/employee/junk-removal', (c) => c.html(renderJunkRemovalQuoting()))
 app.get('/employee/field-form/:ticketId', (c) => c.html(renderFieldForm()))
 app.get('/employee/field-form', (c) => c.html(renderFieldForm()))
 
