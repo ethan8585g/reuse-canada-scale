@@ -55,7 +55,7 @@ pickupRoutes.get('/', async (c) => {
     const { results } = await stmt.all()
     return c.json({ pickups: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -73,7 +73,7 @@ pickupRoutes.get('/:id', async (c) => {
     if (!pickup) return c.json({ error: 'Not found' }, 404)
     return c.json({ pickup })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -137,7 +137,7 @@ pickupRoutes.post('/:id/status', async (c) => {
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -151,7 +151,7 @@ pickupRoutes.post('/:id/notify', async (c) => {
     ).bind(notify_customer ? 1 : 0, id).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -205,6 +205,6 @@ pickupRoutes.post('/:id/assign', async (c) => {
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })

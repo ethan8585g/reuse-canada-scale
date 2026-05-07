@@ -1,5 +1,6 @@
 import { layout } from '../utils/layout'
 import { employeePageWrapper } from '../utils/employeeLayout'
+import { YARD_LAT, YARD_LNG } from '../utils/yard'
 
 export function renderEmployeeDashboard(): string {
   return layout('Employee Dashboard', employeePageWrapper('dashboard', 'Operations Dashboard', `
@@ -149,7 +150,6 @@ export function renderEmployeeDashboard(): string {
       let dashboardMarkers = [];
 
       async function loadDashboard() {
-        console.log('[Dashboard] Loading dashboard data...');
         const pickupsDiv = document.getElementById('recent-pickups');
         const ticketsDiv = document.getElementById('recent-tickets');
         
@@ -307,7 +307,7 @@ export function renderEmployeeDashboard(): string {
         dashboardMapLoaded = true;
         const mapEl = document.getElementById('dashboard-map');
         dashboardMap = new google.maps.Map(mapEl, {
-          center: { lat: 53.5461, lng: -113.4938 },
+          center: { lat: ${YARD_LAT}, lng: ${YARD_LNG} },
           zoom: 10,
           mapTypeControl: false,
           streetViewControl: false,
@@ -317,7 +317,7 @@ export function renderEmployeeDashboard(): string {
         });
         // Add Reuse Canada HQ marker
         new google.maps.Marker({
-          position: { lat: 53.5461, lng: -113.4938 },
+          position: { lat: ${YARD_LAT}, lng: ${YARD_LNG} },
           map: dashboardMap,
           icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: '#1B5E20', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           title: 'Reuse Canada Yard'
@@ -331,7 +331,7 @@ export function renderEmployeeDashboard(): string {
         dashboardMarkers.forEach(m => m.setMap(null));
         dashboardMarkers = [];
         const bounds = new google.maps.LatLngBounds();
-        bounds.extend({ lat: 53.5461, lng: -113.4938 });
+        bounds.extend({ lat: ${YARD_LAT}, lng: ${YARD_LNG} });
 
         const statusColors = {
           pending: '#EAB308',

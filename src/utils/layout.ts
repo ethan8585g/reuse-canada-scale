@@ -6,7 +6,7 @@ export function layout(title: string, bodyContent: string, extraHead: string = '
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>${title} | Reuse Canada</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>

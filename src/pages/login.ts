@@ -9,6 +9,17 @@ export function renderLogin(): string {
     </div>
     
     <div class="relative z-10 w-full max-w-md">
+      <!-- Roof Measurement Report promo banner -->
+      <div class="mb-6 flex items-center gap-3 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 backdrop-blur-sm border border-white/20 text-white/90 transition-all">
+        <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-rc-orange/90 flex items-center justify-center shadow-sm">
+          <i class="fas fa-house-chimney text-white text-sm"></i>
+        </div>
+        <div class="flex-1 min-w-0 leading-tight">
+          <p class="text-sm font-semibold">Roof Measurement Reports</p>
+          <p class="text-xs text-white/70">Accurate, contractor-ready &mdash; from <span class="font-semibold text-white">$5.95</span> per report.</p>
+        </div>
+      </div>
+
       <!-- Logo & Header -->
       <div class="text-center mb-8">
         <div class="inline-flex items-center justify-center w-20 h-20 bg-white rounded-2xl shadow-lg mb-4">
@@ -17,7 +28,7 @@ export function renderLogin(): string {
         <h1 class="text-4xl font-bold text-white mb-2">REUSE CANADA</h1>
         <p class="text-green-100 text-lg">Operations & CRM Platform</p>
       </div>
-      
+
       <!-- CUSTOMER LOGIN (shown by default) -->
       <div id="customer-login-card" class="glass rounded-2xl shadow-2xl overflow-hidden card-hover transition-all duration-300">
         <div class="bg-rc-green p-6 text-center">
@@ -31,19 +42,21 @@ export function renderLogin(): string {
           <div id="customer-error" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm"></div>
           <form id="customer-login-form" onsubmit="handleCustomerLogin(event)">
             <div class="mb-5">
-              <label class="block text-sm font-semibold text-gray-700 mb-2">
+              <label for="customer-email" class="block text-sm font-semibold text-gray-700 mb-2">
                 <i class="fas fa-user mr-1 text-rc-green"></i> Username
               </label>
-              <input type="text" id="customer-email" required
+              <input type="text" id="customer-email" name="username" required
+                autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false"
                 class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 transition-all outline-none"
                 placeholder="Enter your username">
             </div>
             <div class="mb-6">
-              <label class="block text-sm font-semibold text-gray-700 mb-2">
+              <label for="customer-password" class="block text-sm font-semibold text-gray-700 mb-2">
                 <i class="fas fa-lock mr-1 text-rc-green"></i> Password
               </label>
               <div class="relative">
-                <input type="password" id="customer-password" required
+                <input type="password" id="customer-password" name="password" required
+                  autocomplete="current-password"
                   class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 transition-all outline-none"
                   placeholder="Enter your password">
                 <button type="button" onclick="togglePassword('customer-password', this)" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
@@ -78,19 +91,21 @@ export function renderLogin(): string {
           <div id="employee-error" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm"></div>
           <form id="employee-login-form" onsubmit="handleEmployeeLogin(event)">
             <div class="mb-5">
-              <label class="block text-sm font-semibold text-gray-700 mb-2">
+              <label for="employee-email" class="block text-sm font-semibold text-gray-700 mb-2">
                 <i class="fas fa-envelope mr-1 text-rc-gray"></i> Employee Email
               </label>
-              <input type="text" id="employee-email" required
+              <input type="email" id="employee-email" name="username" required
+                autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email"
                 class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-gray focus:ring-2 focus:ring-gray-100 transition-all outline-none"
                 placeholder="name@reuse-canada.ca">
             </div>
             <div class="mb-6">
-              <label class="block text-sm font-semibold text-gray-700 mb-2">
+              <label for="employee-password" class="block text-sm font-semibold text-gray-700 mb-2">
                 <i class="fas fa-lock mr-1 text-rc-gray"></i> Password
               </label>
               <div class="relative">
-                <input type="password" id="employee-password" required
+                <input type="password" id="employee-password" name="password" required
+                  autocomplete="current-password"
                   class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-gray focus:ring-2 focus:ring-gray-100 transition-all outline-none"
                   placeholder="Enter your password">
                 <button type="button" onclick="togglePassword('employee-password', this)" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">

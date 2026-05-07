@@ -233,7 +233,6 @@ export function renderFieldForm(): string {
     // Axios auth interceptor — with safety check for CDN loading
     function setupFieldFormAxios() {
       if (typeof axios === 'undefined') {
-        console.warn('[RC-FieldForm] Axios not loaded yet, retrying...');
         setTimeout(setupFieldFormAxios, 200);
         return;
       }

@@ -52,7 +52,7 @@ routeRoutes.get('/', async (c) => {
     const { results } = await stmt.all()
     return c.json({ routes: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('routing error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -87,7 +87,7 @@ routeRoutes.get('/:id', async (c) => {
 
     return c.json({ route, stops })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('routing error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -128,7 +128,7 @@ routeRoutes.post('/', roleRequired('admin', 'manager'), async (c) => {
 
     return c.json({ success: true, id: routeId })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('routing error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -168,7 +168,7 @@ routeRoutes.post('/:id/status', async (c) => {
     await c.env.DB.prepare(sql).bind(...params).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('routing error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -218,6 +218,6 @@ routeRoutes.post('/:routeId/stops/:stopId/status', async (c) => {
     await c.env.DB.prepare(sql).bind(...params).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('routing error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })

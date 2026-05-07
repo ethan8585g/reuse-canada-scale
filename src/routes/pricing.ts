@@ -15,7 +15,7 @@ pricingRoutes.get('/', async (c) => {
     ).all()
     return c.json({ pricing: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('pricing error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -25,11 +25,24 @@ pricingRoutes.post('/:id', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     const { price_per_kg, price_per_tire } = await c.req.json()
-    await c.env.DB.prepare(
+
+    // Negative or NaN prices silently corrupt every ticket priced after the
+    // update — validate before binding.
+    if (typeof price_per_kg !== 'number' || !Number.isFinite(price_per_kg) || price_per_kg < 0 || price_per_kg > 1000) {
+      return c.json({ error: 'price_per_kg must be a non-negative finite number' }, 400)
+    }
+    const perTire = price_per_tire ?? 0
+    if (typeof perTire !== 'number' || !Number.isFinite(perTire) || perTire < 0 || perTire > 1000) {
+      return c.json({ error: 'price_per_tire must be a non-negative finite number' }, 400)
+    }
+
+    const result = await c.env.DB.prepare(
       `UPDATE pricing SET price_per_kg = ?, price_per_tire = ?, updated_at = datetime('now') WHERE id = ?`
-    ).bind(price_per_kg, price_per_tire || 0, id).run()
+    ).bind(price_per_kg, perTire, id).run()
+    if ((result.meta?.changes ?? 0) === 0) return c.json({ error: 'Pricing row not found' }, 404)
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('pricing POST error:', err)
+    return c.json({ error: 'Server error' }, 500)
   }
 })

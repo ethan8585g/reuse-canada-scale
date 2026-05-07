@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { photoOversize } from '../utils/photo'
+import { GST_RATE, cents } from '../utils/money'
+import { todayEdmonton } from '../utils/date'
 
 type Bindings = { DB: D1Database }
 
@@ -125,7 +127,7 @@ scaleTicketRoutes.get('/', async (c) => {
     const { results } = await stmt.all()
     return c.json({ tickets: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -155,7 +157,7 @@ scaleTicketRoutes.get('/:id', async (c) => {
 
     return c.json({ ticket, audit_trail: auditTrail })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -183,7 +185,7 @@ scaleTicketRoutes.post('/', async (c) => {
 
     return c.json({ success: true, id: ticketId, ticket_number: ticketNumber })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -248,7 +250,7 @@ scaleTicketRoutes.post('/field', async (c) => {
 
     return c.json({ success: true, id: ticketId, ticket_number: ticketNumber })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -283,7 +285,7 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
       weight_in_at: now
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -335,7 +337,7 @@ scaleTicketRoutes.post('/:id/weight', async (c) => {
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -357,7 +359,11 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
       return c.json({ error: `Cannot merge weight-out into a ${ticket.status} ticket` }, 409)
     }
 
-    const netWeight = Math.abs((ticket.weight_in as number) - weight)
+    // Don't Math.abs the net weight — a negative net (weight_out > weight_in)
+    // is a real anomaly and should reach detectAnomalies, not be silently
+    // squashed to a positive number that prices a swapped weigh-in/out
+    // exactly as if it were correct.
+    const netWeight = (ticket.weight_in as number) - weight
     const now = new Date().toISOString()
 
     // Get pricing for this material
@@ -365,18 +371,18 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
       'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
     ).bind(ticket.tire_type || 'mixed').first()
     const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
-    const subtotal = netWeight * pricePerKg
-    const tax = subtotal * 0.05
-    const grandTotal = subtotal + tax
+    const subtotal = cents(netWeight * pricePerKg)
+    const tax = cents(subtotal * GST_RATE)
+    const grandTotal = cents(subtotal + tax)
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
         weight_out = ?, weight_out_at = ?, net_weight = ?,
         photo_out = ?, photo_out_at = ?,
-        price_per_kg = ?, total_amount = ?, tax_rate = 0.05, tax_amount = ?, grand_total = ?,
+        price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
         completed_by = ?, status = 'completed', updated_at = datetime('now')
        WHERE id = ?`
-    ).bind(weight, now, netWeight, photo || null, photo ? now : null, pricePerKg, subtotal, tax, grandTotal, employeeId, id).run()
+    ).bind(weight, now, netWeight, photo || null, photo ? now : null, pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, id).run()
 
     await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
       weight_out: weight, net_weight: netWeight, price_per_kg: pricePerKg, grand_total: grandTotal, has_photo: !!photo
@@ -398,7 +404,7 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
       subtotal, tax, grand_total: grandTotal
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -420,25 +426,27 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
     if (!vehicle || !vehicle.stored_tare_weight) return c.json({ error: 'Vehicle has no stored tare weight' }, 400)
 
     const tareWeight = vehicle.stored_tare_weight as number
-    const netWeight = Math.abs((ticket.weight_in as number) - tareWeight)
+    // No Math.abs — let detectAnomalies see a negative net if the truck's
+    // stored tare exceeds the gross-in (e.g. wrong vehicle picked).
+    const netWeight = (ticket.weight_in as number) - tareWeight
     const now = new Date().toISOString()
 
     const pricing = await c.env.DB.prepare(
       'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
     ).bind(ticket.tire_type || 'mixed').first()
     const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
-    const subtotal = netWeight * pricePerKg
-    const tax = subtotal * 0.05
-    const grandTotal = subtotal + tax
+    const subtotal = cents(netWeight * pricePerKg)
+    const tax = cents(subtotal * GST_RATE)
+    const grandTotal = cents(subtotal + tax)
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
         weight_out = ?, weight_out_at = ?, net_weight = ?,
         vehicle_id = ?, vehicle_tare_used = 1,
-        price_per_kg = ?, total_amount = ?, tax_rate = 0.05, tax_amount = ?, grand_total = ?,
+        price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
         completed_by = ?, status = 'completed', updated_at = datetime('now')
        WHERE id = ?`
-    ).bind(tareWeight, now, netWeight, vehicle_id, pricePerKg, subtotal, tax, grandTotal, employeeId, id).run()
+    ).bind(tareWeight, now, netWeight, vehicle_id, pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, id).run()
 
     await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
       method: 'stored_tare', vehicle_id, tare_weight: tareWeight, net_weight: netWeight, grand_total: grandTotal
@@ -459,7 +467,7 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
       vehicle_name: vehicle.name
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -476,17 +484,17 @@ scaleTicketRoutes.post('/:id/finalize', async (c) => {
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
-        price_per_kg = ?, total_amount = ?, tax_rate = 0.05,
+        price_per_kg = ?, total_amount = ?, tax_rate = ?,
         tax_amount = ?, grand_total = ?,
         updated_at = datetime('now')
        WHERE id = ?`
-    ).bind(price_per_kg || 0, total_amount || 0, tax_amount || 0, grand_total || 0, id).run()
+    ).bind(cents(price_per_kg), cents(total_amount), GST_RATE, cents(tax_amount), cents(grand_total), id).run()
 
-    await auditLog(c.env.DB, parseInt(id), 'finalized', employeeId, { grand_total })
+    await auditLog(c.env.DB, parseInt(id), 'finalized', employeeId, { grand_total: cents(grand_total) })
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -496,6 +504,12 @@ scaleTicketRoutes.post('/:id/assign', async (c) => {
   try {
     const { customer_id, tire_type, notes, vehicle_id } = await c.req.json()
     const employeeId = c.get('userId')
+
+    // Snapshot the row before mutation — customer reassignment is a likely
+    // fraud surface ("did somebody re-attribute this ticket later?").
+    const prev = await c.env.DB.prepare(
+      'SELECT customer_id, tire_type, vehicle_id FROM scale_tickets WHERE id = ?'
+    ).bind(id).first()
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
@@ -507,11 +521,16 @@ scaleTicketRoutes.post('/:id/assign', async (c) => {
        WHERE id = ?`
     ).bind(customer_id || null, tire_type || null, notes || null, vehicle_id || null, id).run()
 
-    await auditLog(c.env.DB, parseInt(id), 'assigned', employeeId, { customer_id, tire_type, vehicle_id })
+    await auditLog(c.env.DB, parseInt(id), 'assigned', employeeId, {
+      customer_id, tire_type, vehicle_id,
+      prev_customer_id: prev?.customer_id,
+      prev_tire_type: prev?.tire_type,
+      prev_vehicle_id: prev?.vehicle_id,
+    })
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -526,7 +545,12 @@ scaleTicketRoutes.post('/:id/void', async (c) => {
       return c.json({ error: 'A reason is required to void a ticket' }, 400)
     }
 
-    const existing = await c.env.DB.prepare('SELECT status FROM scale_tickets WHERE id = ?').bind(id).first()
+    // Capture the before-snapshot so the audit row can answer "what did
+    // this ticket look like before it was voided?" — useful when an admin
+    // later disputes the void or wants to un-void.
+    const existing = await c.env.DB.prepare(
+      'SELECT status, weight_in, weight_out, net_weight, grand_total, payment_status FROM scale_tickets WHERE id = ?'
+    ).bind(id).first()
     if (!existing) return c.json({ error: 'Ticket not found' }, 404)
     if (existing.status === 'voided') return c.json({ error: 'Ticket is already voided' }, 409)
 
@@ -534,11 +558,19 @@ scaleTicketRoutes.post('/:id/void', async (c) => {
       "UPDATE scale_tickets SET status = 'voided', voided_by = ?, void_reason = ?, updated_at = datetime('now') WHERE id = ?"
     ).bind(employeeId, reason.trim(), id).run()
 
-    await auditLog(c.env.DB, parseInt(id), 'voided', employeeId, { reason: reason.trim() })
+    await auditLog(c.env.DB, parseInt(id), 'voided', employeeId, {
+      reason: reason.trim(),
+      prev_status: existing.status,
+      prev_weight_in: existing.weight_in,
+      prev_weight_out: existing.weight_out,
+      prev_net_weight: existing.net_weight,
+      prev_grand_total: existing.grand_total,
+      prev_payment_status: existing.payment_status,
+    })
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -553,6 +585,13 @@ scaleTicketRoutes.post('/:id/payment', async (c) => {
   try {
     const { payment_status, payment_method, square_payment_id, square_checkout_id } = await c.req.json()
     const employeeId = c.get('userId')
+
+    // Capture the previous payment shape so the audit row can show whether
+    // a card payment overwrote a cash one (or vice versa) — important when
+    // a customer disputes a charge later.
+    const prev = await c.env.DB.prepare(
+      'SELECT payment_status, payment_method, square_payment_id FROM scale_tickets WHERE id = ?'
+    ).bind(id).first()
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
@@ -594,11 +633,18 @@ scaleTicketRoutes.post('/:id/payment', async (c) => {
       }
     }
 
-    await auditLog(c.env.DB, parseInt(id), 'payment', employeeId, { method: payment_method || 'card', amount: ticket?.grand_total, idempotent_skip: already })
+    await auditLog(c.env.DB, parseInt(id), 'payment', employeeId, {
+      method: payment_method || 'card',
+      amount: ticket?.grand_total,
+      idempotent_skip: already,
+      prev_payment_status: prev?.payment_status,
+      prev_payment_method: prev?.payment_method,
+      prev_square_payment_id: prev?.square_payment_id,
+    })
 
     return c.json({ success: true, already_recorded: already })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -627,7 +673,7 @@ scaleTicketRoutes.post('/:id/photo', async (c) => {
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -671,7 +717,7 @@ scaleTicketRoutes.get('/:id/receipt', async (c) => {
       }
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -690,7 +736,7 @@ scaleTicketRoutes.post('/:id/receipt-printed', async (c) => {
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -706,7 +752,7 @@ scaleTicketRoutes.get('/vehicles/tare', async (c) => {
     ).all()
     return c.json({ vehicles: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -737,22 +783,22 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
       'INSERT INTO scale_weight_edits (scale_ticket_id, field, old_value, new_value, reason, editor_id) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(parseInt(id), field, oldValue, new_value, reason.trim(), employeeId).run()
 
-    // Update the weight. Always recompute net_weight from the (possibly updated) pair so we never
-    // leave a stale value: if only one side exists, net is undefined; if both exist, net = |in - out|.
+    // Update the weight. Always recompute net_weight from the (possibly
+    // updated) pair: if only one side exists, net is undefined; if both
+    // exist, net = in - out (signed — Math.abs would mask a swapped weigh-in).
     const weightIn = field === 'weight_in' ? new_value : (ticket.weight_in as number | null)
     const weightOut = field === 'weight_out' ? new_value : (ticket.weight_out as number | null)
-    const netWeight = (weightIn && weightOut) ? Math.abs(weightIn - weightOut) : null
+    const netWeight = (weightIn && weightOut) ? (weightIn - weightOut) : null
 
-    // Recalculate pricing if net changed and ticket is completed
     let pricePerKg = ticket.price_per_kg as number
     let subtotal = ticket.total_amount as number
     let tax = ticket.tax_amount as number
     let grandTotal = ticket.grand_total as number
 
     if (netWeight !== ticket.net_weight && ticket.status === 'completed' && pricePerKg > 0 && netWeight) {
-      subtotal = netWeight * pricePerKg
-      tax = subtotal * 0.05
-      grandTotal = subtotal + tax
+      subtotal = cents(netWeight * pricePerKg)
+      tax = cents(subtotal * GST_RATE)
+      grandTotal = cents(subtotal + tax)
     }
 
     await c.env.DB.prepare(
@@ -768,7 +814,7 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
 
     return c.json({ success: true, net_weight: netWeight, grand_total: grandTotal })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -838,7 +884,7 @@ scaleTicketRoutes.get('/anomalies/list', async (c) => {
     const { results } = await stmt.all()
     return c.json({ anomalies: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -856,7 +902,7 @@ scaleTicketRoutes.post('/anomalies/:id/resolve', roleRequired('admin', 'manager'
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -867,7 +913,9 @@ scaleTicketRoutes.post('/anomalies/:id/resolve', roleRequired('admin', 'manager'
 // Get daily settlement summary
 scaleTicketRoutes.get('/settlement/daily', async (c) => {
   try {
-    const date = c.req.query('date') || new Date().toISOString().split('T')[0]
+    // "Today" must be Edmonton-local — the worker runs in UTC and
+    // toISOString() flips the date at 5pm/6pm local otherwise.
+    const date = c.req.query('date') || todayEdmonton()
 
     const { results: tickets } = await c.env.DB.prepare(
       `SELECT st.id, st.ticket_number, st.grand_total, st.payment_status, st.payment_method, c.company_name
@@ -904,7 +952,7 @@ scaleTicketRoutes.get('/settlement/daily', async (c) => {
 
     return c.json({ summary, tickets, batch })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -939,6 +987,6 @@ scaleTicketRoutes.post('/settlement/batch', roleRequired('admin', 'manager'), as
 
     return c.json({ success: true, ticket_count: tickets.length, total_amount: totalAmount })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })

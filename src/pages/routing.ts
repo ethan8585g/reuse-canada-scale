@@ -1,4 +1,5 @@
 import { layout } from '../utils/layout'
+import { YARD_LAT, YARD_LNG } from '../utils/yard'
 import { employeePageWrapper } from '../utils/employeeLayout'
 
 export function renderRouting(): string {
@@ -326,8 +327,14 @@ export function renderRouting(): string {
         } catch (err) { console.error(err); }
       }
 
+      let createRouteInFlight = false;
       async function createRoute(e) {
         e.preventDefault();
+        // Guard against double-submit (Enter-press, double-click). The
+        // flag flips synchronously before any await so a second invocation
+        // can't slip through while the first is mid-fetch.
+        if (createRouteInFlight) return;
+        createRouteInFlight = true;
         const selectedPickups = [...document.querySelectorAll('input[name="route-pickup"]:checked')].map(el => parseInt(el.value));
         try {
           await axios.post('/api/routes', {
@@ -342,6 +349,8 @@ export function renderRouting(): string {
           loadRoutes();
         } catch (err) {
           alert(err.response?.data?.error || 'Failed to create route');
+        } finally {
+          createRouteInFlight = false;
         }
       }
 
@@ -394,7 +403,7 @@ export function renderRouting(): string {
         gmapsLoaded = true;
         const mapEl = document.getElementById('map-container');
         gmap = new google.maps.Map(mapEl, {
-          center: { lat: 53.5461, lng: -113.4938 }, // Edmonton
+          center: { lat: ${YARD_LAT}, lng: ${YARD_LNG} }, // Edmonton
           zoom: 11,
           mapTypeControl: false,
           streetViewControl: false,
@@ -418,7 +427,7 @@ export function renderRouting(): string {
         gMarkers.forEach(m => m.setMap(null));
         gMarkers = [];
 
-        const reuseHQ = { lat: 53.5461, lng: -113.4938 }; // Reuse Canada yard
+        const reuseHQ = { lat: ${YARD_LAT}, lng: ${YARD_LNG} }; // Reuse Canada yard
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(reuseHQ);
 
@@ -485,7 +494,6 @@ export function renderRouting(): string {
           initGoogleMaps();
           loadRoutes();
         } else {
-          console.warn('[Routing] Axios not loaded yet, retrying...');
           setTimeout(initRoutingPage, 500);
         }
       })();

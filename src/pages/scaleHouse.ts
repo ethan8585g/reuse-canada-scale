@@ -2,7 +2,6 @@ import { layout } from '../utils/layout'
 import { employeePageWrapper } from '../utils/employeeLayout'
 
 export function renderScaleHouse(): string {
-  const isKiosk = '(window.location.search.includes("kiosk"))'
   return layout('Scale House', employeePageWrapper('scale-house', 'Scale House — Truck Scale', `
 
   <!-- ═══════ BROWSER / SETUP BANNER ═══════ -->
@@ -599,6 +598,9 @@ export function renderScaleHouse(): string {
   let serialBytes = []; // raw byte ring buffer (for binary protocols + hex view)
   let totalBytesRx = 0; // cumulative byte count since connect — used to tell silent-scale from wrong-format
   let lastWeightAt = 0;
+  let isStale = false; // true when connectionMode looks connected but no frame has arrived in STALE_AFTER_MS
+  let staleWatchdogId = null;
+  const STALE_AFTER_MS = 15000;
   let bridgeES = null;
   const BRIDGE_URL = localStorage.getItem('scale_bridge_url') || 'http://localhost:5555';
   let isKioskMode = window.location.search.includes('kiosk');
@@ -641,7 +643,7 @@ export function renderScaleHouse(): string {
     switch(e.key) {
       case ' ':
         e.preventDefault();
-        if (!activeModalId && currentLiveWeight > 100 && isWeightStable) captureWeight();
+        if (!activeModalId && currentLiveWeight > 100 && isWeightStable && isLive()) captureWeight();
         break;
       case 'Escape':
         if (activeModalId) closeModal(activeModalId);
@@ -669,6 +671,9 @@ export function renderScaleHouse(): string {
   // AUTO-STABLE-WEIGHT CAPTURE
   // ══════════════════════════════════════════
   function checkAutoCapture() {
+    // Refuse to auto-prompt on stale data — currentLiveWeight could be a
+    // 5-minute-old reading from before the bridge stalled.
+    if (!isLive()) { autoPromptShown = false; return; }
     if (isWeightStable && currentLiveWeight > 100 && !autoPromptShown) {
       if (!stableTimer) {
         stableStartWeight = currentLiveWeight;
@@ -704,6 +709,10 @@ export function renderScaleHouse(): string {
 
   function captureWeight() {
     if (currentLiveWeight <= 0) return;
+    if (!isLive() && connectionMode !== 'sim') {
+      alert('Live weight is stale — reconnect the scale or use Manual Entry.');
+      return;
+    }
     lastPrintWeight = currentLiveWeight;
     autoPromptShown = true;
     dismissAutoPrompt();
@@ -1354,11 +1363,43 @@ export function renderScaleHouse(): string {
     el.scrollTop = el.scrollHeight;
   }
 
+  // Live-data guard. The connection-status pill flips to "disconnected"
+  // only on EventSource CLOSED — laptop sleep, BT disconnect, or unplugged
+  // USB cable can leave it green forever with a frozen currentLiveWeight.
+  // This function says "is the most recent frame fresh enough that we
+  // should believe currentLiveWeight?". Sim mode is always live.
+  function isLive() {
+    if (connectionMode === 'sim') return true;
+    if (!connectionMode) return false;
+    if (!lastWeightAt) return false;
+    return (Date.now() - lastWeightAt) < STALE_AFTER_MS;
+  }
+
+  function startStaleWatchdog() {
+    if (staleWatchdogId) clearInterval(staleWatchdogId);
+    staleWatchdogId = setInterval(() => {
+      if (!connectionMode || connectionMode === 'sim') return;
+      const age = lastWeightAt ? Date.now() - lastWeightAt : Infinity;
+      if (age > STALE_AFTER_MS && !isStale) {
+        isStale = true;
+        try { logSerial('⚠ STALE: no frame in ' + Math.round(age/1000) + 's'); } catch(e) {}
+        try { updateScaleUI('stale', String(Math.round(age/1000))); } catch(e) {}
+      } else if (age < 3000 && isStale) {
+        isStale = false;
+        try { updateScaleUI('connected', connectionMode === 'bt' ? 'BT' : (connectionMode === 'bridge' ? 'BRIDGE' : 'USB')); } catch(e) {}
+      }
+    }, 2000);
+  }
+
   function onPrintTrigger(weight) {
     // Single debounce point. Every caller — serial protocol parser,
     // captureWeight() click, manualWeightCapture(), simulateWeight() — funnels
     // through here, so spamming Space or hitting "Capture" while a print frame
-    // arrives can't create duplicate tickets.
+    // arrives can't create duplicate tickets. Also refuses stale data.
+    if (!isLive()) {
+      try { logSerial('⚠ Refused print-trigger: live data is stale'); } catch(e) {}
+      return;
+    }
     if (Date.now() - lastPrintTrigger < 5000) return;
     lastPrintTrigger = Date.now();
     lastPrintWeight = weight; autoPromptShown = true; dismissAutoPrompt();
@@ -1439,6 +1480,7 @@ export function renderScaleHouse(): string {
     const manualPanel = document.getElementById('manual-entry-panel');
     if (state === 'connecting') { dot.className = 'w-3 h-3 rounded-full bg-yellow-400 animate-pulse'; text.textContent = 'Connecting...'; text.className = 'text-sm text-yellow-400 font-medium'; }
     else if (state === 'connected') { dot.className = 'w-3 h-3 rounded-full bg-green-400 pulse-green'; text.textContent = 'Connected — ' + (info||''); text.className = 'text-sm text-green-400 font-medium'; bU.classList.add('hidden'); bB.classList.add('hidden'); bD.classList.remove('hidden'); bR.classList.add('hidden'); manualPanel.classList.add('hidden'); }
+    else if (state === 'stale') { dot.className = 'w-3 h-3 rounded-full bg-yellow-400 animate-pulse'; text.textContent = 'STALE — last frame ' + (info||'?') + 's ago'; text.className = 'text-sm text-yellow-400 font-medium'; bD.classList.remove('hidden'); manualPanel.classList.remove('hidden'); }
     else if (state === 'error') { dot.className = 'w-3 h-3 rounded-full bg-red-400'; text.textContent = 'Error: ' + (info||''); text.className = 'text-sm text-red-400 font-medium'; bU.classList.remove('hidden'); bB.classList.remove('hidden'); bD.classList.add('hidden'); bR.classList.remove('hidden'); }
     else { dot.className = 'w-3 h-3 rounded-full bg-red-400'; text.textContent = 'Disconnected'; text.className = 'text-sm text-red-400 font-medium'; bU.classList.remove('hidden'); bB.classList.remove('hidden'); bD.classList.add('hidden'); if (lastConnectionMethod) bR.classList.remove('hidden'); currentLiveWeight = 0; isWeightStable = false; updateLiveWeightDisplay(); updateCaptureButton(); manualPanel.classList.remove('hidden'); }
   }
@@ -1854,6 +1896,7 @@ export function renderScaleHouse(): string {
       const savedIP = localStorage.getItem('printer_ip');
       if (savedIP) { document.getElementById('printer-ip').value = savedIP; connectPrinter(); }
       bootstrapScale();
+      startStaleWatchdog();
     } else setTimeout(init, 500);
   })();
   </script>

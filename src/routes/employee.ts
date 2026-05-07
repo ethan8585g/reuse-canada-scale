@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { hashPassword } from '../utils/passwords'
 import { photoOversize } from '../utils/photo'
+import { todayEdmonton, formatEdmonton } from '../utils/date'
 
 type Bindings = { DB: D1Database }
 
@@ -15,8 +16,11 @@ employeeRoutes.use('*', authMiddleware, employeeOnly)
 // ══════════════════════════════════════════
 employeeRoutes.get('/dashboard', async (c) => {
   try {
-    const today = new Date().toISOString().split('T')[0]
-    
+    // "Today" must be Edmonton-local. Worker runs in UTC, so plain
+     // toISOString().split('T')[0] flips at 5pm/6pm local — daily roll-ups
+     // would get the wrong day's tickets after that point.
+    const today = todayEdmonton()
+
     const [pendingPickups, todaysRoutes, openTickets, completedToday, recentPickups, recentTickets] = await Promise.all([
       c.env.DB.prepare("SELECT COUNT(*) as count FROM pickup_requests WHERE status IN ('pending', 'confirmed')").first(),
       c.env.DB.prepare("SELECT COUNT(*) as count FROM routes WHERE date = ?").bind(today).first(),
@@ -59,7 +63,7 @@ employeeRoutes.get('/dashboard', async (c) => {
       for (let i = 6; i >= 0; i--) {
         const d = new Date()
         d.setDate(d.getDate() - i)
-        days.push(d.toISOString().split('T')[0])
+        days.push(todayEdmonton(d))
       }
       const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
       for (const day of days) {
@@ -87,7 +91,7 @@ employeeRoutes.get('/dashboard', async (c) => {
       daily_stats: dailyStats,
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -136,7 +140,7 @@ employeeRoutes.post('/driver-status', async (c) => {
     ).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -145,7 +149,7 @@ employeeRoutes.post('/driver-status', async (c) => {
 // ══════════════════════════════════════════
 employeeRoutes.get('/todays-pickups-map', async (c) => {
   try {
-    const today = new Date().toISOString().split('T')[0]
+    const today = todayEdmonton()
     const { results } = await c.env.DB.prepare(
       `SELECT pr.id, pr.status, pr.estimated_tire_count, pr.preferred_date,
               c.company_name, c.address, c.city, c.lat, c.lng, c.region,
@@ -223,7 +227,7 @@ employeeRoutes.post('/pickup-proof', async (c) => {
         'Proof recorded (no customer contact found for notification)'
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -268,7 +272,7 @@ employeeRoutes.get('/customers', async (c) => {
     ).all()
     return c.json({ customers: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -279,7 +283,7 @@ employeeRoutes.get('/drivers', async (c) => {
     ).all()
     return c.json({ drivers: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -291,7 +295,7 @@ employeeRoutes.get('/vehicles', async (c) => {
     const { results } = await c.env.DB.prepare(sql).all()
     return c.json({ vehicles: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -310,7 +314,7 @@ employeeRoutes.get('/customers/all', async (c) => {
     const { results } = await c.env.DB.prepare(sql).all()
     return c.json({ customers: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -335,7 +339,7 @@ employeeRoutes.post('/customers', roleRequired('admin', 'manager'), async (c) =>
     ).run()
     return c.json({ success: true, id: result.meta.last_row_id })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -356,7 +360,7 @@ employeeRoutes.put('/customers/:id', roleRequired('admin', 'manager'), async (c)
     await c.env.DB.prepare(`UPDATE customers SET ${fields.join(', ')} WHERE id = ?`).bind(...params).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -368,7 +372,7 @@ employeeRoutes.post('/customers/:id/toggle', roleRequired('admin', 'manager'), a
     ).bind(id).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -387,7 +391,7 @@ employeeRoutes.get('/staff', async (c) => {
     const { results } = await stmt.all()
     return c.json({ employees: results })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -419,7 +423,7 @@ employeeRoutes.post('/staff', roleRequired('admin'), async (c) => {
 
     return c.json({ success: true, id: result.meta.last_row_id })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -440,7 +444,7 @@ employeeRoutes.put('/staff/:id', roleRequired('admin'), async (c) => {
     await c.env.DB.prepare(`UPDATE employees SET ${fields.join(', ')} WHERE id = ?`).bind(...params).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -452,7 +456,7 @@ employeeRoutes.post('/staff/:id/toggle', roleRequired('admin'), async (c) => {
     ).bind(id).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -474,7 +478,7 @@ employeeRoutes.post('/vehicles', roleRequired('admin', 'manager'), async (c) => 
     ).bind(name, plate_number.trim().toUpperCase(), vehicle_type, tare_weight || 0).run()
     return c.json({ success: true, id: result.meta.last_row_id })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -497,7 +501,7 @@ employeeRoutes.put('/vehicles/:id', roleRequired('admin', 'manager'), async (c) 
     await c.env.DB.prepare(`UPDATE vehicles SET ${fields.join(', ')} WHERE id = ?`).bind(...params).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -509,6 +513,6 @@ employeeRoutes.post('/vehicles/:id/toggle', roleRequired('admin', 'manager'), as
     ).bind(id).run()
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })

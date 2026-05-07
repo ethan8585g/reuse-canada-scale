@@ -163,11 +163,9 @@ export function employeePageWrapper(activePage: string, pageTitle: string, conte
     // Safety check in case CDN hasn't loaded yet
     function setupAxiosInterceptors() {
       if (typeof axios === 'undefined') {
-        console.warn('[RC-Auth] Axios not loaded yet, retrying in 200ms...');
         setTimeout(setupAxiosInterceptors, 200);
         return;
       }
-      console.log('[RC-Auth] Setting up Axios interceptors with auth token');
       axios.interceptors.request.use(config => {
         const s = JSON.parse(localStorage.getItem('rc_session') || '{}');
         if (s.token) config.headers.Authorization = 'Bearer ' + s.token;

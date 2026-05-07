@@ -379,7 +379,7 @@ export function renderDriverPortal(): string {
             </span>
           </div>
           <div class="flex items-center gap-3 text-xs text-gray-500 mb-3">
-            <span><i class="fas fa-tire mr-1"></i>\${escHtml(p.estimated_tire_count || '?')} tires</span>
+            <span><i class="fas fa-circle-dot mr-1"></i>\${escHtml(p.estimated_tire_count || '?')} tires</span>
             <span><i class="fas fa-calendar mr-1"></i>\${escHtml(p.preferred_date || 'Today')}</span>
             \${p.tire_type ? '<span><i class="fas fa-tag mr-1"></i>' + escHtml(p.tire_type) + '</span>' : ''}
           </div>

@@ -75,7 +75,7 @@ squareRoutes.post('/terminal-checkout', async (c) => {
     })
   } catch (err: any) {
     console.error('Square terminal error:', err)
-    return c.json({ error: err.message }, 500)
+    console.error('square error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -100,7 +100,7 @@ squareRoutes.get('/terminal-checkout/:id', async (c) => {
       checkout: data.checkout
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('square error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -119,7 +119,7 @@ squareRoutes.post('/terminal-checkout/:id/cancel', async (c) => {
     const data = await res.json() as any
     return c.json({ success: res.ok, checkout: data.checkout, errors: data.errors })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('square error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -159,7 +159,7 @@ squareRoutes.post('/payment', async (c) => {
       payment: data.payment
     })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('square error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -175,7 +175,7 @@ squareRoutes.get('/devices', async (c) => {
     const data = await res.json() as any
     return c.json({ devices: data.devices || [] })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('square error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -183,6 +183,19 @@ squareRoutes.get('/devices', async (c) => {
 squareRoutes.post('/cash-payment', async (c) => {
   try {
     const { scale_ticket_id, amount } = await c.req.json()
+
+    // Validate inputs — without these, "amount = -50" or
+    // "scale_ticket_id = 'DROP TABLE'" both flow straight into the UPDATE.
+    if (!Number.isInteger(scale_ticket_id) || scale_ticket_id <= 0) {
+      return c.json({ error: 'Valid scale_ticket_id required' }, 400)
+    }
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+      return c.json({ error: 'Valid positive amount required' }, 400)
+    }
+
+    // Verify the ticket exists; otherwise the payment_log row points at nothing.
+    const ticket = await c.env.DB.prepare('SELECT id, grand_total FROM scale_tickets WHERE id = ?').bind(scale_ticket_id).first()
+    if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
 
     // Idempotency: a ticket already marked paid in cash should not log again.
     const existing = await c.env.DB.prepare(
@@ -202,6 +215,6 @@ squareRoutes.post('/cash-payment', async (c) => {
 
     return c.json({ success: true })
   } catch (err: any) {
-    return c.json({ error: err.message }, 500)
+    console.error('square error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })

@@ -70,7 +70,7 @@ export function renderCustomerDashboard(): string {
       <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-            <i class="fas fa-tire text-purple-600"></i>
+            <i class="fas fa-circle-dot text-purple-600"></i>
           </div>
           <div>
             <div class="text-2xl font-bold text-gray-800" id="stat-tires">0</div>
@@ -192,7 +192,6 @@ export function renderCustomerDashboard(): string {
     // Axios auth - with safety check
     function setupCustomerAxios() {
       if (typeof axios === 'undefined') {
-        console.warn('[RC-Customer] Axios not loaded yet, retrying...');
         setTimeout(setupCustomerAxios, 200);
         return;
       }
