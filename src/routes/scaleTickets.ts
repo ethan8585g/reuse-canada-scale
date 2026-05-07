@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
+import { photoOversize } from '../utils/photo'
 
 type Bindings = { DB: D1Database }
 
@@ -9,7 +10,10 @@ export const scaleTicketRoutes = new Hono<{ Bindings: Bindings }>()
 scaleTicketRoutes.use('*', authMiddleware, employeeOnly)
 
 // Generate ticket number: RC-YYYY-NNNNN
-async function generateTicketNumber(db: D1Database): Promise<string> {
+// We pick a candidate from the highest existing number for the year, then add
+// jitter on retry so two concurrent inserts that race past the SELECT don't
+// both pick the same number and one of them collide on UNIQUE(ticket_number).
+async function generateTicketNumber(db: D1Database, attempt = 0): Promise<string> {
   const year = new Date().getFullYear()
   const prefix = `RC-${year}-`
   const last = await db.prepare(
@@ -21,7 +25,44 @@ async function generateTicketNumber(db: D1Database): Promise<string> {
     const parts = (last.ticket_number as string).split('-')
     nextNum = parseInt(parts[2]) + 1
   }
+  // On retry, add the attempt count so we skip past whatever a concurrent insert claimed.
+  nextNum += attempt
   return `${prefix}${String(nextNum).padStart(5, '0')}`
+}
+
+// Insert a scale ticket with automatic retry on ticket-number UNIQUE conflict.
+async function insertTicketWithRetry(
+  db: D1Database,
+  buildSqlAndParams: (ticketNumber: string) => { sql: string, params: any[] }
+): Promise<{ ticketNumber: string, ticketId: number }> {
+  const MAX_ATTEMPTS = 5
+  let lastErr: any = null
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const ticketNumber = await generateTicketNumber(db, attempt)
+    try {
+      const { sql, params } = buildSqlAndParams(ticketNumber)
+      const result = await db.prepare(sql).bind(...params).run()
+      return { ticketNumber, ticketId: result.meta.last_row_id as number }
+    } catch (err: any) {
+      lastErr = err
+      const msg = String(err?.message || err)
+      if (!msg.includes('UNIQUE') && !msg.includes('constraint')) throw err
+      // Otherwise loop and try the next number.
+    }
+  }
+  throw lastErr || new Error('Could not allocate ticket number after retries')
+}
+
+// Resolve the sentinel "Walk-In" customer's id. The print-trigger flow needs
+// to create a ticket BEFORE the operator knows which customer it belongs to;
+// the FK on scale_tickets.customer_id forces a placeholder, which we keep at
+// is_active=0 so it never appears in pickers. Provisioned by migration 0007.
+async function getWalkInCustomerId(db: D1Database): Promise<number> {
+  const row = await db.prepare(
+    "SELECT id FROM customers WHERE email = 'walk-in@reuse-canada.local' LIMIT 1"
+  ).first<{ id: number }>()
+  if (!row?.id) throw new Error('Walk-In sentinel customer missing — run migration 0007')
+  return row.id
 }
 
 // Audit log helper
@@ -132,14 +173,12 @@ scaleTicketRoutes.post('/', async (c) => {
       return c.json({ error: 'Customer is required' }, 400)
     }
 
-    const ticketNumber = await generateTicketNumber(c.env.DB)
+    const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'field_pending')`,
+      params: [tn, customer_id, employeeId, tire_type || 'mixed', notes || null, vehicle_plate || null],
+    }))
 
-    const result = await c.env.DB.prepare(
-      `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'field_pending')`
-    ).bind(ticketNumber, customer_id, employeeId, tire_type || 'mixed', notes || null, vehicle_plate || null).run()
-
-    const ticketId = result.meta.last_row_id as number
     await auditLog(c.env.DB, ticketId, 'created', employeeId, { source: 'office', customer_id, tire_type })
 
     return c.json({ success: true, id: ticketId, ticket_number: ticketNumber })
@@ -166,8 +205,6 @@ scaleTicketRoutes.post('/field', async (c) => {
       return c.json({ error: 'Store name, employee name, and tire count are required' }, 400)
     }
 
-    const ticketNumber = await generateTicketNumber(c.env.DB)
-
     let customerId = null
     if (pickup_request_id) {
       const pickup = await c.env.DB.prepare(
@@ -178,27 +215,29 @@ scaleTicketRoutes.post('/field', async (c) => {
 
     if (!customerId) {
       const customer = await c.env.DB.prepare(
-        'SELECT id FROM customers WHERE company_name LIKE ? LIMIT 1'
+        'SELECT id FROM customers WHERE company_name LIKE ? AND is_active = 1 LIMIT 1'
       ).bind('%' + field_store_name + '%').first()
-      customerId = customer?.id || 1
+      // If no real customer matches the store name, fall back to the Walk-In
+      // sentinel — never to id=1, which is a real customer (Kal Tire in seed).
+      customerId = customer?.id || (await getWalkInCustomerId(c.env.DB))
     }
 
     const now = new Date().toISOString()
 
-    const result = await c.env.DB.prepare(
-      `INSERT INTO scale_tickets (
-        ticket_number, pickup_request_id, customer_id, employee_id,
+    const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
+      sql: `INSERT INTO scale_tickets (
+              ticket_number, pickup_request_id, customer_id, employee_id,
+              field_store_name, field_employee_name, field_estimated_tires,
+              field_signature_data, field_cage_photo_url, field_completed_at,
+              status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'field_complete')`,
+      params: [
+        tn, pickup_request_id || null, customerId, employeeId,
         field_store_name, field_employee_name, field_estimated_tires,
-        field_signature_data, field_cage_photo_url, field_completed_at,
-        status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'field_complete')`
-    ).bind(
-      ticketNumber, pickup_request_id || null, customerId, employeeId,
-      field_store_name, field_employee_name, field_estimated_tires,
-      field_signature_data || null, field_cage_photo_url || null, now
-    ).run()
+        field_signature_data || null, field_cage_photo_url || null, now,
+      ],
+    }))
 
-    const ticketId = result.meta.last_row_id as number
     await auditLog(c.env.DB, ticketId, 'created', employeeId, { source: 'field', store: field_store_name })
 
     if (pickup_request_id) {
@@ -222,17 +261,18 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
   try {
     const { weight, photo } = await c.req.json()
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+    if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
 
     const employeeId = c.get('userId')
-    const ticketNumber = await generateTicketNumber(c.env.DB)
+    const walkInId = await getWalkInCustomerId(c.env.DB)
     const now = new Date().toISOString()
 
-    const result = await c.env.DB.prepare(
-      `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, status)
-       VALUES (?, 0, ?, 'mixed', ?, ?, ?, ?, 'weighed_in')`
-    ).bind(ticketNumber, employeeId, weight, now, photo || null, photo ? now : null).run()
+    const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, status)
+            VALUES (?, ?, ?, 'mixed', ?, ?, ?, ?, 'weighed_in')`,
+      params: [tn, walkInId, employeeId, weight, now, photo || null, photo ? now : null],
+    }))
 
-    const ticketId = result.meta.last_row_id as number
     await auditLog(c.env.DB, ticketId, 'weighed_in', employeeId, { weight, has_photo: !!photo })
 
     return c.json({
@@ -257,12 +297,18 @@ scaleTicketRoutes.post('/:id/weight', async (c) => {
     if (!type || !weight || weight <= 0) {
       return c.json({ error: 'Valid weight type and value required' }, 400)
     }
+    if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
 
     const ticket = await c.env.DB.prepare(
       'SELECT * FROM scale_tickets WHERE id = ?'
     ).bind(id).first()
 
     if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
+
+    // State machine: a voided/completed ticket is terminal — no more weights.
+    if (ticket.status === 'voided' || ticket.status === 'completed') {
+      return c.json({ error: `Cannot record weight on a ${ticket.status} ticket` }, 409)
+    }
 
     const now = new Date().toISOString()
 
@@ -300,12 +346,16 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
     const { weight, photo } = await c.req.json()
     const employeeId = c.get('userId')
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+    if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
 
     const ticket = await c.env.DB.prepare(
       'SELECT * FROM scale_tickets WHERE id = ?'
     ).bind(id).first()
     if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
     if (!ticket.weight_in) return c.json({ error: 'Ticket has no weight-in recorded' }, 400)
+    if (ticket.status === 'voided' || ticket.status === 'completed') {
+      return c.json({ error: `Cannot merge weight-out into a ${ticket.status} ticket` }, 409)
+    }
 
     const netWeight = Math.abs((ticket.weight_in as number) - weight)
     const now = new Date().toISOString()
@@ -362,6 +412,9 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
     const ticket = await c.env.DB.prepare('SELECT * FROM scale_tickets WHERE id = ?').bind(id).first()
     if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
     if (!ticket.weight_in) return c.json({ error: 'Ticket has no weight-in recorded' }, 400)
+    if (ticket.status === 'voided' || ticket.status === 'completed') {
+      return c.json({ error: `Cannot apply stored tare to a ${ticket.status} ticket` }, 409)
+    }
 
     const vehicle = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ? AND is_active = 1').bind(vehicle_id).first()
     if (!vehicle || !vehicle.stored_tare_weight) return c.json({ error: 'Vehicle has no stored tare weight' }, 400)
@@ -473,6 +526,10 @@ scaleTicketRoutes.post('/:id/void', async (c) => {
       return c.json({ error: 'A reason is required to void a ticket' }, 400)
     }
 
+    const existing = await c.env.DB.prepare('SELECT status FROM scale_tickets WHERE id = ?').bind(id).first()
+    if (!existing) return c.json({ error: 'Ticket not found' }, 404)
+    if (existing.status === 'voided') return c.json({ error: 'Ticket is already voided' }, 409)
+
     await c.env.DB.prepare(
       "UPDATE scale_tickets SET status = 'voided', voided_by = ?, void_reason = ?, updated_at = datetime('now') WHERE id = ?"
     ).bind(employeeId, reason.trim(), id).run()
@@ -489,7 +546,8 @@ scaleTicketRoutes.post('/:id/void', async (c) => {
 // PAYMENT
 // ═══════════════════════════════════════
 
-// Update payment status
+// Update payment status. Idempotent on square_payment_id: a retried Square
+// callback that re-posts the same payment_id won't duplicate the payment_log row.
 scaleTicketRoutes.post('/:id/payment', async (c) => {
   const id = c.req.param('id')
   try {
@@ -511,14 +569,34 @@ scaleTicketRoutes.post('/:id/payment', async (c) => {
     ).run()
 
     const ticket = await c.env.DB.prepare('SELECT grand_total FROM scale_tickets WHERE id = ?').bind(id).first()
-    await c.env.DB.prepare(
-      `INSERT INTO payment_log (scale_ticket_id, amount, payment_method, square_payment_id, square_checkout_id, status)
-       VALUES (?, ?, ?, ?, ?, 'completed')`
-    ).bind(id, ticket?.grand_total || 0, payment_method || 'card', square_payment_id || null, square_checkout_id || null).run()
 
-    await auditLog(c.env.DB, parseInt(id), 'payment', employeeId, { method: payment_method || 'card', amount: ticket?.grand_total })
+    // Idempotency: skip the payment_log insert when this square_payment_id has
+    // already been recorded. Backed by the partial UNIQUE index in 0009.
+    let already = false
+    if (square_payment_id) {
+      const dup = await c.env.DB.prepare(
+        'SELECT id FROM payment_log WHERE square_payment_id = ? LIMIT 1'
+      ).bind(square_payment_id).first()
+      if (dup) already = true
+    }
 
-    return c.json({ success: true })
+    if (!already) {
+      try {
+        await c.env.DB.prepare(
+          `INSERT INTO payment_log (scale_ticket_id, amount, payment_method, square_payment_id, square_checkout_id, status)
+           VALUES (?, ?, ?, ?, ?, 'completed')`
+        ).bind(id, ticket?.grand_total || 0, payment_method || 'card', square_payment_id || null, square_checkout_id || null).run()
+      } catch (e: any) {
+        // The UNIQUE index will fire if a concurrent retry got there first.
+        const msg = String(e?.message || e)
+        if (!msg.includes('UNIQUE') && !msg.includes('constraint')) throw e
+        already = true
+      }
+    }
+
+    await auditLog(c.env.DB, parseInt(id), 'payment', employeeId, { method: payment_method || 'card', amount: ticket?.grand_total, idempotent_skip: already })
+
+    return c.json({ success: true, already_recorded: already })
   } catch (err: any) {
     return c.json({ error: err.message }, 500)
   }
@@ -534,6 +612,7 @@ scaleTicketRoutes.post('/:id/photo', async (c) => {
   try {
     const { type, photo } = await c.req.json()
     if (!photo || !type) return c.json({ error: 'Photo data and type (in/out) required' }, 400)
+    if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
 
     const now = new Date().toISOString()
     if (type === 'in') {
@@ -658,10 +737,11 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
       'INSERT INTO scale_weight_edits (scale_ticket_id, field, old_value, new_value, reason, editor_id) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(parseInt(id), field, oldValue, new_value, reason.trim(), employeeId).run()
 
-    // Update the weight
-    const weightIn = field === 'weight_in' ? new_value : (ticket.weight_in as number)
-    const weightOut = field === 'weight_out' ? new_value : (ticket.weight_out as number)
-    const netWeight = weightIn && weightOut ? Math.abs(weightIn - weightOut) : (ticket.net_weight as number)
+    // Update the weight. Always recompute net_weight from the (possibly updated) pair so we never
+    // leave a stale value: if only one side exists, net is undefined; if both exist, net = |in - out|.
+    const weightIn = field === 'weight_in' ? new_value : (ticket.weight_in as number | null)
+    const weightOut = field === 'weight_out' ? new_value : (ticket.weight_out as number | null)
+    const netWeight = (weightIn && weightOut) ? Math.abs(weightIn - weightOut) : null
 
     // Recalculate pricing if net changed and ticket is completed
     let pricePerKg = ticket.price_per_kg as number
@@ -669,7 +749,7 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
     let tax = ticket.tax_amount as number
     let grandTotal = ticket.grand_total as number
 
-    if (netWeight !== ticket.net_weight && ticket.status === 'completed' && pricePerKg > 0) {
+    if (netWeight !== ticket.net_weight && ticket.status === 'completed' && pricePerKg > 0 && netWeight) {
       subtotal = netWeight * pricePerKg
       tax = subtotal * 0.05
       grandTotal = subtotal + tax
@@ -835,23 +915,27 @@ scaleTicketRoutes.post('/settlement/batch', roleRequired('admin', 'manager'), as
     const employeeId = c.get('userId')
     if (!date) return c.json({ error: 'Date required' }, 400)
 
-    // Check for existing batch
-    const existing = await c.env.DB.prepare(
-      'SELECT id FROM payment_batches WHERE batch_date = ?'
-    ).bind(date).first()
-    if (existing) return c.json({ error: 'Batch already settled for this date' }, 400)
-
-    // Get completed tickets for the date
+    // Sum only paid tickets — unpaid receivables don't belong in a settled
+    // cash batch. Backed by the UNIQUE(batch_date) index added in 0010, the
+    // INSERT below also fails atomically if two admins race.
     const { results: tickets } = await c.env.DB.prepare(
-      "SELECT id, grand_total FROM scale_tickets WHERE DATE(created_at) = ? AND status = 'completed'"
+      "SELECT id, grand_total FROM scale_tickets WHERE DATE(created_at) = ? AND status = 'completed' AND payment_status = 'paid'"
     ).bind(date).all()
 
     const totalAmount = tickets.reduce((s: number, t: any) => s + ((t.grand_total as number) || 0), 0)
     const now = new Date().toISOString()
 
-    await c.env.DB.prepare(
-      'INSERT INTO payment_batches (batch_date, ticket_count, total_amount, status, settled_by, settled_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(date, tickets.length, totalAmount, 'settled', employeeId, now).run()
+    try {
+      await c.env.DB.prepare(
+        'INSERT INTO payment_batches (batch_date, ticket_count, total_amount, status, settled_by, settled_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(date, tickets.length, totalAmount, 'settled', employeeId, now).run()
+    } catch (e: any) {
+      const msg = String(e?.message || e)
+      if (msg.includes('UNIQUE') || msg.includes('constraint')) {
+        return c.json({ error: 'Batch already settled for this date' }, 409)
+      }
+      throw e
+    }
 
     return c.json({ success: true, ticket_count: tickets.length, total_amount: totalAmount })
   } catch (err: any) {

@@ -573,7 +573,20 @@ export function renderDriverPortal(): string {
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
-          proofPhotoData = canvas.toDataURL('image/jpeg', 0.8);
+          // Drop quality progressively if the encoded photo exceeds the
+          // server's 800,000-char cap (matches src/utils/photo.ts).
+          const MAX_PHOTO_LEN = 800_000;
+          let q = 0.8;
+          proofPhotoData = canvas.toDataURL('image/jpeg', q);
+          while (proofPhotoData.length > MAX_PHOTO_LEN && q > 0.2) {
+            q -= 0.15;
+            proofPhotoData = canvas.toDataURL('image/jpeg', q);
+          }
+          if (proofPhotoData.length > MAX_PHOTO_LEN) {
+            alert('Photo is too large even at low quality — please re-take with the camera framed tighter.');
+            proofPhotoData = null;
+            return;
+          }
 
           document.getElementById('proof-preview').src = proofPhotoData;
           document.getElementById('proof-preview').classList.remove('hidden');

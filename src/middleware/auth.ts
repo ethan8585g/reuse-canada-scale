@@ -2,23 +2,47 @@ import { Hono } from 'hono'
 
 type Bindings = { DB: D1Database }
 
-// Simple auth middleware - validates session token
-export async function authMiddleware(c: any, next: any) {
+function tokenFromRequest(c: any): string | null {
   const authHeader = c.req.header('Authorization')
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.replace('Bearer ', '')
+  }
+  const cookie = c.req.header('Cookie') || ''
+  const match = cookie.match(/(?:^|;\s*)rc_session=([^;]+)/)
+  return match ? match[1] : null
+}
+
+// Validates session token (cookie preferred, Bearer accepted) and rejects
+// sessions whose underlying customer/employee row was deactivated after
+// the session was issued.
+export async function authMiddleware(c: any, next: any) {
+  const token = tokenFromRequest(c)
+  if (!token) {
     return c.json({ error: 'Unauthorized' }, 401)
   }
-  const token = authHeader.replace('Bearer ', '')
-  
+
   try {
     const session = await c.env.DB.prepare(
-      'SELECT s.*, CASE WHEN s.user_type = "customer" THEN c.company_name ELSE e.first_name || " " || e.last_name END as name FROM sessions s LEFT JOIN customers c ON s.user_type = "customer" AND s.user_id = c.id LEFT JOIN employees e ON s.user_type = "employee" AND s.user_id = e.id WHERE s.id = ? AND s.expires_at > datetime("now")'
+      `SELECT s.id, s.user_id, s.user_type, s.expires_at,
+              CASE WHEN s.user_type = 'customer' THEN c.company_name
+                   ELSE e.first_name || ' ' || e.last_name END as name,
+              CASE WHEN s.user_type = 'customer' THEN c.is_active
+                   ELSE e.is_active END as is_active
+       FROM sessions s
+       LEFT JOIN customers c ON s.user_type = 'customer' AND s.user_id = c.id
+       LEFT JOIN employees e ON s.user_type = 'employee' AND s.user_id = e.id
+       WHERE s.id = ? AND s.expires_at > datetime('now')`
     ).bind(token).first()
-    
+
     if (!session) {
       return c.json({ error: 'Session expired' }, 401)
     }
-    
+    if (session.is_active !== 1) {
+      // User was deactivated. Kill the session row so the cookie can't be reused.
+      try { await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(token).run() } catch (e) {}
+      return c.json({ error: 'Account is inactive' }, 401)
+    }
+
     c.set('session', session)
     c.set('userId', session.user_id)
     c.set('userType', session.user_type)
@@ -54,7 +78,7 @@ export function roleRequired(...roles: string[]) {
     }
     try {
       const employee = await c.env.DB.prepare(
-        'SELECT role FROM employees WHERE id = ?'
+        'SELECT role FROM employees WHERE id = ? AND is_active = 1'
       ).bind(userId).first()
       if (!employee || !roles.includes(employee.role as string)) {
         return c.json({ error: 'Insufficient permissions' }, 403)

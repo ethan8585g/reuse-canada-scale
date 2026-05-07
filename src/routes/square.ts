@@ -183,7 +183,15 @@ squareRoutes.get('/devices', async (c) => {
 squareRoutes.post('/cash-payment', async (c) => {
   try {
     const { scale_ticket_id, amount } = await c.req.json()
-    
+
+    // Idempotency: a ticket already marked paid in cash should not log again.
+    const existing = await c.env.DB.prepare(
+      "SELECT id FROM payment_log WHERE scale_ticket_id = ? AND payment_method = 'cash' AND status = 'completed' LIMIT 1"
+    ).bind(scale_ticket_id).first()
+    if (existing) {
+      return c.json({ success: true, already_recorded: true })
+    }
+
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET payment_status = 'paid', payment_method = 'cash', grand_total = ?, updated_at = datetime('now') WHERE id = ?`
     ).bind(amount, scale_ticket_id).run()

@@ -323,8 +323,20 @@ export function renderFieldForm(): string {
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
-          // Compress to JPEG at 80% quality (reduces ~8MB to ~200KB)
-          photoData = canvas.toDataURL('image/jpeg', 0.8);
+          // Compress to JPEG, dropping quality if encoded size exceeds the
+          // server cap (matches src/utils/photo.ts MAX_PHOTO_BASE64_LEN).
+          const MAX_PHOTO_LEN = 800_000;
+          let q = 0.8;
+          photoData = canvas.toDataURL('image/jpeg', q);
+          while (photoData.length > MAX_PHOTO_LEN && q > 0.2) {
+            q -= 0.15;
+            photoData = canvas.toDataURL('image/jpeg', q);
+          }
+          if (photoData.length > MAX_PHOTO_LEN) {
+            alert('Photo is too large even at low quality — please re-take with the camera framed tighter.');
+            photoData = null;
+            return;
+          }
 
           document.getElementById('photo-preview').src = photoData;
           document.getElementById('photo-preview').classList.remove('hidden');

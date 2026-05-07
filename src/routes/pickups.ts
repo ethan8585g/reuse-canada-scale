@@ -68,15 +68,37 @@ pickupRoutes.get('/:id', async (c) => {
   }
 })
 
+// Allowed pickup_request status transitions. Anything not listed here
+// (e.g. completed -> pending, cancelled -> in_progress) is rejected so
+// finished work can't be silently re-opened or re-billed.
+const PICKUP_TRANSITIONS: Record<string, string[]> = {
+  pending: ['confirmed', 'scheduled', 'cancelled'],
+  confirmed: ['scheduled', 'in_progress', 'cancelled'],
+  scheduled: ['confirmed', 'in_progress', 'cancelled'],
+  in_progress: ['completed', 'cancelled'],
+  completed: [],
+  cancelled: [],
+}
+
 // Update pickup status
 pickupRoutes.post('/:id/status', async (c) => {
   const id = c.req.param('id')
   try {
     const { status } = await c.req.json()
     const validStatuses = ['pending', 'confirmed', 'scheduled', 'in_progress', 'completed', 'cancelled']
-    
+
     if (!validStatuses.includes(status)) {
       return c.json({ error: 'Invalid status' }, 400)
+    }
+
+    const current = await c.env.DB.prepare('SELECT status FROM pickup_requests WHERE id = ?').bind(id).first()
+    if (!current) return c.json({ error: 'Pickup not found' }, 404)
+    const currentStatus = current.status as string
+    if (currentStatus !== status) {
+      const allowed = PICKUP_TRANSITIONS[currentStatus] || []
+      if (!allowed.includes(status)) {
+        return c.json({ error: `Cannot transition from ${currentStatus} to ${status}` }, 409)
+      }
     }
 
     await c.env.DB.prepare(

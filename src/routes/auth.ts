@@ -1,72 +1,141 @@
 import { Hono } from 'hono'
+import { hashPassword, verifyPassword } from '../utils/passwords'
 
 type Bindings = { DB: D1Database }
 
 export const authRoutes = new Hono<{ Bindings: Bindings }>()
 
-// Generate simple UUID-like token
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000
+
+// Rate-limit thresholds (rolling 15-minute window).
+const LOGIN_WINDOW_MIN = 15
+const LOGIN_MAX_FAILS_PER_EMAIL = 8
+const LOGIN_MAX_FAILS_PER_IP = 30
+
+// A pre-computed PBKDF2 hash of a random throwaway password. Used to keep
+// the login latency on the "no such user" path comparable to a real verify,
+// closing the email-enumeration timing oracle.
+const DUMMY_HASH = 'pbkdf2$100000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+
 function generateToken(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  let result = ''
-  for (let i = 0; i < 48; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return result
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  let s = ''
+  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0')
+  return s
 }
 
-// Login endpoint for both customer and employee
+function getClientIp(c: any): string {
+  return c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown'
+}
+
+function sessionCookie(token: string, expiresAt: Date): string {
+  const exp = expiresAt.toUTCString()
+  return `rc_session=${token}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Strict`
+}
+
+function clearSessionCookie(): string {
+  return 'rc_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
+}
+
+async function recordLoginAttempt(db: D1Database, email: string, ip: string, success: boolean) {
+  try {
+    await db.prepare(
+      'INSERT INTO login_attempts (email, ip_address, success) VALUES (?, ?, ?)'
+    ).bind(email.toLowerCase(), ip, success ? 1 : 0).run()
+  } catch (e) { /* table may not exist on first deploy; non-fatal */ }
+}
+
+async function recentFailureCount(db: D1Database, email: string, ip: string): Promise<{ byEmail: number, byIp: number }> {
+  try {
+    const since = `-${LOGIN_WINDOW_MIN} minutes`
+    const byEmail = await db.prepare(
+      "SELECT COUNT(*) as cnt FROM login_attempts WHERE email = ? AND success = 0 AND created_at > datetime('now', ?)"
+    ).bind(email.toLowerCase(), since).first()
+    const byIp = await db.prepare(
+      "SELECT COUNT(*) as cnt FROM login_attempts WHERE ip_address = ? AND success = 0 AND created_at > datetime('now', ?)"
+    ).bind(ip, since).first()
+    return { byEmail: (byEmail?.cnt as number) || 0, byIp: (byIp?.cnt as number) || 0 }
+  } catch (e) { return { byEmail: 0, byIp: 0 } }
+}
+
 authRoutes.post('/login', async (c) => {
   try {
-    const { email, password, user_type } = await c.req.json()
-    
-    if (!email || !password || !user_type) {
-      return c.json({ error: 'Email, password and user type are required' }, 400)
+    const { email, password, user_type: requestedType } = await c.req.json()
+    const ip = getClientIp(c)
+
+    if (!email || !password) {
+      return c.json({ error: 'Email and password are required' }, 400)
+    }
+
+    const loginVal = (email as string).trim()
+
+    // Brute-force gate before doing any expensive work.
+    const fails = await recentFailureCount(c.env.DB, loginVal, ip)
+    if (fails.byEmail >= LOGIN_MAX_FAILS_PER_EMAIL || fails.byIp >= LOGIN_MAX_FAILS_PER_IP) {
+      await recordLoginAttempt(c.env.DB, loginVal, ip, false)
+      return c.json({ error: 'Too many failed attempts. Try again in a few minutes.' }, 429)
     }
 
     let user: any = null
-    
-    if (user_type === 'customer') {
-      // Customer login: case-insensitive match by email/username
-      const loginVal = email.trim()
-      user = await c.env.DB.prepare(
-        'SELECT id, email, company_name, contact_name, phone, address, city, province, postal_code, password_hash FROM customers WHERE LOWER(email) = LOWER(?) AND is_active = 1'
-      ).bind(loginVal).first()
-    } else if (user_type === 'employee') {
-      // Employee login: case-insensitive match by email
-      const loginVal = email.trim()
+    let resolvedType: 'employee' | 'customer' | null = null
+
+    const tryEmployee = !requestedType || requestedType === 'employee' || requestedType === 'auto'
+    const tryCustomer = !requestedType || requestedType === 'customer' || requestedType === 'auto'
+
+    if (tryEmployee) {
       user = await c.env.DB.prepare(
         'SELECT id, email, first_name, last_name, phone, role, password_hash FROM employees WHERE LOWER(email) = LOWER(?) AND is_active = 1'
       ).bind(loginVal).first()
-    } else {
-      return c.json({ error: 'Invalid user type' }, 400)
+      if (user) resolvedType = 'employee'
     }
 
-    if (!user) {
+    if (!user && tryCustomer) {
+      user = await c.env.DB.prepare(
+        'SELECT id, email, company_name, contact_name, phone, address, city, province, postal_code, password_hash FROM customers WHERE LOWER(email) = LOWER(?) AND is_active = 1'
+      ).bind(loginVal).first()
+      if (user) resolvedType = 'customer'
+    }
+
+    // Always run a verify, even on the not-found path, so login latency does
+    // not leak whether the email exists.
+    const hashToCheck = user ? (user.password_hash as string | null) : DUMMY_HASH
+    const verify = await verifyPassword(password, hashToCheck)
+
+    if (!user || !resolvedType || !verify.ok) {
+      await recordLoginAttempt(c.env.DB, loginVal, ip, false)
       return c.json({ error: 'Invalid email or password' }, 401)
     }
 
-    // Simple password check (in production, use proper hashing like bcrypt)
-    if (user.password_hash !== password) {
-      return c.json({ error: 'Invalid email or password' }, 401)
+    if (verify.needsRehash) {
+      try {
+        const newHash = await hashPassword(password)
+        const table = resolvedType === 'employee' ? 'employees' : 'customers'
+        await c.env.DB.prepare(`UPDATE ${table} SET password_hash = ? WHERE id = ?`).bind(newHash, user.id).run()
+        // Revoke all other live sessions for this user when their password is upgraded.
+        await c.env.DB.prepare(
+          'DELETE FROM sessions WHERE user_id = ? AND user_type = ?'
+        ).bind(user.id, resolvedType).run()
+      } catch (e) { /* migration is best-effort; never block login */ }
     }
 
-    // Create session
     const token = generateToken()
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS)
 
-    // Clean up expired sessions for this user (prevents session table bloat)
     try {
       await c.env.DB.prepare(
         "DELETE FROM sessions WHERE user_id = ? AND user_type = ? AND expires_at < datetime('now')"
-      ).bind(user.id, user_type).run()
+      ).bind(user.id, resolvedType).run()
     } catch (e) { /* non-critical cleanup */ }
 
     await c.env.DB.prepare(
       'INSERT INTO sessions (id, user_id, user_type, expires_at) VALUES (?, ?, ?, ?)'
-    ).bind(token, user.id, user_type, expiresAt).run()
+    ).bind(token, user.id, resolvedType, expiresAt.toISOString()).run()
 
-    // Build response based on user type
-    if (user_type === 'customer') {
+    await recordLoginAttempt(c.env.DB, loginVal, ip, true)
+
+    c.header('Set-Cookie', sessionCookie(token, expiresAt))
+
+    if (resolvedType === 'customer') {
       return c.json({
         token,
         user_type: 'customer',
@@ -92,35 +161,58 @@ authRoutes.post('/login', async (c) => {
     }
   } catch (err: any) {
     console.error('Login error:', err)
-    return c.json({ error: 'Login failed: ' + err.message }, 500)
+    return c.json({ error: 'Login failed' }, 500)
   }
 })
 
-// Logout
-authRoutes.post('/logout', async (c) => {
+function tokenFromRequest(c: any): string | null {
   const authHeader = c.req.header('Authorization')
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.replace('Bearer ', '')
+    return authHeader.replace('Bearer ', '')
+  }
+  const cookie = c.req.header('Cookie') || ''
+  const match = cookie.match(/(?:^|;\s*)rc_session=([^;]+)/)
+  return match ? match[1] : null
+}
+
+authRoutes.post('/logout', async (c) => {
+  const token = tokenFromRequest(c)
+  if (token) {
     try {
       await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(token).run()
     } catch (e) {}
   }
+  c.header('Set-Cookie', clearSessionCookie())
   return c.json({ success: true })
 })
 
-// Verify session
-authRoutes.get('/verify', async (c) => {
-  const authHeader = c.req.header('Authorization')
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return c.json({ valid: false }, 401)
-  }
-  const token = authHeader.replace('Bearer ', '')
-  
+// Revoke every live session for the current user (e.g. after a suspicion of
+// compromise). Requires a valid current session.
+authRoutes.post('/logout-all', async (c) => {
+  const token = tokenFromRequest(c)
+  if (!token) return c.json({ error: 'Unauthorized' }, 401)
   try {
     const session = await c.env.DB.prepare(
-      'SELECT * FROM sessions WHERE id = ? AND expires_at > datetime("now")'
+      "SELECT user_id, user_type FROM sessions WHERE id = ? AND expires_at > datetime('now')"
     ).bind(token).first()
-    
+    if (!session) return c.json({ error: 'Session expired' }, 401)
+    await c.env.DB.prepare(
+      'DELETE FROM sessions WHERE user_id = ? AND user_type = ?'
+    ).bind(session.user_id, session.user_type).run()
+    c.header('Set-Cookie', clearSessionCookie())
+    return c.json({ success: true })
+  } catch (err) {
+    return c.json({ error: 'Logout failed' }, 500)
+  }
+})
+
+authRoutes.get('/verify', async (c) => {
+  const token = tokenFromRequest(c)
+  if (!token) return c.json({ valid: false }, 401)
+  try {
+    const session = await c.env.DB.prepare(
+      "SELECT * FROM sessions WHERE id = ? AND expires_at > datetime('now')"
+    ).bind(token).first()
     return c.json({ valid: !!session, user_type: session?.user_type, user_id: session?.user_id })
   } catch (err) {
     return c.json({ valid: false }, 500)

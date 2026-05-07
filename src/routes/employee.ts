@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
 import { authMiddleware, employeeOnly } from '../middleware/auth'
+import { hashPassword } from '../utils/passwords'
+import { photoOversize } from '../utils/photo'
 
 type Bindings = { DB: D1Database }
 
@@ -113,20 +115,23 @@ employeeRoutes.get('/driver-status-summary', async (c) => {
   }
 })
 
-// Update driver status (called by drivers or system)
+// Update driver status. The employee_id comes from the authenticated
+// session, NOT the request body — otherwise driver A could post location
+// updates impersonating driver B (or the dispatcher).
 employeeRoutes.post('/driver-status', async (c) => {
   try {
-    const { employee_id, status, lat, lng, route_id } = await c.req.json()
-    if (!employee_id || !status) return c.json({ error: 'employee_id and status required' }, 400)
+    const { status, lat, lng, route_id } = await c.req.json()
+    const employeeId = c.get('userId')
+    if (!status) return c.json({ error: 'status required' }, 400)
     const validStatuses = ['idle', 'on_road', 'at_pickup', 'returning']
     if (!validStatuses.includes(status)) return c.json({ error: 'Invalid status' }, 400)
 
     await c.env.DB.prepare(
-      `INSERT INTO driver_status (employee_id, status, current_route_id, last_lat, last_lng, last_updated) 
+      `INSERT INTO driver_status (employee_id, status, current_route_id, last_lat, last_lng, last_updated)
        VALUES (?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(employee_id) DO UPDATE SET status = ?, current_route_id = ?, last_lat = ?, last_lng = ?, last_updated = datetime('now')`
     ).bind(
-      employee_id, status, route_id || null, lat || null, lng || null,
+      employeeId, status, route_id || null, lat || null, lng || null,
       status, route_id || null, lat || null, lng || null
     ).run()
     return c.json({ success: true })
@@ -165,6 +170,9 @@ employeeRoutes.post('/pickup-proof', async (c) => {
   try {
     const { pickup_request_id, photo_data, latitude, longitude, notes } = await c.req.json()
     if (!pickup_request_id) return c.json({ error: 'pickup_request_id required' }, 400)
+    if (photoOversize(photo_data)) {
+      return c.json({ error: 'Photo is too large. Re-capture at lower quality and try again.' }, 413)
+    }
 
     const userId = (c as any).get('userId')
 
@@ -306,11 +314,12 @@ employeeRoutes.post('/customers', async (c) => {
     if (existing) {
       return c.json({ error: 'A customer with this username already exists' }, 409)
     }
+    const passwordHash = await hashPassword(password)
     const result = await c.env.DB.prepare(
       `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
-      email.trim(), password, company_name, contact_name,
+      email.trim(), passwordHash, company_name, contact_name,
       phone || null, address || null, city || null, province || 'AB',
       postal_code || null, lat || null, lng || null, region || 'north', notes || null
     ).run()
@@ -330,7 +339,7 @@ employeeRoutes.put('/customers/:id', async (c) => {
     for (const key of allowed) {
       if (body[key] !== undefined) { fields.push(`${key} = ?`); params.push(body[key]); }
     }
-    if (body.password) { fields.push('password_hash = ?'); params.push(body.password); }
+    if (body.password) { fields.push('password_hash = ?'); params.push(await hashPassword(body.password)); }
     if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
     fields.push("updated_at = datetime('now')")
     params.push(id)
@@ -386,9 +395,10 @@ employeeRoutes.post('/staff', async (c) => {
     if (existing) {
       return c.json({ error: 'An employee with this email already exists' }, 409)
     }
+    const passwordHash = await hashPassword(password)
     const result = await c.env.DB.prepare(
       'INSERT INTO employees (email, password_hash, first_name, last_name, phone, role) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(email.trim(), password, first_name, last_name, phone || null, role).run()
+    ).bind(email.trim(), passwordHash, first_name, last_name, phone || null, role).run()
 
     // Auto-create driver_status entry for new drivers
     if (role === 'driver') {
@@ -413,7 +423,7 @@ employeeRoutes.put('/staff/:id', async (c) => {
     for (const key of allowed) {
       if (body[key] !== undefined) { fields.push(`${key} = ?`); params.push(body[key]); }
     }
-    if (body.password) { fields.push('password_hash = ?'); params.push(body.password); }
+    if (body.password) { fields.push('password_hash = ?'); params.push(await hashPassword(body.password)); }
     if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
     fields.push("updated_at = datetime('now')")
     params.push(id)

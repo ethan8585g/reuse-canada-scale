@@ -3,7 +3,10 @@ import { employeePageWrapper } from '../utils/employeeLayout'
 
 export function renderScaleHouse(): string {
   const isKiosk = '(window.location.search.includes("kiosk"))'
-  return layout('Scale House', employeePageWrapper('scale-house', 'Scale House — Accuren AM-413', `
+  return layout('Scale House', employeePageWrapper('scale-house', 'Scale House — Truck Scale', `
+
+  <!-- ═══════ BROWSER / SETUP BANNER ═══════ -->
+  <div id="scale-setup-banner" class="hidden mb-4 rounded-xl border-2 p-4 flex items-start gap-3"></div>
 
   <!-- ═══════ WEIGHBRIDGE DISPLAY (dark panel like industrial indicator) ═══════ -->
   <div id="weighbridge-panel" class="mb-6 bg-gray-900 rounded-2xl shadow-lg border border-gray-700 overflow-hidden">
@@ -20,7 +23,10 @@ export function renderScaleHouse(): string {
         </div>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
-        <button onclick="connectUSBSerial()" id="btn-connect-usb" class="px-3 py-1.5 bg-rc-green text-white text-xs font-semibold rounded-lg hover:bg-rc-green-light btn-press transition-all flex items-center gap-1.5">
+        <button onclick="connectBridge()" id="btn-connect-bridge" class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-500 btn-press transition-all flex items-center gap-1.5" title="Local bridge — works in any browser">
+          <i class="fas fa-bolt"></i> Bridge
+        </button>
+        <button onclick="connectUSBSerial()" id="btn-connect-usb" class="px-3 py-1.5 bg-rc-green text-white text-xs font-semibold rounded-lg hover:bg-rc-green-light btn-press transition-all flex items-center gap-1.5" title="Direct USB (Chrome/Edge only)">
           <i class="fas fa-usb"></i> USB
         </button>
         <button onclick="connectBluetooth()" id="btn-connect-bt" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 btn-press transition-all flex items-center gap-1.5">
@@ -32,9 +38,101 @@ export function renderScaleHouse(): string {
         <button onclick="disconnectScale()" id="btn-disconnect-scale" class="hidden px-3 py-1.5 bg-red-500 text-white text-xs font-semibold rounded-lg hover:bg-red-600 btn-press transition-all flex items-center gap-1.5">
           <i class="fas fa-unlink"></i> Disconnect
         </button>
+        <button onclick="toggleScaleSettings()" id="btn-scale-settings" class="px-2 py-1.5 bg-gray-700 text-gray-300 text-xs rounded-lg hover:bg-gray-600" title="Scale settings — baud rate, parity, protocol">
+          <i class="fas fa-cog"></i>
+        </button>
         <button onclick="simulateWeight()" class="px-2 py-1.5 bg-gray-700 text-gray-400 text-xs rounded-lg hover:bg-gray-600" title="Simulate (dev)">
           <i class="fas fa-flask"></i>
         </button>
+      </div>
+    </div>
+
+    <!-- Scale settings drawer (hidden by default) -->
+    <div id="scale-settings-panel" class="hidden border-b border-gray-700 bg-gray-800/40 px-5 py-4">
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+        <div>
+          <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Baud Rate</label>
+          <select id="cfg-baud" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-2 py-1.5 font-mono">
+            <option value="1200">1200</option>
+            <option value="2400">2400</option>
+            <option value="4800">4800</option>
+            <option value="9600" selected>9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="115200">115200</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Data Bits</label>
+          <select id="cfg-databits" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-2 py-1.5 font-mono">
+            <option value="7">7</option>
+            <option value="8" selected>8</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Parity</label>
+          <select id="cfg-parity" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-2 py-1.5 font-mono">
+            <option value="none" selected>None</option>
+            <option value="even">Even</option>
+            <option value="odd">Odd</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Stop Bits</label>
+          <select id="cfg-stopbits" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-2 py-1.5 font-mono">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Protocol</label>
+          <select id="cfg-protocol" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-2 py-1.5">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="toledo">Toledo Continuous (binary)</option>
+            <option value="cardinal">Cardinal / Print Format</option>
+            <option value="sics">Mettler SICS / line</option>
+            <option value="ascii">Generic ASCII</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Capacity (kg)</label>
+          <input type="number" id="cfg-capacity" value="80000" min="100" step="100" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-2 py-1.5 font-mono" />
+        </div>
+      </div>
+      <div class="mt-3 flex flex-wrap items-center gap-2 justify-between">
+        <div class="flex items-center gap-3 text-[11px] text-gray-400">
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" id="cfg-hex" class="rounded" /> Show raw hex bytes
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" id="cfg-invert-sign" class="rounded" /> Invert sign (if reads negative)
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <select id="cfg-unit" class="bg-gray-900 text-white border border-gray-600 rounded px-1.5 py-0.5 font-mono">
+              <option value="kg" selected>kg</option>
+              <option value="lb">lb (auto-convert)</option>
+              <option value="t">t (tonne)</option>
+            </select>
+            Default unit
+          </label>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="saveScaleSettings()" class="px-3 py-1.5 bg-rc-green text-white text-xs font-semibold rounded-lg hover:bg-rc-green-light btn-press">
+            <i class="fas fa-save mr-1"></i> Save & Reconnect
+          </button>
+          <button onclick="resetScaleSettings()" class="px-3 py-1.5 bg-gray-700 text-gray-300 text-xs rounded-lg hover:bg-gray-600">
+            <i class="fas fa-undo mr-1"></i> Defaults
+          </button>
+        </div>
+      </div>
+      <div id="serial-help" class="hidden mt-3 p-3 bg-yellow-900/30 border border-yellow-700/50 rounded-lg text-[11px] text-yellow-200 leading-relaxed">
+        <div class="font-bold text-yellow-300 mb-1"><i class="fas fa-info-circle mr-1"></i> No serial device shown?</div>
+        Use Chrome or Edge (Web Serial isn't supported in Safari). On macOS, your USB-to-RS232 adapter needs a driver:
+        <span class="font-mono">FTDI</span> &amp; <span class="font-mono">CP210x</span> work out of the box;
+        <span class="font-mono">CH340</span> needs the WCH driver;
+        <span class="font-mono">PL2303</span> needs the Prolific driver.
+        Open Terminal and run <span class="font-mono bg-black/40 px-1 rounded">ls /dev/cu.*</span> — if you don't see a <span class="font-mono">cu.usbserial-*</span> entry, the OS isn't seeing the adapter.
       </div>
     </div>
 
@@ -80,11 +178,16 @@ export function renderScaleHouse(): string {
 
     <!-- Serial log (collapsed by default) -->
     <div id="serial-log-section" class="hidden border-t border-gray-700">
-      <div class="flex items-center justify-between px-5 py-2 bg-gray-800/30">
-        <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">AM-413 Data Feed</span>
-        <button onclick="document.getElementById('serial-log').textContent=''" class="text-xs text-gray-500 hover:text-gray-300">Clear</button>
+      <div class="flex items-center justify-between px-5 py-2 bg-gray-800/30 gap-3">
+        <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">Live Data Feed <span id="serial-log-mode" class="ml-2 text-gray-600 normal-case font-normal">— ASCII</span></span>
+        <div class="flex gap-3 text-xs">
+          <label class="text-gray-400 flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" id="log-hex-toggle" onchange="toggleSerialHex()" class="rounded" /> Hex
+          </label>
+          <button onclick="document.getElementById('serial-log').textContent=''" class="text-gray-500 hover:text-gray-300">Clear</button>
+        </div>
       </div>
-      <div id="serial-log" class="bg-gray-800 text-gray-300 font-mono text-xs p-3 max-h-20 overflow-y-auto whitespace-pre-wrap border-t border-gray-700/50"></div>
+      <div id="serial-log" class="bg-gray-800 text-gray-300 font-mono text-[11px] leading-snug p-3 max-h-32 overflow-y-auto whitespace-pre-wrap border-t border-gray-700/50"></div>
     </div>
   </div>
 
@@ -482,7 +585,7 @@ export function renderScaleHouse(): string {
   // STATE
   // ══════════════════════════════════════════
   let bluetoothDevice = null, weightCharacteristic = null, serialPort = null, serialReader = null;
-  let connectionMode = null, currentLiveWeight = 0, isWeightStable = false, serialBuffer = '';
+  let connectionMode = null, currentLiveWeight = 0, isWeightStable = false;
   let weightHistory = [], lastPrintTrigger = 0, lastPrintWeight = 0;
   let openTickets = [], pricingData = [], customersCache = [], vehiclesCache = [];
   let cameraStream = null, lastCapturedPhoto = null;
@@ -492,12 +595,39 @@ export function renderScaleHouse(): string {
   let stableTimer = null, stableStartWeight = 0, autoPromptShown = false;
   let previousWeight = 0, lastWeightTimestamp = 0;
   let lastConnectionMethod = localStorage.getItem('scale_connection_method') || null;
+  let scaleCfg = loadScaleCfg();
+  let serialBytes = []; // raw byte ring buffer (for binary protocols + hex view)
+  let totalBytesRx = 0; // cumulative byte count since connect — used to tell silent-scale from wrong-format
+  let lastWeightAt = 0;
+  let bridgeES = null;
+  const BRIDGE_URL = localStorage.getItem('scale_bridge_url') || 'http://localhost:5555';
   let isKioskMode = window.location.search.includes('kiosk');
   let activeModalId = null;
   let userRole = (JSON.parse(localStorage.getItem('rc_session') || '{}')).role || 'yard_operator';
 
+  // Detect Web Serial support up front. Safari + iOS = no support, period.
+  const SUPPORTS_WEB_SERIAL = ('serial' in navigator);
+  const SUPPORTS_WEB_BLUETOOTH = (typeof navigator !== 'undefined' && !!navigator.bluetooth);
+  const UA = navigator.userAgent || '';
+  const IS_SAFARI = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(UA);
+
   // Kiosk mode setup
   if (isKioskMode) { document.body.classList.add('kiosk-mode'); }
+
+  // Hide the BT button immediately if Web Bluetooth isn't available, so it can't be clicked.
+  // Run on DOMContentLoaded since the script tag is in the page body — guard for race anyway.
+  function hideUnsupportedConnectButtons() {
+    if (!SUPPORTS_WEB_BLUETOOTH) {
+      const btBtn = document.getElementById('btn-connect-bt');
+      if (btBtn) btBtn.classList.add('hidden');
+    }
+    if (!SUPPORTS_WEB_SERIAL) {
+      const usbBtn = document.getElementById('btn-connect-usb');
+      if (usbBtn) usbBtn.classList.add('hidden');
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hideUnsupportedConnectButtons);
+  else hideUnsupportedConnectButtons();
 
   // ══════════════════════════════════════════
   // KEYBOARD HOTKEYS
@@ -652,6 +782,19 @@ export function renderScaleHouse(): string {
     document.getElementById('btn-stop-cam').classList.add('hidden');
     document.getElementById('btn-capture').classList.add('hidden');
   }
+  // Encode the canvas as JPEG, dropping quality if the result exceeds the
+  // server's photo size cap (matches MAX_PHOTO_BASE64_LEN in src/utils/photo.ts).
+  // Returns null if even the lowest quality is too big — caller must handle.
+  const MAX_PHOTO_LEN = 800_000;
+  function canvasToCappedJpeg(canvas) {
+    const tries = [0.7, 0.5, 0.35, 0.2];
+    for (const q of tries) {
+      const url = canvas.toDataURL('image/jpeg', q);
+      if (url.length <= MAX_PHOTO_LEN) return url;
+    }
+    return null;
+  }
+
   function capturePhoto() {
     if (!cameraStream) return null;
     const video = document.getElementById('camera-preview');
@@ -660,7 +803,8 @@ export function renderScaleHouse(): string {
     canvas.getContext('2d').drawImage(video, 0, 0);
     const flash = document.getElementById('camera-flash');
     flash.classList.remove('hidden'); setTimeout(() => flash.classList.add('hidden'), 200);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+    const dataUrl = canvasToCappedJpeg(canvas);
+    if (!dataUrl) { logSerial('⚠ Photo too large to upload at any quality'); return null; }
     lastCapturedPhoto = dataUrl;
     document.getElementById('last-capture-img').src = dataUrl;
     document.getElementById('last-capture').classList.remove('hidden');
@@ -674,34 +818,336 @@ export function renderScaleHouse(): string {
   const SCALE_SERVICE_UUIDS = ['0000ffe0-0000-1000-8000-00805f9b34fb','0000fff0-0000-1000-8000-00805f9b34fb','49535343-fe7d-4ae5-8fa9-9fafd205e455','0000181d-0000-1000-8000-00805f9b34fb'];
   const NOTIFY_CHAR_UUIDS = ['0000ffe1-0000-1000-8000-00805f9b34fb','0000fff1-0000-1000-8000-00805f9b34fb','49535343-1e4d-4bd9-ba61-23c647249616','00002a9d-0000-1000-8000-00805f9b34fb'];
 
+  // ─── SETUP BANNER + BOOTSTRAP ───
+  function showSetupBanner(kind, title, body) {
+    const el = document.getElementById('scale-setup-banner');
+    if (!el) return;
+    const palette = kind === 'error' ? 'bg-red-50 border-red-300 text-red-800'
+                  : kind === 'warn'  ? 'bg-yellow-50 border-yellow-300 text-yellow-800'
+                  : 'bg-blue-50 border-blue-300 text-blue-800';
+    const icon = kind === 'error' ? 'fa-circle-exclamation' : kind === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info';
+    el.className = 'mb-4 rounded-xl border-2 p-4 flex items-start gap-3 ' + palette;
+    el.innerHTML = '<i class="fas ' + icon + ' text-xl mt-0.5"></i>' +
+      '<div class="flex-1"><div class="font-bold text-sm mb-0.5">' + title + '</div>' +
+      '<div class="text-xs leading-relaxed">' + body + '</div></div>' +
+      '<button onclick="hideSetupBanner()" class="opacity-60 hover:opacity-100 text-sm"><i class="fas fa-times"></i></button>';
+    el.classList.remove('hidden');
+  }
+  function hideSetupBanner() { document.getElementById('scale-setup-banner')?.classList.add('hidden'); }
+
+  // ─── LOCAL BRIDGE (works in ANY browser) ───
+  async function probeBridge(timeoutMs) {
+    timeoutMs = timeoutMs || 1500;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(BRIDGE_URL + '/status', { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(t);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) { return null; }
+  }
+
+  async function pushBridgeCfg() {
+    try {
+      await fetch(BRIDGE_URL + '/reconfigure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baud: scaleCfg.baud, dataBits: scaleCfg.dataBits, stopBits: scaleCfg.stopBits, parity: scaleCfg.parity }),
+      });
+    } catch (e) {}
+  }
+
+  async function connectBridge() {
+    updateScaleUI('connecting');
+    const status = await probeBridge();
+    if (!status) {
+      updateScaleUI('disconnected');
+      showSetupBanner('warn', 'Scale Bridge not running on this Mac',
+        'Open <b>Terminal</b>, <span class="font-mono bg-black/10 px-1 rounded">cd</span> into the project folder, and run:<br>' +
+        '<div class="font-mono bg-black/10 px-2 py-1 mt-1 inline-block rounded text-xs">node scale-bridge.js</div><br>' +
+        'Leave that window open. Then click the <b>Bridge</b> button again. Once it\\'s running, the page will auto-connect on every reload — and works in <b>any browser</b> (Safari included).');
+      return;
+    }
+    await pushBridgeCfg();
+    if (bridgeES) { try { bridgeES.close(); } catch {} bridgeES = null; }
+    bridgeES = new EventSource(BRIDGE_URL + '/scale');
+    bridgeES.onopen = () => {
+      connectionMode = 'bridge'; lastConnectionMethod = 'bridge';
+      localStorage.setItem('scale_connection_method', 'bridge');
+      const portInfo = scaleCfg.baud + ' ' + scaleCfg.dataBits + scaleCfg.parity[0].toUpperCase() + scaleCfg.stopBits;
+      updateScaleUI('connected', 'Bridge ' + (status.port || '?') + ' @ ' + portInfo);
+      showConnectionMode('Bridge · ' + (status.port ? status.port.replace(/^\\/dev\\//,'') : 'no-port') + ' · ' + scaleCfg.protocol);
+      hideSetupBanner();
+      document.getElementById('manual-entry-panel').classList.add('hidden');
+      lastWeightAt = 0;
+      setTimeout(() => {
+        if (connectionMode === 'bridge' && !lastWeightAt) {
+          showSetupBanner('warn', 'Bridge connected, but no scale data',
+            (status.port ? 'Bridge is reading <span class="font-mono">' + status.port + '</span> but no bytes have arrived. ' : 'Bridge is running but no serial port was found. ') +
+            'Check that the cable is plugged in and that your scale indicator is set to <b>continuous output</b> (sometimes called "Stream", "Print", or "Demand"). Try a different baud rate in the gear-icon settings.');
+          document.getElementById('scale-settings-panel')?.classList.remove('hidden');
+        }
+      }, 8000);
+    };
+    bridgeES.onmessage = (e) => {
+      try {
+        const bin = atob(e.data);
+        totalBytesRx += bin.length;
+        for (let i = 0; i < bin.length; i++) serialBytes.push(bin.charCodeAt(i));
+        if (serialBytes.length > 4096) serialBytes.splice(0, serialBytes.length - 4096);
+        processSerialBuffer();
+      } catch (err) {}
+    };
+    bridgeES.onerror = () => {
+      // EventSource auto-reconnects on its own; we just reflect status.
+      if (bridgeES && bridgeES.readyState === EventSource.CLOSED) {
+        updateScaleUI('disconnected');
+      }
+    };
+  }
+
+  function disconnectBridge() {
+    if (bridgeES) { try { bridgeES.close(); } catch {} bridgeES = null; }
+  }
+
+  async function bootstrapScale() {
+    // Hide BT button entirely when unsupported, to avoid confusing the operator.
+    const btBtn = document.getElementById('btn-connect-bt');
+    if (!SUPPORTS_WEB_BLUETOOTH && btBtn) btBtn.classList.add('hidden');
+    // Try the local bridge first — it works in every browser, no permission prompt needed.
+    const status = await probeBridge(800);
+    if (status) {
+      logSerial('[bridge] detected — auto-connecting');
+      await connectBridge();
+      return;
+    }
+    if (!SUPPORTS_WEB_SERIAL) {
+      const browser = IS_SAFARI ? 'Safari' : (/firefox/i.test(UA) ? 'Firefox' : 'this browser');
+      showSetupBanner('warn', 'To use ' + browser + ', start the Scale Bridge',
+        browser + ' cannot read USB-serial devices directly. To make Scale House work in <b>any</b> browser, run a one-line bridge on this Mac:<br>' +
+        '<div class="font-mono bg-black/10 px-2 py-1 mt-2 mb-1 inline-block rounded text-xs">node scale-bridge.js</div><br>' +
+        '(Open Terminal, <span class="font-mono">cd</span> into the project folder, paste that, hit Enter. Leave the window open.) Then click the green <b>Bridge</b> button above. The page will auto-connect on every future reload.');
+      return;
+    }
+    // Auto-reopen a previously-authorized USB port (no picker needed).
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (ports && ports.length) {
+        try {
+          updateScaleUI('connecting');
+          serialPort = ports[0];
+          await openSerialPortSafe(serialPort);
+          connectionMode = 'usb'; lastConnectionMethod = 'usb';
+          localStorage.setItem('scale_connection_method', 'usb');
+          const portInfo = scaleCfg.baud + ' ' + scaleCfg.dataBits + scaleCfg.parity[0].toUpperCase() + scaleCfg.stopBits;
+          updateScaleUI('connected', 'USB ' + portInfo + ' (auto)');
+          showConnectionMode('USB ' + portInfo + ' · ' + scaleCfg.protocol);
+          readSerialStream();
+          document.getElementById('manual-entry-panel').classList.add('hidden');
+          lastWeightAt = 0;
+          setTimeout(() => {
+            if (connectionMode === 'usb' && !lastWeightAt) {
+              showSetupBanner('warn', 'Connected, but no weight is being parsed yet',
+                'Try a different baud rate or protocol in the gear-icon settings. If the data feed below shows nothing, the scale indicator may not be sending continuous output — check its menu for "Continuous", "Stream", or "Print Mode".');
+              document.getElementById('scale-settings-panel')?.classList.remove('hidden');
+            }
+          }, 8000);
+          return;
+        } catch (e) {
+          updateScaleUI('disconnected');
+          explainSerialOpenError(e);
+          // Fall through to the prompt below.
+        }
+      }
+      showSetupBanner('info', 'Connect the truck scale',
+        'Click the green <b>USB</b> button above and pick the <span class="font-mono">cu.usbserial-*</span> entry for your RS-232 adapter. If you don\\'t see one in the picker, the OS isn\\'t seeing the adapter — install your USB-serial driver (FTDI/CP210x are plug-and-play; CH340 and PL2303 need a driver).');
+    } catch (err) {
+      logSerial('[init] getPorts failed: ' + err.message);
+    }
+    // React to physical plug/unplug events.
+    if (navigator.serial.addEventListener) {
+      navigator.serial.addEventListener('connect', () => {
+        if (!connectionMode) { hideSetupBanner(); bootstrapScale(); }
+      });
+      navigator.serial.addEventListener('disconnect', () => {
+        if (connectionMode === 'usb') { updateScaleUI('disconnected'); }
+      });
+    }
+  }
+
+  // ─── SCALE SETTINGS (persisted in localStorage) ───
+  function loadScaleCfg() {
+    const d = { baud: 9600, dataBits: 8, stopBits: 1, parity: 'none', protocol: 'auto', capacity: 80000, unit: 'kg', invertSign: false, hex: false };
+    try {
+      const raw = localStorage.getItem('scale_cfg');
+      if (!raw) return d;
+      return Object.assign(d, JSON.parse(raw));
+    } catch (e) { return d; }
+  }
+  function persistScaleCfg() { localStorage.setItem('scale_cfg', JSON.stringify(scaleCfg)); }
+  function applyScaleCfgToUI() {
+    const $ = (id) => document.getElementById(id);
+    if (!$('cfg-baud')) return;
+    $('cfg-baud').value = String(scaleCfg.baud);
+    $('cfg-databits').value = String(scaleCfg.dataBits);
+    $('cfg-stopbits').value = String(scaleCfg.stopBits);
+    $('cfg-parity').value = scaleCfg.parity;
+    $('cfg-protocol').value = scaleCfg.protocol;
+    $('cfg-capacity').value = String(scaleCfg.capacity);
+    $('cfg-unit').value = scaleCfg.unit;
+    $('cfg-hex').checked = !!scaleCfg.hex;
+    $('cfg-invert-sign').checked = !!scaleCfg.invertSign;
+    $('log-hex-toggle').checked = !!scaleCfg.hex;
+    document.getElementById('serial-log-mode').textContent = scaleCfg.hex ? '— HEX (last 32 bytes)' : '— ASCII';
+  }
+  function toggleScaleSettings() {
+    const p = document.getElementById('scale-settings-panel');
+    p.classList.toggle('hidden');
+    if (!p.classList.contains('hidden')) applyScaleCfgToUI();
+  }
+  async function saveScaleSettings() {
+    const $ = (id) => document.getElementById(id);
+    scaleCfg = {
+      baud: parseInt($('cfg-baud').value, 10),
+      dataBits: parseInt($('cfg-databits').value, 10),
+      stopBits: parseInt($('cfg-stopbits').value, 10),
+      parity: $('cfg-parity').value,
+      protocol: $('cfg-protocol').value,
+      capacity: Math.max(100, parseInt($('cfg-capacity').value, 10) || 80000),
+      unit: $('cfg-unit').value,
+      invertSign: $('cfg-invert-sign').checked,
+      hex: $('cfg-hex').checked,
+    };
+    persistScaleCfg();
+    document.getElementById('log-hex-toggle').checked = scaleCfg.hex;
+    document.getElementById('serial-log-mode').textContent = scaleCfg.hex ? '— HEX (last 32 bytes)' : '— ASCII';
+    if (connectionMode === 'usb') {
+      await disconnectScale();
+      await connectUSBSerial();
+    } else if (connectionMode === 'bridge') {
+      await pushBridgeCfg();
+      // EventSource keeps streaming; bridge re-reads serial with new cfg.
+    }
+  }
+  function resetScaleSettings() {
+    localStorage.removeItem('scale_cfg');
+    scaleCfg = loadScaleCfg();
+    applyScaleCfgToUI();
+  }
+  function toggleSerialHex() {
+    scaleCfg.hex = document.getElementById('log-hex-toggle').checked;
+    persistScaleCfg();
+    document.getElementById('serial-log-mode').textContent = scaleCfg.hex ? '— HEX (last 32 bytes)' : '— ASCII';
+  }
+
+  // Safely open a Web Serial port. The "Failed to open serial port" error happens
+  // when something else still holds the port — stale claim from a prior tab, the
+  // scale-bridge.js process, or a half-released handle. Try closing first, then
+  // retry once before giving up.
+  async function openSerialPortSafe(port) {
+    const opts = {
+      baudRate: scaleCfg.baud, dataBits: scaleCfg.dataBits, stopBits: scaleCfg.stopBits,
+      parity: scaleCfg.parity, flowControl: 'none',
+    };
+    try {
+      await port.open(opts);
+      return;
+    } catch (err) {
+      const msg = (err && err.message) || '';
+      if (!/Failed to open|already open|InvalidStateError/i.test(msg) && err.name !== 'InvalidStateError') throw err;
+      try { await port.close(); } catch {}
+      await new Promise(r => setTimeout(r, 250));
+      await port.open(opts);
+    }
+  }
+
+  function explainSerialOpenError(err) {
+    const msg = (err && err.message) || String(err);
+    if (/Failed to open|already open|InvalidStateError/i.test(msg) || err.name === 'InvalidStateError') {
+      showSetupBanner('error', 'Serial port is already in use',
+        'Another tab, a previous Scale House session, or the <span class="font-mono">scale-bridge.js</span> process is still holding the USB-RS232 adapter. ' +
+        'Close any other Scale House tabs, stop the bridge with Ctrl+C in Terminal if it\\'s running, then try again. ' +
+        'If that doesn\\'t clear it, unplug the adapter for 5 seconds and plug it back in.');
+    } else {
+      showSetupBanner('error', 'Could not open the serial port', msg);
+    }
+    document.getElementById('scale-settings-panel')?.classList.remove('hidden');
+  }
+
   async function connectUSBSerial() {
-    if (!('serial' in navigator)) { alert('Web Serial not supported.'); return; }
+    if (!('serial' in navigator)) {
+      showSetupBanner('error', 'Web Serial not supported in this browser',
+        'You appear to be using ' + (IS_SAFARI ? 'Safari' : 'a browser without Web Serial') + '. Open this page in Chrome or Edge on desktop, then click the green USB button again.');
+      document.getElementById('serial-help')?.classList.remove('hidden');
+      document.getElementById('scale-settings-panel')?.classList.remove('hidden');
+      return;
+    }
     try {
       updateScaleUI('connecting');
       serialPort = await navigator.serial.requestPort();
-      await serialPort.open({ baudRate: 9600, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+      await openSerialPortSafe(serialPort);
       connectionMode = 'usb'; lastConnectionMethod = 'usb';
       localStorage.setItem('scale_connection_method', 'usb');
-      updateScaleUI('connected', 'USB @ 9600');
-      showConnectionMode('USB Serial');
+      const portInfo = scaleCfg.baud + ' ' + scaleCfg.dataBits + (scaleCfg.parity[0].toUpperCase()) + scaleCfg.stopBits;
+      updateScaleUI('connected', 'USB ' + portInfo);
+      showConnectionMode('USB ' + portInfo + ' · ' + scaleCfg.protocol);
       readSerialStream();
       document.getElementById('manual-entry-panel').classList.add('hidden');
+      // Watchdog: differentiate "scale is completely silent" from "scale is talking
+      // but we can't decode it" — radically different fixes.
+      lastWeightAt = 0;
+      totalBytesRx = 0;
+      setTimeout(() => {
+        if (connectionMode !== 'usb' || lastWeightAt) return;
+        if (totalBytesRx === 0) {
+          logSerial('[!] No bytes received in 8s — the scale isn\\'t streaming. Check the indicator\\'s output mode (set to "Continuous" / "Stream" / "Print Mode = CONT") and verify the RS-232 cable is wired correctly (TX↔RX, GND↔GND).');
+          showSetupBanner('warn', 'Connected, but the scale is silent',
+            'The serial port opened but <b>0 bytes</b> have arrived in 8 seconds. The scale isn\\'t transmitting. Most likely: the indicator\\'s output mode is set to "Print on demand" instead of "Continuous". Check the indicator\\'s setup menu for an output/serial-mode option (often labeled CONT, STR, or "Continuous"). If that\\'s already set, the RS-232 cable may need TX/RX swapped (a null-modem adapter).');
+        } else {
+          logSerial('[!] Received ' + totalBytesRx + ' bytes but none parsed — wrong baud or protocol. Try 4800, 19200, or 2400 in settings.');
+          showSetupBanner('warn', 'Bytes arriving but not decoding',
+            'The scale is sending data (' + totalBytesRx + ' bytes received) but no parser claimed them. This is a baud-rate or protocol mismatch. Try a different baud rate in the gear-icon settings (4800, 19200, or 2400 are most common). The data feed below shows a hex peek so you can see what\\'s arriving.');
+        }
+        document.getElementById('scale-settings-panel')?.classList.remove('hidden');
+      }, 8000);
     } catch (err) {
-      if (err.name !== 'NotFoundError') { updateScaleUI('error', err.message); } else updateScaleUI('disconnected');
+      if (err.name === 'NotFoundError') {
+        // User cancelled the picker, OR no devices were available.
+        updateScaleUI('disconnected');
+        document.getElementById('serial-help')?.classList.remove('hidden');
+      } else {
+        updateScaleUI('error', err.message);
+        explainSerialOpenError(err);
+      }
     }
   }
   async function readSerialStream() {
     if (!serialPort?.readable) return;
-    const decoder = new TextDecoderStream();
-    serialPort.readable.pipeTo(decoder.writable);
-    const reader = decoder.readable.getReader();
+    const reader = serialPort.readable.getReader();
     serialReader = reader;
-    try { while (true) { const { value, done } = await reader.read(); if (done) break; if (value) { serialBuffer += value; processSerialBuffer(); } } }
-    catch (err) { if (err.name !== 'TypeError') logSerial('[USB] Error: ' + err.message); }
-    finally { reader.releaseLock(); }
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.length) {
+          totalBytesRx += value.length;
+          for (let i = 0; i < value.length; i++) serialBytes.push(value[i]);
+          if (serialBytes.length > 4096) serialBytes.splice(0, serialBytes.length - 4096);
+          processSerialBuffer();
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'TypeError') logSerial('[USB] Error: ' + err.message);
+    } finally {
+      reader.releaseLock();
+    }
   }
   async function connectBluetooth() {
-    if (!navigator.bluetooth) { alert('Web Bluetooth not supported.'); return; }
+    if (!navigator.bluetooth) {
+      showSetupBanner('error', 'Web Bluetooth not supported in this browser', 'Use Chrome or Edge on desktop. The truck scale is wired via USB anyway — click the green USB button instead.');
+      return;
+    }
     try {
       updateScaleUI('connecting');
       bluetoothDevice = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SCALE_SERVICE_UUIDS });
@@ -715,7 +1161,12 @@ export function renderScaleHouse(): string {
       if (!ch) { const chars = await service.getCharacteristics(); for (const c of chars) { if (c.properties.notify || c.properties.indicate) { ch = c; break; } } }
       if (!ch) throw new Error('No data characteristic');
       await ch.startNotifications();
-      ch.addEventListener('characteristicvaluechanged', (e) => { serialBuffer += new TextDecoder().decode(e.target.value.buffer); processSerialBuffer(); });
+      ch.addEventListener('characteristicvaluechanged', (e) => {
+        const bytes = new Uint8Array(e.target.value.buffer);
+        for (let i = 0; i < bytes.length; i++) serialBytes.push(bytes[i]);
+        if (serialBytes.length > 4096) serialBytes.splice(0, serialBytes.length - 4096);
+        processSerialBuffer();
+      });
       weightCharacteristic = ch; connectionMode = 'bluetooth'; lastConnectionMethod = 'bluetooth';
       localStorage.setItem('scale_connection_method', 'bluetooth');
       updateScaleUI('connected', bluetoothDevice.name || 'BT');
@@ -728,44 +1179,188 @@ export function renderScaleHouse(): string {
   function onBTDisconnected() { weightCharacteristic = null; bluetoothDevice = null; connectionMode = null; updateScaleUI('disconnected'); }
 
   async function reconnectScale() {
-    if (lastConnectionMethod === 'usb') await connectUSBSerial();
+    if (lastConnectionMethod === 'bridge') await connectBridge();
+    else if (lastConnectionMethod === 'usb') await connectUSBSerial();
     else if (lastConnectionMethod === 'bluetooth') await connectBluetooth();
   }
 
-  function processSerialBuffer() {
-    const lines = serialBuffer.split(/\\r?\\n|\\r/);
-    serialBuffer = lines.pop() || '';
-    for (const line of lines) { const t = line.trim(); if (!t) continue; logSerial(t); parseWeightLine(t); }
+  // ─── PROTOCOL DECODERS ───
+  // Toledo Continuous: <STX> <SWA> <SWB> <SWC> 6×weight 6×tare <CR> [chk]  (17 or 18 bytes)
+  //   SWA bits 0-1: decimal divisor (000=x100, 001=x10, 010=x1, 011=x0.1, 100=x0.01, 101=x0.001)
+  //   SWB bit 0: NET indicator, bit 1: SIGN (1=neg), bit 3: MOTION (1=unstable),
+  //              bit 4: lb/kg (0=lb, 1=kg), bit 5: PRINT request
+  function tryToledoContinuous() {
+    while (serialBytes.length >= 17) {
+      const stx = serialBytes.indexOf(0x02);
+      if (stx < 0) { serialBytes.length = 0; return false; }
+      if (stx > 0) serialBytes.splice(0, stx);
+      if (serialBytes.length < 17) return false;
+      // CR must appear at position 14 (no checksum) or 15 (with checksum)
+      const cr14 = serialBytes[14] === 0x0D;
+      const cr15 = serialBytes.length >= 18 && serialBytes[15] === 0x0D;
+      if (!cr14 && !cr15) { serialBytes.shift(); continue; }
+      const frameLen = cr14 ? 15 : 16;
+      const SWA = serialBytes[1], SWB = serialBytes[2];
+      const wDigits = String.fromCharCode(...serialBytes.slice(8, 14));
+      if (!/^[\\d ]{6}$/.test(wDigits)) { serialBytes.shift(); continue; }
+      const dpTable = [100, 10, 1, 0.1, 0.01, 0.001];
+      const dpIdx = SWA & 0x07;
+      const mult = dpTable[dpIdx] !== undefined ? dpTable[dpIdx] : 1;
+      let w = parseInt(wDigits.replace(/ /g,'0'), 10) * mult;
+      const negative = (SWB & 0x02) !== 0;
+      const motion = (SWB & 0x08) !== 0;
+      const isKg = (SWB & 0x10) !== 0;
+      const printReq = (SWB & 0x20) !== 0;
+      if (negative) w = -w;
+      if (!isKg) w *= 0.453592; // lb → kg
+      logFrame('[TOLEDO]', serialBytes.slice(0, frameLen), 'w=' + w.toFixed(1) + 'kg ' + (motion?'MOT':'STB') + (printReq?' PRINT':''));
+      acceptWeight(w, !motion, printReq);
+      serialBytes.splice(0, frameLen);
+      return true;
+    }
+    return false;
   }
 
-  function parseWeightLine(line) {
-    let weight = 0, isStable = false, isPrint = false;
-    const wm = line.match(/(ST|US)\\s*,\\s*(GS|NT)\\s*,\\s*([-+]?[\\d.]+)\\s*(kg|lb)?/i);
-    if (wm) { isStable = wm[1].toUpperCase() === 'ST'; weight = parseFloat(wm[3]); if (wm[4]?.toLowerCase() === 'lb') weight *= 0.453592; }
-    if (!weight) { const sm = line.match(/([+-]?)\\s*(\\d+\\.?\\d*)\\s*(kg|lb|t)?/i); if (sm) { weight = parseFloat(sm[2]); if (sm[1]==='-') weight=-weight; if (sm[3]) { if(sm[3].toLowerCase()==='lb') weight*=0.453592; if(sm[3].toLowerCase()==='t') weight*=1000; } } }
-    if (!weight) { const rm = line.match(/^\\s*(\\d{3,7})\\s*$/); if (rm) { weight = parseFloat(rm[1]); if (weight > 50000) weight /= 10; } }
-    if (line.includes('\\x02') || line.match(/^P[\\s,]/i) || (isStable && line.includes('ST'))) isPrint = isStable;
+  // Cardinal Print Format: <STX> "  12345 lb GR" <CR>(<LF>)
+  function tryCardinalPrint() {
+    const stx = serialBytes.indexOf(0x02);
+    if (stx < 0) return false;
+    const cr = serialBytes.indexOf(0x0D, stx);
+    if (cr < 0) return false;
+    const frame = serialBytes.slice(stx + 1, cr);
+    const text = String.fromCharCode(...frame).trim();
+    const m = text.match(/([-+]?[\\d.,]+)\\s*(kg|lb|t)?\\s*(GR|NT|TR)?/i);
+    if (m) {
+      let w = parseFloat(m[1].replace(/,/g,''));
+      const u = (m[2]||scaleCfg.unit).toLowerCase();
+      if (u === 'lb') w *= 0.453592; else if (u === 't') w *= 1000;
+      logFrame('[CARD]', serialBytes.slice(stx, cr+1), 'w=' + w.toFixed(1) + 'kg');
+      acceptWeight(w, true, true);
+    }
+    serialBytes.splice(0, cr + 1);
+    return true;
+  }
 
-    if (weight > 0 && weight <= 80000) {
-      checkWeightSpike(weight);
-      currentLiveWeight = Math.round(weight * 10) / 10;
-      weightHistory.push(currentLiveWeight);
-      if (weightHistory.length > 5) weightHistory.shift();
-      const delta = weightHistory.length >= 3 ? Math.max(...weightHistory) - Math.min(...weightHistory) : 999;
-      isWeightStable = isStable || delta < 20;
-      updateLiveWeightDisplay();
-      checkAutoCapture();
-      updateCaptureButton();
-
-      if (isPrint && isWeightStable && (Date.now() - lastPrintTrigger > 5000)) {
-        lastPrintTrigger = Date.now(); lastPrintWeight = currentLiveWeight;
-        logSerial('>>> PRINT TRIGGER: ' + currentLiveWeight + ' kg');
-        onPrintTrigger(currentLiveWeight);
-      }
+  // Mettler SICS / line-oriented ASCII (CR/LF terminated)
+  function tryAsciiLine() {
+    let consumed = false;
+    while (true) {
+      const nl = serialBytes.findIndex(b => b === 0x0A || b === 0x0D);
+      if (nl < 0) return consumed;
+      const lineBytes = serialBytes.slice(0, nl);
+      // consume the terminator + any paired CR/LF
+      let cut = nl + 1;
+      if (serialBytes[nl] === 0x0D && serialBytes[nl+1] === 0x0A) cut = nl + 2;
+      else if (serialBytes[nl] === 0x0A && serialBytes[nl+1] === 0x0D) cut = nl + 2;
+      serialBytes.splice(0, cut);
+      consumed = true;
+      const line = String.fromCharCode(...lineBytes).replace(/[\\x00-\\x1F\\x7F]/g,'').trim();
+      if (!line) continue;
+      logSerial(line);
+      parseAsciiWeight(line);
     }
   }
 
+  function parseAsciiWeight(line) {
+    let weight = NaN, isStable = false, isPrint = false, hasUnit = '';
+    // SICS / Mettler: "S S      12.345 kg" or "ST,GS,12345 kg"
+    let m = line.match(/(ST|US|S\\s+[SD])\\s*,?\\s*(GS|NT)?\\s*,?\\s*([-+]?[\\d.,]+)\\s*(kg|lb|t)?/i);
+    if (m) { isStable = /S$|ST/.test(m[1].toUpperCase().replace(/\\s+/g,'')); weight = parseFloat(m[3].replace(/,/g,'')); hasUnit = (m[4]||'').toLowerCase(); }
+    // Generic "  12345.6 kg" or "12345 lb"
+    if (!isFinite(weight)) {
+      m = line.match(/([+-]?)\\s*([\\d]{1,7}(?:[.,][\\d]+)?)\\s*(kg|lb|t)?\\s*(GR|NT|TR)?\\s*$/i);
+      if (m) { weight = parseFloat(m[2].replace(/,/g,'')); if (m[1]==='-') weight = -weight; hasUnit = (m[3]||'').toLowerCase(); }
+    }
+    // Bare integer: assume kg, but if huge (>capacity*10) try /10 (implicit decimal)
+    if (!isFinite(weight)) {
+      m = line.match(/^\\s*([-+]?)(\\d{3,7})\\s*$/);
+      if (m) { weight = parseFloat(m[2]); if (m[1]==='-') weight = -weight; if (Math.abs(weight) > scaleCfg.capacity) weight /= 10; }
+    }
+    if (!isFinite(weight)) return;
+    const unit = hasUnit || scaleCfg.unit;
+    if (unit === 'lb') weight *= 0.453592;
+    else if (unit === 't') weight *= 1000;
+    isPrint = isStable && /\\bP\\b|PRINT/i.test(line);
+    acceptWeight(weight, isStable, isPrint);
+  }
+
+  function acceptWeight(weight, isStable, isPrint) {
+    if (scaleCfg.invertSign) weight = -weight;
+    if (!isFinite(weight)) return;
+    // Permit 0 to indicate empty scale, but capacity check guards against junk frames.
+    if (Math.abs(weight) > scaleCfg.capacity * 1.2) return;
+    lastWeightAt = Date.now();
+    if (weight > 0) checkWeightSpike(weight);
+    currentLiveWeight = Math.round(weight * 10) / 10;
+    weightHistory.push(currentLiveWeight);
+    if (weightHistory.length > 5) weightHistory.shift();
+    const delta = weightHistory.length >= 3 ? Math.max(...weightHistory) - Math.min(...weightHistory) : 999;
+    isWeightStable = isStable || delta < 20;
+    updateLiveWeightDisplay();
+    checkAutoCapture();
+    updateCaptureButton();
+    if (isPrint && isWeightStable && currentLiveWeight > 100) {
+      logSerial('>>> PRINT TRIGGER: ' + currentLiveWeight + ' kg');
+      onPrintTrigger(currentLiveWeight);
+    }
+  }
+
+  function processSerialBuffer() {
+    if (!serialBytes.length) return;
+    if (scaleCfg.hex) renderHexTail();
+    const startLen = serialBytes.length;
+    const proto = scaleCfg.protocol;
+    let progress = true;
+    // Run protocol decoders. In auto mode, try the binary framer first because
+    // binary frames don't terminate on newline so the line parser would never consume them.
+    let safety = 32;
+    while (progress && safety-- > 0) {
+      progress = false;
+      if (proto === 'toledo' || proto === 'auto') if (tryToledoContinuous()) progress = true;
+      if (proto === 'cardinal' || proto === 'auto') if (tryCardinalPrint()) progress = true;
+      if (proto === 'sics' || proto === 'ascii' || proto === 'auto') if (tryAsciiLine()) progress = true;
+    }
+    // If no decoder claimed bytes, surface a hex peek so the operator can see what's
+    // actually arriving — otherwise the feed sits silent and there's nothing to diagnose.
+    if (!scaleCfg.hex && serialBytes.length === startLen && serialBytes.length >= 8) {
+      renderHexTail();
+    }
+    // Cap buffer growth if no decoder is consuming bytes
+    if (serialBytes.length > 2048) serialBytes.splice(0, serialBytes.length - 1024);
+  }
+
+  function logFrame(tag, bytes, summary) {
+    if (scaleCfg.hex) {
+      const hex = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join(' ');
+      logSerial(tag + ' ' + hex + '  ' + summary);
+    } else {
+      logSerial(tag + ' ' + summary);
+    }
+  }
+
+  function renderHexTail() {
+    const tail = serialBytes.slice(-32);
+    const hex = tail.map(b => b.toString(16).padStart(2,'0')).join(' ');
+    const ascii = tail.map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+    document.getElementById('serial-log-mode').textContent = '— HEX (last 32 bytes)';
+    const el = document.getElementById('serial-log');
+    if (!el) return;
+    // Replace last 'tail' line if it starts with HEX>
+    const lines = el.textContent.split('\\n');
+    if (lines[lines.length-1].startsWith('HEX>')) lines.pop();
+    else if (lines.length > 1 && lines[lines.length-2].startsWith('HEX>')) lines.splice(-2,1);
+    lines.push('HEX> ' + hex + '  |' + ascii + '|');
+    el.textContent = lines.join('\\n');
+    el.scrollTop = el.scrollHeight;
+  }
+
   function onPrintTrigger(weight) {
+    // Single debounce point. Every caller — serial protocol parser,
+    // captureWeight() click, manualWeightCapture(), simulateWeight() — funnels
+    // through here, so spamming Space or hitting "Capture" while a print frame
+    // arrives can't create duplicate tickets.
+    if (Date.now() - lastPrintTrigger < 5000) return;
+    lastPrintTrigger = Date.now();
     lastPrintWeight = weight; autoPromptShown = true; dismissAutoPrompt();
     autoCapturePhoto();
     const card = document.getElementById('print-trigger-card');
@@ -792,7 +1387,8 @@ export function renderScaleHouse(): string {
     bluetoothDevice = null; weightCharacteristic = null;
     if (serialReader) { try { await serialReader.cancel(); } catch(e) {} serialReader = null; }
     if (serialPort) { try { await serialPort.close(); } catch(e) {} serialPort = null; }
-    serialBuffer = ''; connectionMode = null;
+    disconnectBridge();
+    serialBytes.length = 0; connectionMode = null;
     updateScaleUI('disconnected');
     document.getElementById('connection-mode-badge').classList.add('hidden');
     document.getElementById('serial-log-section').classList.add('hidden');
@@ -819,8 +1415,9 @@ export function renderScaleHouse(): string {
     const b = document.getElementById('connection-mode-badge');
     document.getElementById('connection-mode-text').textContent = mode;
     b.classList.remove('hidden');
-    b.className = mode.includes('USB') ? 'px-2.5 py-1 rounded-full text-xs font-bold bg-green-900/50 text-green-400' :
-                  mode.includes('Blue') ? 'px-2.5 py-1 rounded-full text-xs font-bold bg-blue-900/50 text-blue-400' :
+    b.className = mode.includes('Bridge') ? 'px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-900/50 text-emerald-300' :
+                  mode.includes('USB')    ? 'px-2.5 py-1 rounded-full text-xs font-bold bg-green-900/50 text-green-400' :
+                  mode.includes('Blue')   ? 'px-2.5 py-1 rounded-full text-xs font-bold bg-blue-900/50 text-blue-400' :
                   'px-2.5 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-300';
     document.getElementById('serial-log-section').classList.remove('hidden');
   }
@@ -1166,7 +1763,10 @@ export function renderScaleHouse(): string {
     finally { hideLoading(); }
   }
 
-  // Payments
+  // Payments. After dispatching to Square Terminal we poll the checkout
+  // until it resolves to COMPLETED/CANCELED/CANCEL_REQUESTED, with a 90s
+  // overall timeout — otherwise the operator has no signal whether the tap
+  // succeeded.
   async function sendToSquare(ticketId) {
     try {
       const res = await axios.get('/api/scale-tickets/'+ticketId);
@@ -1174,9 +1774,44 @@ export function renderScaleHouse(): string {
       if (total <= 0) { alert('No amount'); return; }
       showLoading('Sending to Square...');
       const sqRes = await axios.post('/api/square/terminal-checkout', { amount_cents: Math.round(total*100), ticket_number: t.ticket_number, customer_name: t.company_name||'Walk-in', note: 'Scale Ticket '+t.ticket_number });
-      if (sqRes.data.success) { await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'pending', payment_method:'card', square_checkout_id: sqRes.data.checkout_id }); hideLoading(); alert('Sent $'+total.toFixed(2)+' to Square. Waiting for tap...'); }
-    } catch(err) { alert(err.response?.data?.error || 'Square failed'); }
-    finally { hideLoading(); }
+      if (!sqRes.data.success) { hideLoading(); alert('Square failed to accept the checkout'); return; }
+      const checkoutId = sqRes.data.checkout_id;
+      await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'pending', payment_method:'card', square_checkout_id: checkoutId });
+
+      const result = await pollSquareCheckout(checkoutId, total);
+      hideLoading();
+      if (result.status === 'COMPLETED') {
+        const paymentId = (result.payment_ids && result.payment_ids[0]) || null;
+        await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'paid', payment_method:'card', square_checkout_id: checkoutId, square_payment_id: paymentId });
+        closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement(); autoPrintReceipt(ticketId);
+      } else if (result.status === 'CANCELED' || result.status === 'CANCEL_REQUESTED') {
+        alert('Square checkout was cancelled. Ticket left unpaid.');
+      } else if (result.status === 'TIMED_OUT') {
+        if (confirm('Square has not confirmed the tap after 90s. Cancel the checkout?')) {
+          try { await axios.post('/api/square/terminal-checkout/'+checkoutId+'/cancel'); } catch(e) {}
+        }
+      } else {
+        alert('Square ended in status: ' + result.status);
+      }
+    } catch(err) { hideLoading(); alert(err.response?.data?.error || 'Square failed'); }
+  }
+
+  async function pollSquareCheckout(checkoutId, total) {
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 90_000;
+    const POLL_MS = 2_000;
+    showLoading('Waiting for tap... ($'+total.toFixed(2)+')');
+    while (Date.now() - startedAt < TIMEOUT_MS) {
+      try {
+        const r = await axios.get('/api/square/terminal-checkout/'+checkoutId);
+        const status = r.data.status;
+        if (status && status !== 'PENDING' && status !== 'IN_PROGRESS') {
+          return { status, payment_ids: r.data.payment_ids };
+        }
+      } catch (e) { /* keep polling — transient errors are common during tap */ }
+      await new Promise(r => setTimeout(r, POLL_MS));
+    }
+    return { status: 'TIMED_OUT' };
   }
 
   async function recordCash(ticketId) {
@@ -1218,6 +1853,7 @@ export function renderScaleHouse(): string {
       enumerateCameras(); startAutoRefresh();
       const savedIP = localStorage.getItem('printer_ip');
       if (savedIP) { document.getElementById('printer-ip').value = savedIP; connectPrinter(); }
+      bootstrapScale();
     } else setTimeout(init, 500);
   })();
   </script>
