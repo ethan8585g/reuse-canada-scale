@@ -196,12 +196,12 @@ export function renderEmployeeDashboard(): string {
                     <i class="fas fa-\${p.status === 'pending' ? 'clock text-yellow-600' : 'truck-pickup text-gray-500'} text-xs"></i>
                   </div>
                   <div>
-                    <div class="font-semibold text-sm text-gray-800">\${p.company_name || 'Unknown'}</div>
-                    <div class="text-xs text-gray-500">\${p.estimated_tire_count} \${p.tire_type || ''} tires \${p.preferred_date ? '- ' + p.preferred_date : ''}</div>
+                    <div class="font-semibold text-sm text-gray-800">\${escHtml(p.company_name || 'Unknown')}</div>
+                    <div class="text-xs text-gray-500">\${escHtml(p.estimated_tire_count)} \${escHtml(p.tire_type || '')} tires \${p.preferred_date ? '- ' + escHtml(p.preferred_date) : ''}</div>
                   </div>
                 </div>
                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${getStatusClass(p.status)}">
-                  \${p.status.replace('_',' ').toUpperCase()}
+                  \${escHtml((p.status || '').replace('_',' ').toUpperCase())}
                 </span>
               </a>
             \`).join('');
@@ -214,11 +214,11 @@ export function renderEmployeeDashboard(): string {
             ticketsDiv.innerHTML = d.recent_tickets.map(t => \`
               <a href="/employee/scale-tickets" class="px-5 py-4 flex items-center justify-between hover:bg-orange-50 cursor-pointer transition-colors duration-150 block">
                 <div>
-                  <div class="font-semibold text-sm text-gray-800">\${t.ticket_number}</div>
-                  <div class="text-xs text-gray-500">\${t.field_store_name || t.company_name || 'N/A'} - \${t.net_weight ? t.net_weight + ' kg' : 'Pending weigh'}</div>
+                  <div class="font-semibold text-sm text-gray-800">\${escHtml(t.ticket_number)}</div>
+                  <div class="text-xs text-gray-500">\${escHtml(t.field_store_name || t.company_name || 'N/A')} - \${t.net_weight ? escHtml(t.net_weight) + ' kg' : 'Pending weigh'}</div>
                 </div>
                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${getTicketStatusClass(t.status)}">
-                  \${t.status.replace('_',' ').toUpperCase()}
+                  \${escHtml((t.status || '').replace('_',' ').toUpperCase())}
                 </span>
               </a>
             \`).join('');

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { authMiddleware, employeeOnly } from '../middleware/auth'
+import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 
 type Bindings = { DB: D1Database }
 
@@ -19,8 +19,9 @@ pricingRoutes.get('/', async (c) => {
   }
 })
 
-// Update pricing
-pricingRoutes.post('/:id', async (c) => {
+// Update pricing — admin/manager only. Money rates change billing for every
+// scale ticket, so drivers and yard operators must not be able to write here.
+pricingRoutes.post('/:id', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     const { price_per_kg, price_per_tire } = await c.req.json()

@@ -1,4 +1,6 @@
 // ── Layout wrapper for all pages ──────────
+import { ESC_HTML_SCRIPT } from './escHtml'
+
 export function layout(title: string, bodyContent: string, extraHead: string = ''): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -70,6 +72,7 @@ export function layout(title: string, bodyContent: string, extraHead: string = '
     ::-webkit-scrollbar-thumb { background: #1B5E20; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #2E7D32; }
   </style>
+  ${ESC_HTML_SCRIPT}
   ${extraHead}
 </head>
 <body class="bg-[#F8FAFB] min-h-screen">

@@ -117,7 +117,7 @@ export function renderScaleTickets(): string {
               class="w-full px-4 py-4 border-2 border-gray-200 rounded-xl text-2xl font-bold text-center focus:border-rc-green outline-none"
               placeholder="0.0">
             <p class="text-xs text-gray-400 mt-2 text-center">
-              <i class="fas fa-info-circle mr-1"></i>Enter reading from Accuren AM-413 indicator
+              <i class="fas fa-info-circle mr-1"></i>Enter reading from Western APX (AM5332C) indicator
             </p>
           </div>
           <div class="flex gap-3">
@@ -203,15 +203,15 @@ export function renderScaleTickets(): string {
             const photoIcon = t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '';
             const receiptIcon = t.receipt_printed ? '<i class="fas fa-print text-blue-400 text-[10px] ml-1" title="Receipt printed"></i>' : '';
             const manualIcon = t.manual_entry ? '<i class="fas fa-keyboard text-orange-400 text-[10px] ml-1" title="Manual entry"></i>' : '';
-            const voidInfo = t.status === 'voided' && t.void_reason ? ' title="' + t.void_reason.replace(/"/g,'&quot;') + '"' : '';
+            const voidInfo = t.status === 'voided' && t.void_reason ? ' title="' + escAttr(t.void_reason) + '"' : '';
             return \`
             <tr class="border-b border-gray-100/60 hover:bg-gray-50/80 cursor-pointer transition-colors duration-150" onclick="viewTicket(\${t.id})">
-              <td class="px-4 py-3 text-sm font-mono font-bold text-rc-green">\${t.ticket_number}\${photoIcon}\${receiptIcon}\${manualIcon}</td>
-              <td class="px-4 py-3 text-sm text-gray-800">\${t.company_name || t.field_store_name || 'N/A'}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">\${t.employee_name || 'N/A'}</td>
+              <td class="px-4 py-3 text-sm font-mono font-bold text-rc-green">\${escHtml(t.ticket_number)}\${photoIcon}\${receiptIcon}\${manualIcon}</td>
+              <td class="px-4 py-3 text-sm text-gray-800">\${escHtml(t.company_name || t.field_store_name || 'N/A')}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">\${escHtml(t.employee_name || 'N/A')}</td>
               <td class="px-4 py-3">
                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${ticketStatusColors[t.status] || 'bg-gray-100'}" \${voidInfo}>
-                  \${t.status.replace(/_/g,' ').toUpperCase()}
+                  \${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}
                 </span>
               </td>
               <td class="px-4 py-3 text-sm font-mono">\${t.weight_in ? parseFloat(t.weight_in).toFixed(1) + ' kg' : '-'}</td>
@@ -291,10 +291,10 @@ export function renderScaleTickets(): string {
           ]);
           const custSelect = document.getElementById('ticket-customer');
           custSelect.innerHTML = '<option value="">Select customer...</option>' +
-            (custRes.data.customers || []).map(c => \`<option value="\${c.id}">\${c.company_name} - \${c.contact_name}</option>\`).join('');
+            (custRes.data.customers || []).map(c => \`<option value="\${c.id}">\${escHtml(c.company_name)} - \${escHtml(c.contact_name)}</option>\`).join('');
           const vehSelect = document.getElementById('ticket-vehicle');
           vehSelect.innerHTML = '<option value="">Select vehicle...</option>' +
-            (vehRes.data.vehicles || []).map(v => \`<option value="\${v.id}">\${v.name} (\${v.plate_number})</option>\`).join('');
+            (vehRes.data.vehicles || []).map(v => \`<option value="\${v.id}">\${escHtml(v.name)} (\${escHtml(v.plate_number)})</option>\`).join('');
         } catch (err) {
           console.error('Failed to load dropdown data:', err);
         }
@@ -370,11 +370,11 @@ export function renderScaleTickets(): string {
               <div>
                 <h4 class="font-bold text-gray-700 mb-3 flex items-center gap-2"><i class="fas fa-info-circle text-rc-green"></i> Ticket Info</h4>
                 <div class="space-y-2 text-sm">
-                  <div class="flex justify-between"><span class="text-gray-500">Ticket #</span><span class="font-mono font-bold">\${t.ticket_number}</span></div>
-                  <div class="flex justify-between"><span class="text-gray-500">Status</span><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${ticketStatusColors[t.status]}">\${t.status.replace(/_/g,' ').toUpperCase()}</span></div>
-                  <div class="flex justify-between"><span class="text-gray-500">Customer</span><span class="font-semibold">\${t.company_name || 'N/A'}</span></div>
-                  <div class="flex justify-between"><span class="text-gray-500">Operator</span><span>\${t.employee_name || 'N/A'}</span></div>
-                  <div class="flex justify-between"><span class="text-gray-500">Material</span><span class="capitalize">\${(t.tire_type || 'N/A').replace('_',' ')}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Ticket #</span><span class="font-mono font-bold">\${escHtml(t.ticket_number)}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Status</span><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${ticketStatusColors[t.status]}">\${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Customer</span><span class="font-semibold">\${escHtml(t.company_name || 'N/A')}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Operator</span><span>\${escHtml(t.employee_name || 'N/A')}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Material</span><span class="capitalize">\${escHtml((t.tire_type || 'N/A').replace('_',' '))}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Created</span><span>\${new Date(t.created_at).toLocaleString('en-CA')}</span></div>
                   \${t.vehicle_tare_used ? '<div class="flex justify-between"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>' : ''}
                   \${t.receipt_printed ? '<div class="flex justify-between"><span class="text-gray-500">Receipt</span><span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-print mr-1"></i>Printed</span></div>' : ''}
@@ -394,16 +394,16 @@ export function renderScaleTickets(): string {
             <div class="mt-6 pt-6 border-t border-gray-100">
               <h4 class="font-bold text-gray-700 mb-3 flex items-center gap-2"><i class="fas fa-tablet-alt text-purple-600"></i> Field Data (Customer Site)</h4>
               <div class="grid md:grid-cols-2 gap-4 text-sm">
-                <div><span class="text-gray-500">Store Name:</span> <span class="font-semibold">\${t.field_store_name || 'N/A'}</span></div>
-                <div><span class="text-gray-500">Employee Name:</span> <span class="font-semibold">\${t.field_employee_name || 'N/A'}</span></div>
-                <div><span class="text-gray-500">Est. Tires:</span> <span class="font-semibold">\${t.field_estimated_tires || 'N/A'}</span></div>
+                <div><span class="text-gray-500">Store Name:</span> <span class="font-semibold">\${escHtml(t.field_store_name || 'N/A')}</span></div>
+                <div><span class="text-gray-500">Employee Name:</span> <span class="font-semibold">\${escHtml(t.field_employee_name || 'N/A')}</span></div>
+                <div><span class="text-gray-500">Est. Tires:</span> <span class="font-semibold">\${escHtml(t.field_estimated_tires || 'N/A')}</span></div>
                 <div><span class="text-gray-500">Field Completed:</span> <span>\${t.field_completed_at ? new Date(t.field_completed_at).toLocaleString('en-CA') : 'N/A'}</span></div>
               </div>
-              \${t.field_cage_photo_url ? \`<div class="mt-4"><img src="\${t.field_cage_photo_url}" class="rounded-xl max-h-48 border border-gray-200" alt="Tire cage photo"></div>\` : ''}
-              \${t.field_signature_data ? \`<div class="mt-4"><p class="text-xs text-gray-500 mb-1">Customer Signature:</p><img src="\${t.field_signature_data}" class="border border-gray-200 rounded-lg max-h-24 bg-white" alt="Signature"></div>\` : ''}
+              \${t.field_cage_photo_url ? \`<div class="mt-4"><img src="\${escAttr(t.field_cage_photo_url)}" class="rounded-xl max-h-48 border border-gray-200" alt="Tire cage photo"></div>\` : ''}
+              \${t.field_signature_data ? \`<div class="mt-4"><p class="text-xs text-gray-500 mb-1">Customer Signature:</p><img src="\${escAttr(t.field_signature_data)}" class="border border-gray-200 rounded-lg max-h-24 bg-white" alt="Signature"></div>\` : ''}
             </div>
             \` : ''}
-            \${t.notes ? \`<div class="mt-4 p-3 bg-gray-50 rounded-lg text-sm text-gray-600"><i class="fas fa-sticky-note mr-1"></i> \${t.notes}</div>\` : ''}
+            \${t.notes ? \`<div class="mt-4 p-3 bg-gray-50 rounded-lg text-sm text-gray-600"><i class="fas fa-sticky-note mr-1"></i> \${escHtml(t.notes)}</div>\` : ''}
           \` + photosHtml + voidInfo + auditHtml;
           document.getElementById('detail-modal').style.display = 'flex';
         } catch (err) {

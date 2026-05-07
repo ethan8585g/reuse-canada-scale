@@ -228,13 +228,13 @@ export function renderCustomerManagement(): string {
         tbody.innerHTML = customers.map(c => \`
           <tr class="hover:bg-gray-50">
             <td class="px-4 py-3">
-              <div class="font-semibold text-sm text-gray-800">\${c.company_name}</div>
-              <div class="text-xs text-gray-400">\${c.phone || 'No phone'}</div>
+              <div class="font-semibold text-sm text-gray-800">\${escHtml(c.company_name)}</div>
+              <div class="text-xs text-gray-400">\${escHtml(c.phone || 'No phone')}</div>
             </td>
-            <td class="px-4 py-3 text-sm text-gray-700">\${c.contact_name}</td>
-            <td class="px-4 py-3 text-sm text-gray-500">\${c.address ? c.address + ', ' : ''}\${c.city || ''} \${c.province || ''}</td>
-            <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${{'north':'bg-blue-50 text-blue-700','south':'bg-red-50 text-red-700','east':'bg-green-50 text-green-700','west':'bg-purple-50 text-purple-700'}[c.region] || 'bg-gray-50 text-gray-600'}">\${(c.region || 'N/A').toUpperCase()}</span></td>
-            <td class="px-4 py-3"><span class="font-mono text-sm bg-gray-100 px-2 py-1 rounded">\${c.email}</span></td>
+            <td class="px-4 py-3 text-sm text-gray-700">\${escHtml(c.contact_name)}</td>
+            <td class="px-4 py-3 text-sm text-gray-500">\${c.address ? escHtml(c.address) + ', ' : ''}\${escHtml(c.city || '')} \${escHtml(c.province || '')}</td>
+            <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${{'north':'bg-blue-50 text-blue-700','south':'bg-red-50 text-red-700','east':'bg-green-50 text-green-700','west':'bg-purple-50 text-purple-700'}[c.region] || 'bg-gray-50 text-gray-600'}">\${escHtml((c.region || 'N/A').toUpperCase())}</span></td>
+            <td class="px-4 py-3"><span class="font-mono text-sm bg-gray-100 px-2 py-1 rounded">\${escHtml(c.email)}</span></td>
             <td class="px-4 py-3">
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${c.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
                 \${c.is_active ? 'ACTIVE' : 'INACTIVE'}

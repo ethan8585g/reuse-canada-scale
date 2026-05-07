@@ -157,10 +157,10 @@ export function renderRouting(): string {
               <div class="p-4 hover:bg-gray-50 cursor-pointer transition-colors \${selectedRouteId === r.id ? 'bg-green-50 border-l-4 border-rc-green' : ''}" onclick="selectRoute(\${r.id})">
                 <div class="flex items-center justify-between">
                   <div>
-                    <div class="font-semibold text-sm text-gray-800">\${r.name}</div>
+                    <div class="font-semibold text-sm text-gray-800">\${escHtml(r.name)}</div>
                     <div class="text-xs text-gray-500 mt-1">
-                      <i class="fas fa-user mr-1"></i>\${r.driver_name || 'Unassigned'}
-                      \${r.vehicle ? ' | <i class="fas fa-truck mr-1"></i>' + r.vehicle : ''}
+                      <i class="fas fa-user mr-1"></i>\${escHtml(r.driver_name || 'Unassigned')}
+                      \${r.vehicle ? ' | <i class="fas fa-truck mr-1"></i>' + escHtml(r.vehicle) : ''}
                     </div>
                     <div class="text-xs text-gray-400 mt-1">
                       \${r.stop_count || 0} stops
@@ -171,7 +171,7 @@ export function renderRouting(): string {
                     r.status === 'planned' ? 'bg-blue-100 text-blue-700' :
                     r.status === 'in_progress' ? 'bg-orange-100 text-orange-700' :
                     'bg-green-100 text-green-700'
-                  }">\${r.status.replace('_',' ').toUpperCase()}</span>
+                  }">\${escHtml((r.status || '').replace('_',' ').toUpperCase())}</span>
                 </div>
               </div>
             \`).join('');
@@ -266,15 +266,15 @@ export function renderRouting(): string {
                     \${s.status === 'completed' ? '<i class="fas fa-check"></i>' : i + 1}
                   </div>
                   <div class="flex-1">
-                    <div class="font-semibold text-sm text-gray-800">\${s.company_name || 'Stop ' + (i+1)}</div>
-                    <div class="text-xs text-gray-500">\${s.address || 'No address'}</div>
-                    <div class="text-xs text-gray-400 mt-0.5">\${s.estimated_tire_count ? s.estimated_tire_count + ' est. tires' : ''}</div>
+                    <div class="font-semibold text-sm text-gray-800">\${escHtml(s.company_name || 'Stop ' + (i+1))}</div>
+                    <div class="text-xs text-gray-500">\${escHtml(s.address || 'No address')}</div>
+                    <div class="text-xs text-gray-400 mt-0.5">\${s.estimated_tire_count ? escHtml(s.estimated_tire_count) + ' est. tires' : ''}</div>
                   </div>
                   <span class="px-2 py-0.5 rounded-full text-xs font-semibold \${
-                    s.status === 'completed' ? 'bg-green-100 text-green-700' : 
-                    s.status === 'arrived' ? 'bg-orange-100 text-orange-700' : 
+                    s.status === 'completed' ? 'bg-green-100 text-green-700' :
+                    s.status === 'arrived' ? 'bg-orange-100 text-orange-700' :
                     s.status === 'skipped' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
-                  }">\${s.status.toUpperCase()}</span>
+                  }">\${escHtml((s.status || '').toUpperCase())}</span>
                 </div>
                 \`).join('')}
 
@@ -359,7 +359,7 @@ export function renderRouting(): string {
           const key = res.data.key;
           if (!key) {
             console.warn('No Google Maps API key configured');
-            showMapFallback('No Google Maps API key configured. Add GOOGLE_MAPS_API_KEY to .dev.vars');
+            showMapFallback('Google Maps key not found. Add it in Cloudflare Pages → Settings → Environment Variables as maps_key.');
             return;
           }
           const script = document.createElement('script');

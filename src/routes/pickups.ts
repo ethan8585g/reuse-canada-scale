@@ -8,23 +8,32 @@ export const pickupRoutes = new Hono<{ Bindings: Bindings }>()
 // Apply auth middleware
 pickupRoutes.use('*', authMiddleware, employeeOnly)
 
-// List pickup requests with filters (including region)
+// List pickup requests with filters (including region). Drivers see only
+// pickups assigned to them; the previous client-side filter was bypassable.
 pickupRoutes.get('/', async (c) => {
   try {
     const status = c.req.query('status')
     const date = c.req.query('date')
     const region = c.req.query('region')
-    
+
+    const userId = c.get('userId')
+    const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(userId).first()
+    const isDriver = (me?.role as string) === 'driver'
+
     let sql = `SELECT pr.*, c.company_name, c.contact_name, c.phone, c.address, c.city, c.lat, c.lng, c.region,
                e.first_name || ' ' || e.last_name as assigned_employee_name
-               FROM pickup_requests pr 
-               LEFT JOIN customers c ON pr.customer_id = c.id 
+               FROM pickup_requests pr
+               LEFT JOIN customers c ON pr.customer_id = c.id
                LEFT JOIN employees e ON pr.assigned_employee_id = e.id
                WHERE 1=1`
     const params: any[] = []
-    
+
+    if (isDriver) {
+      sql += ' AND pr.assigned_employee_id = ?'
+      params.push(userId)
+    }
+
     if (status) {
-      // Support multiple statuses via repeated param or comma-separated
       const statuses = status.split(',')
       sql += ` AND pr.status IN (${statuses.map(() => '?').join(',')})`
       params.push(...statuses)

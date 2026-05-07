@@ -371,17 +371,17 @@ export function renderDriverPortal(): string {
         <div class="p-4 hover:bg-gray-50 transition-colors">
           <div class="flex items-center justify-between mb-2">
             <div>
-              <div class="font-bold text-gray-800">\${p.company_name || 'Unknown'}</div>
-              <div class="text-xs text-gray-500"><i class="fas fa-map-marker-alt mr-1"></i>\${p.address || ''}, \${p.city || ''}</div>
+              <div class="font-bold text-gray-800">\${escHtml(p.company_name || 'Unknown')}</div>
+              <div class="text-xs text-gray-500"><i class="fas fa-map-marker-alt mr-1"></i>\${escHtml(p.address || '')}, \${escHtml(p.city || '')}</div>
             </div>
             <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${p.status === 'in_progress' ? 'bg-orange-100 text-orange-700' : 'bg-indigo-100 text-indigo-700'}">
-              \${p.status.replace('_',' ').toUpperCase()}
+              \${escHtml((p.status || '').replace('_',' ').toUpperCase())}
             </span>
           </div>
           <div class="flex items-center gap-3 text-xs text-gray-500 mb-3">
-            <span><i class="fas fa-tire mr-1"></i>\${p.estimated_tire_count || '?'} tires</span>
-            <span><i class="fas fa-calendar mr-1"></i>\${p.preferred_date || 'Today'}</span>
-            \${p.tire_type ? '<span><i class="fas fa-tag mr-1"></i>' + p.tire_type + '</span>' : ''}
+            <span><i class="fas fa-tire mr-1"></i>\${escHtml(p.estimated_tire_count || '?')} tires</span>
+            <span><i class="fas fa-calendar mr-1"></i>\${escHtml(p.preferred_date || 'Today')}</span>
+            \${p.tire_type ? '<span><i class="fas fa-tag mr-1"></i>' + escHtml(p.tire_type) + '</span>' : ''}
           </div>
           <div class="flex gap-2">
             \${p.status === 'scheduled' ? \`
@@ -389,7 +389,7 @@ export function renderDriverPortal(): string {
                 <i class="fas fa-truck mr-1"></i> Start Pickup
               </button>
             \` : ''}
-            <button onclick="openProofModal(\${p.id}, '\${(p.company_name || '').replace(/'/g, "\\\\'")}')" class="flex-1 px-3 py-2 bg-rc-green text-white text-sm font-semibold rounded-lg hover:bg-rc-green-light">
+            <button onclick="openProofModal(\${p.id}, '\${(p.company_name || '').replace(/[\\\\'"<>]/g, '')}')" class="flex-1 px-3 py-2 bg-rc-green text-white text-sm font-semibold rounded-lg hover:bg-rc-green-light">
               <i class="fas fa-camera mr-1"></i> Upload Proof
             </button>
             \${p.status === 'in_progress' ? \`
@@ -441,17 +441,17 @@ export function renderDriverPortal(): string {
           <div class="p-4 hover:bg-gray-50 transition-colors">
             <div class="flex items-center justify-between mb-2">
               <div>
-                <div class="font-bold text-gray-800">\${r.name || 'Route'}</div>
-                <div class="text-xs text-gray-500"><i class="fas fa-calendar mr-1"></i>\${r.date || ''}</div>
+                <div class="font-bold text-gray-800">\${escHtml(r.name || 'Route')}</div>
+                <div class="text-xs text-gray-500"><i class="fas fa-calendar mr-1"></i>\${escHtml(r.date || '')}</div>
               </div>
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${statusColors[r.status] || 'bg-gray-100 text-gray-600'}">
-                \${(r.status || 'planned').replace('_',' ').toUpperCase()}
+                \${escHtml((r.status || 'planned').replace('_',' ').toUpperCase())}
               </span>
             </div>
             <div class="flex items-center gap-3 text-xs text-gray-500">
-              \${r.total_distance_km ? '<span><i class="fas fa-road mr-1"></i>' + r.total_distance_km + ' km</span>' : ''}
-              \${r.total_duration_minutes ? '<span><i class="fas fa-clock mr-1"></i>' + r.total_duration_minutes + ' min</span>' : ''}
-              <span><i class="fas fa-truck mr-1"></i>\${r.vehicle || 'No vehicle'}</span>
+              \${r.total_distance_km ? '<span><i class="fas fa-road mr-1"></i>' + escHtml(r.total_distance_km) + ' km</span>' : ''}
+              \${r.total_duration_minutes ? '<span><i class="fas fa-clock mr-1"></i>' + escHtml(r.total_duration_minutes) + ' min</span>' : ''}
+              <span><i class="fas fa-truck mr-1"></i>\${escHtml(r.vehicle || 'No vehicle')}</span>
             </div>
           </div>
           \`;
@@ -489,11 +489,11 @@ export function renderDriverPortal(): string {
           <div class="p-4 hover:bg-gray-50 transition-colors">
             <div class="flex items-center justify-between mb-1">
               <div>
-                <div class="font-mono text-sm font-bold text-rc-green">\${t.ticket_number}</div>
-                <div class="text-xs text-gray-500">\${t.company_name || t.field_store_name || 'Walk-in'}</div>
+                <div class="font-mono text-sm font-bold text-rc-green">\${escHtml(t.ticket_number)}</div>
+                <div class="text-xs text-gray-500">\${escHtml(t.company_name || t.field_store_name || 'Walk-in')}</div>
               </div>
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${statusColors[t.status] || 'bg-gray-100 text-gray-600'}">
-                \${t.status.replace(/_/g,' ').toUpperCase()}
+                \${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}
               </span>
             </div>
             <div class="flex items-center gap-3 text-xs text-gray-500 mt-1">

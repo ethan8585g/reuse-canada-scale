@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { authMiddleware, employeeOnly } from '../middleware/auth'
+import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { hashPassword } from '../utils/passwords'
 import { photoOversize } from '../utils/photo'
 
@@ -176,6 +176,16 @@ employeeRoutes.post('/pickup-proof', async (c) => {
 
     const userId = (c as any).get('userId')
 
+    // Drivers can only file proof for pickups assigned to them. Without this
+    // a driver could POST any pickup_request_id and stamp themselves on it.
+    const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(userId).first()
+    if ((me?.role as string) === 'driver') {
+      const owned = await c.env.DB.prepare(
+        'SELECT id FROM pickup_requests WHERE id = ? AND assigned_employee_id = ?'
+      ).bind(pickup_request_id, userId).first()
+      if (!owned) return c.json({ error: 'Pickup not assigned to you' }, 403)
+    }
+
     // Insert proof record
     const result = await c.env.DB.prepare(
       `INSERT INTO pickup_proof (pickup_request_id, employee_id, photo_data, latitude, longitude, notes)
@@ -304,7 +314,7 @@ employeeRoutes.get('/customers/all', async (c) => {
   }
 })
 
-employeeRoutes.post('/customers', async (c) => {
+employeeRoutes.post('/customers', roleRequired('admin', 'manager'), async (c) => {
   try {
     const { email, password, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, notes } = await c.req.json()
     if (!email || !password || !company_name || !contact_name) {
@@ -329,7 +339,7 @@ employeeRoutes.post('/customers', async (c) => {
   }
 })
 
-employeeRoutes.put('/customers/:id', async (c) => {
+employeeRoutes.put('/customers/:id', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     const body = await c.req.json()
@@ -350,7 +360,7 @@ employeeRoutes.put('/customers/:id', async (c) => {
   }
 })
 
-employeeRoutes.post('/customers/:id/toggle', async (c) => {
+employeeRoutes.post('/customers/:id/toggle', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     await c.env.DB.prepare(
@@ -381,7 +391,7 @@ employeeRoutes.get('/staff', async (c) => {
   }
 })
 
-employeeRoutes.post('/staff', async (c) => {
+employeeRoutes.post('/staff', roleRequired('admin'), async (c) => {
   try {
     const { email, password, first_name, last_name, phone, role } = await c.req.json()
     if (!email || !password || !first_name || !last_name || !role) {
@@ -413,7 +423,7 @@ employeeRoutes.post('/staff', async (c) => {
   }
 })
 
-employeeRoutes.put('/staff/:id', async (c) => {
+employeeRoutes.put('/staff/:id', roleRequired('admin'), async (c) => {
   const id = c.req.param('id')
   try {
     const body = await c.req.json()
@@ -434,7 +444,7 @@ employeeRoutes.put('/staff/:id', async (c) => {
   }
 })
 
-employeeRoutes.post('/staff/:id/toggle', async (c) => {
+employeeRoutes.post('/staff/:id/toggle', roleRequired('admin'), async (c) => {
   const id = c.req.param('id')
   try {
     await c.env.DB.prepare(
@@ -449,7 +459,7 @@ employeeRoutes.post('/staff/:id/toggle', async (c) => {
 // ══════════════════════════════════════════
 // VEHICLE MANAGEMENT (CRUD)
 // ══════════════════════════════════════════
-employeeRoutes.post('/vehicles', async (c) => {
+employeeRoutes.post('/vehicles', roleRequired('admin', 'manager'), async (c) => {
   try {
     const { name, plate_number, vehicle_type, tare_weight } = await c.req.json()
     if (!name || !plate_number || !vehicle_type) {
@@ -468,7 +478,7 @@ employeeRoutes.post('/vehicles', async (c) => {
   }
 })
 
-employeeRoutes.put('/vehicles/:id', async (c) => {
+employeeRoutes.put('/vehicles/:id', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     const body = await c.req.json()
@@ -491,7 +501,7 @@ employeeRoutes.put('/vehicles/:id', async (c) => {
   }
 })
 
-employeeRoutes.post('/vehicles/:id/toggle', async (c) => {
+employeeRoutes.post('/vehicles/:id/toggle', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     await c.env.DB.prepare(

@@ -119,47 +119,47 @@ export function renderPickupManagement(): string {
                       <i class="\${sc.icon}"></i>
                     </div>
                     <div>
-                      <h3 class="font-bold text-gray-800">\${p.company_name || 'Unknown Customer'}\${regionBadge}</h3>
-                      <p class="text-sm text-gray-500">\${p.contact_name || ''} \${p.phone ? '- ' + p.phone : ''}</p>
+                      <h3 class="font-bold text-gray-800">\${escHtml(p.company_name || 'Unknown Customer')}\${regionBadge}</h3>
+                      <p class="text-sm text-gray-500">\${escHtml(p.contact_name || '')} \${p.phone ? '- ' + escHtml(p.phone) : ''}</p>
                       <p class="text-xs text-gray-400 mt-1">
-                        <i class="fas fa-map-marker-alt mr-1"></i>\${p.address || 'No address'}, \${p.city || ''}
+                        <i class="fas fa-map-marker-alt mr-1"></i>\${escHtml(p.address || 'No address')}, \${escHtml(p.city || '')}
                       </p>
                     </div>
                   </div>
                   <div class="flex items-center gap-3 sm:flex-col sm:items-end">
                     <span class="px-3 py-1 rounded-full text-xs font-semibold \${sc.color}">
-                      \${p.status.replace('_',' ').toUpperCase()}
+                      \${escHtml((p.status || '').replace('_',' ').toUpperCase())}
                     </span>
                     <span class="text-xs text-gray-400">#\${p.id}</span>
                   </div>
                 </div>
-                
+
                 <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div class="bg-gray-50 rounded-lg p-3 text-center">
                     <div class="text-xs text-gray-500">Est. Tires</div>
-                    <div class="text-lg font-bold text-gray-800">\${p.estimated_tire_count || '-'}</div>
+                    <div class="text-lg font-bold text-gray-800">\${escHtml(p.estimated_tire_count || '-')}</div>
                   </div>
                   <div class="bg-gray-50 rounded-lg p-3 text-center">
                     <div class="text-xs text-gray-500">Type</div>
-                    <div class="text-sm font-semibold text-gray-700 capitalize">\${(p.tire_type || 'N/A').replace('_',' ')}</div>
+                    <div class="text-sm font-semibold text-gray-700 capitalize">\${escHtml((p.tire_type || 'N/A').replace('_',' '))}</div>
                   </div>
                   <div class="bg-gray-50 rounded-lg p-3 text-center">
                     <div class="text-xs text-gray-500">Preferred Date</div>
-                    <div class="text-sm font-semibold text-gray-700">\${p.preferred_date || 'No pref'}</div>
+                    <div class="text-sm font-semibold text-gray-700">\${escHtml(p.preferred_date || 'No pref')}</div>
                   </div>
                   <div class="bg-gray-50 rounded-lg p-3 text-center">
                     <div class="text-xs text-gray-500">Time</div>
-                    <div class="text-sm font-semibold text-gray-700 capitalize">\${(p.preferred_time_slot || 'Anytime')}</div>
+                    <div class="text-sm font-semibold text-gray-700 capitalize">\${escHtml(p.preferred_time_slot || 'Anytime')}</div>
                   </div>
                 </div>
 
-                \${p.notes ? \`<div class="mt-3 p-2.5 bg-yellow-50 rounded-lg text-sm text-yellow-800"><i class="fas fa-sticky-note mr-1"></i>\${p.notes}</div>\` : ''}
-                \${p.assigned_employee_name ? \`<div class="mt-3 text-xs text-gray-500"><i class="fas fa-user mr-1"></i>Assigned to: <span class="font-semibold">\${p.assigned_employee_name}</span></div>\` : ''}
+                \${p.notes ? \`<div class="mt-3 p-2.5 bg-yellow-50 rounded-lg text-sm text-yellow-800"><i class="fas fa-sticky-note mr-1"></i>\${escHtml(p.notes)}</div>\` : ''}
+                \${p.assigned_employee_name ? \`<div class="mt-3 text-xs text-gray-500"><i class="fas fa-user mr-1"></i>Assigned to: <span class="font-semibold">\${escHtml(p.assigned_employee_name)}</span></div>\` : ''}
                 \${p.notify_customer ? \`<div class="mt-1 text-xs text-blue-500"><i class="fas fa-bell mr-1"></i>Customer notification enabled</div>\` : ''}
 
                 <div class="mt-4 flex flex-wrap gap-2">
                   \${p.status === 'pending' ? \`
-                    <button onclick="openAssignModal(\${p.id}, '\${(p.company_name || '').replace(/'/g, "\\\\'")}', '\${p.preferred_date || ''}')" class="px-4 py-2 bg-rc-green hover:bg-rc-green-light text-white text-sm font-semibold rounded-lg transition-all"><i class="fas fa-user-check mr-1"></i>Assign & Schedule</button>
+                    <button onclick="openAssignModal(\${p.id}, '\${(p.company_name || '').replace(/[\\\\'"<>]/g, '')}', '\${(p.preferred_date || '').replace(/[\\\\'"<>]/g, '')}')" class="px-4 py-2 bg-rc-green hover:bg-rc-green-light text-white text-sm font-semibold rounded-lg transition-all"><i class="fas fa-user-check mr-1"></i>Assign & Schedule</button>
                     <button onclick="updatePickupStatus(\${p.id}, 'confirmed')" class="px-4 py-2 bg-blue-100 text-blue-700 text-sm font-semibold rounded-lg hover:bg-blue-200 transition-all"><i class="fas fa-check mr-1"></i>Confirm</button>
                     <button onclick="toggleNotify(\${p.id}, \${p.notify_customer ? 0 : 1})" class="px-3 py-2 \${p.notify_customer ? 'bg-blue-100 text-blue-600' : 'bg-gray-50 text-gray-400'} text-sm rounded-lg hover:bg-blue-100 transition-all" title="Toggle auto-notify"><i class="fas fa-bell"></i></button>
                     <button onclick="updatePickupStatus(\${p.id}, 'cancelled')" class="px-3 py-2 bg-red-50 text-red-500 text-sm rounded-lg hover:bg-red-100 transition-all"><i class="fas fa-ban"></i></button>

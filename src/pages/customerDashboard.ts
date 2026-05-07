@@ -240,15 +240,15 @@ export function renderCustomerDashboard(): string {
         }
         tbody.innerHTML = pickups.map(p => \`
           <tr class="border-b border-gray-50 hover:bg-gray-50">
-            <td class="px-6 py-4 text-sm text-gray-800">\${p.preferred_date || 'N/A'}</td>
-            <td class="px-6 py-4 text-sm font-semibold text-gray-800">\${p.estimated_tire_count || '-'}</td>
-            <td class="px-6 py-4 text-sm text-gray-600 capitalize">\${(p.tire_type || '-').replace('_',' ')}</td>
+            <td class="px-6 py-4 text-sm text-gray-800">\${escHtml(p.preferred_date || 'N/A')}</td>
+            <td class="px-6 py-4 text-sm font-semibold text-gray-800">\${escHtml(p.estimated_tire_count || '-')}</td>
+            <td class="px-6 py-4 text-sm text-gray-600 capitalize">\${escHtml((p.tire_type || '-').replace('_',' '))}</td>
             <td class="px-6 py-4">
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${statusColors[p.status] || 'bg-gray-100 text-gray-800'}">
-                \${p.status.replace('_',' ').toUpperCase()}
+                \${escHtml((p.status || 'pending').replace('_',' ').toUpperCase())}
               </span>
             </td>
-            <td class="px-6 py-4 text-sm text-gray-500">\${p.notes || '-'}</td>
+            <td class="px-6 py-4 text-sm text-gray-500">\${escHtml(p.notes || '-')}</td>
           </tr>
         \`).join('');
       } catch (err) {
