@@ -544,20 +544,23 @@ export function renderScaleHouse(): string {
           </div>
           <div><label class="block text-sm font-semibold text-gray-700 mb-1">Material</label><select id="assign-material" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none"><option value="shingles">Asphalt Roofing Shingles</option><option value="mixed">Tires — Mixed</option><option value="passenger">Tires — Passenger</option><option value="truck">Tires — Commercial Truck</option><option value="off-road">Tires — Off-Road</option></select></div>
           <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-1">Vehicle (stored tare)</label>
-            <select id="assign-vehicle" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none"><option value="">No vehicle</option></select>
-            <div id="stored-tare-info" class="hidden mt-2 bg-green-50 rounded-lg p-3">
-              <div class="flex items-center justify-between">
-                <div class="text-sm text-green-700"><i class="fas fa-truck mr-1"></i> Stored Tare: <span id="stored-tare-weight" class="font-bold font-mono">—</span> kg</div>
-                <button onclick="useStoredTare()" class="px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 btn-press"><i class="fas fa-bolt mr-1"></i> Single-Weigh</button>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Vehicle Tare</label>
+            <button type="button" id="btn-use-live-tare" onclick="useLiveTareInAssignModal()" class="w-full px-4 py-3 border-2 border-green-200 bg-green-50 hover:bg-green-100 rounded-lg outline-none text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 text-green-700">
+                  <i class="fas fa-bolt"></i>
+                  <span class="text-sm font-semibold">Use live scale weight</span>
+                </div>
+                <div class="font-mono font-bold text-green-700 tabular-nums"><span id="assign-live-tare-weight">—</span> <span class="text-xs">kg</span></div>
               </div>
-            </div>
+              <div class="text-[10px] text-green-600/80 mt-1">Tap to complete outbound using the current scale reading</div>
+            </button>
           </div>
         </div>
         <input type="hidden" id="assign-ticket-id">
         <div class="mt-6 flex flex-col gap-2">
           <button onclick="submitAssignment()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-check mr-1"></i> Done</button>
-          <button onclick="markUnknownLiveTicket()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-circle-question mr-1"></i> Unknown — Live Ticket</button>
+          <button onclick="markUnknownLiveTicket()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-user-plus mr-1"></i> New Customer (Live Ticket)</button>
         </div>
       </div>
     </div>
@@ -1561,6 +1564,8 @@ export function renderScaleHouse(): string {
     } else { stEl.classList.add('hidden'); unEl.classList.add('hidden'); }
     // Update weighbridge display
     document.getElementById('display-gross').textContent = currentLiveWeight > 0 ? currentLiveWeight.toLocaleString('en-CA',{maximumFractionDigits:0}) : '—';
+    // Keep the Assign modal's live-tare button in sync when it's open
+    refreshAssignLiveTare();
   }
 
   function updateCaptureButton() {
@@ -1667,10 +1672,22 @@ export function renderScaleHouse(): string {
     document.getElementById('assign-ticket-id').value = ticketId;
     document.getElementById('assign-ticket-num').textContent = ticketNum;
     document.getElementById('assign-weight-in').textContent = parseFloat(weightIn).toLocaleString('en-CA', {minimumFractionDigits:1});
-    loadCustomerDropdown('assign-customer'); loadVehicleDropdown();
-    document.getElementById('stored-tare-info').classList.add('hidden');
+    loadCustomerDropdown('assign-customer');
+    refreshAssignLiveTare();
     resetNewCustomerForm();
     openModal('assign-modal');
+  }
+
+  // Keep the Assign-modal "live tare" button in sync with the scale reading.
+  // Called from openAssignModal and from updateLiveWeightDisplay so the value
+  // ticks in real time while the modal is open.
+  function refreshAssignLiveTare() {
+    const span = document.getElementById('assign-live-tare-weight');
+    const btn = document.getElementById('btn-use-live-tare');
+    if (!span || !btn) return;
+    const live = isLive() && currentLiveWeight > 0;
+    span.textContent = currentLiveWeight > 0 ? currentLiveWeight.toLocaleString('en-CA', {minimumFractionDigits:1}) : '—';
+    btn.disabled = !live;
   }
   function closeAssignModal() { closeModal('assign-modal'); }
 
@@ -1735,39 +1752,49 @@ export function renderScaleHouse(): string {
     const id = document.getElementById('assign-ticket-id').value;
     const customer_id = document.getElementById('assign-customer').value;
     const tire_type = document.getElementById('assign-material').value;
-    const vehicle_id = document.getElementById('assign-vehicle').value;
     showLoading('Assigning...');
     try {
-      await axios.post('/api/scale-tickets/' + id + '/assign', { customer_id: customer_id ? parseInt(customer_id) : null, tire_type, vehicle_id: vehicle_id ? parseInt(vehicle_id) : null });
+      await axios.post('/api/scale-tickets/' + id + '/assign', { customer_id: customer_id ? parseInt(customer_id) : null, tire_type });
       closeAssignModal(); loadOpenTickets();
     } catch(err) { alert(err.response?.data?.error || 'Failed'); }
     finally { hideLoading(); }
   }
 
-  async function loadVehicleDropdown() {
-    if (vehiclesCache.length === 0) { try { const r = await axios.get('/api/scale-tickets/vehicles/tare'); vehiclesCache = r.data.vehicles || []; } catch(e) {} }
-    document.getElementById('assign-vehicle').innerHTML = '<option value="">No vehicle</option>' + vehiclesCache.map(v => {
-      const tare = v.stored_tare_weight || v.tare_weight;
-      return '<option value="' + v.id + '" data-tare="' + (tare||'') + '">' + v.name + (v.plate_number ? ' (' + v.plate_number + ')' : '') + (tare ? ' — Tare: ' + tare + ' kg' : '') + '</option>';
-    }).join('');
-    document.getElementById('assign-vehicle').onchange = function() {
-      const opt = this.selectedOptions[0], tare = opt?.dataset.tare;
-      if (tare && parseFloat(tare) > 0) { document.getElementById('stored-tare-weight').textContent = parseFloat(tare).toLocaleString('en-CA',{minimumFractionDigits:1}); document.getElementById('stored-tare-info').classList.remove('hidden'); }
-      else document.getElementById('stored-tare-info').classList.add('hidden');
-    };
-  }
-
-  async function useStoredTare() {
-    const ticketId = document.getElementById('assign-ticket-id').value, vehicleId = document.getElementById('assign-vehicle').value;
-    const customerId = document.getElementById('assign-customer').value, tireType = document.getElementById('assign-material').value;
-    if (!vehicleId) { alert('Select a vehicle'); return; }
+  // Complete the ticket using the current live scale reading as the outbound
+  // weight. Assigns the customer/material first if either is set, then routes
+  // through merge-out so the same audit/photo/receipt path runs as the regular
+  // weigh-out flow.
+  async function useLiveTareInAssignModal() {
+    const ticketId = document.getElementById('assign-ticket-id').value;
+    const customerId = document.getElementById('assign-customer').value;
+    const tireType = document.getElementById('assign-material').value;
+    if (!isLive() && connectionMode !== 'sim') {
+      alert('Scale is disconnected or stale — reconnect to use the live weight as tare.');
+      return;
+    }
+    if (!currentLiveWeight || currentLiveWeight <= 0) {
+      alert('No live weight on the scale. Drive the empty truck onto the scale and try again.');
+      return;
+    }
+    if (Date.now() - lastPrintTrigger < 3000) return;
+    lastPrintTrigger = Date.now();
+    lastPrintWeight = currentLiveWeight;
     showLoading('Completing...');
     try {
-      if (customerId) await axios.post('/api/scale-tickets/' + ticketId + '/assign', { customer_id: parseInt(customerId), tire_type: tireType, vehicle_id: parseInt(vehicleId) });
-      const res = await axios.post('/api/scale-tickets/' + ticketId + '/stored-tare', { vehicle_id: parseInt(vehicleId) });
-      closeAssignModal(); loadTicketDetail(ticketId); loadOpenTickets(); loadCompletedToday(); loadStats(); autoPrintReceipt(ticketId);
-    } catch(err) { alert(err.response?.data?.error || 'Failed'); }
-    finally { hideLoading(); }
+      if (customerId) {
+        await axios.post('/api/scale-tickets/' + ticketId + '/assign', { customer_id: parseInt(customerId), tire_type: tireType });
+      }
+      const photo = autoCapturePhoto();
+      await axios.post('/api/scale-tickets/' + ticketId + '/merge-out', { weight: currentLiveWeight, photo: photo || null });
+      closeAssignModal();
+      loadTicketDetail(ticketId);
+      loadOpenTickets(); loadCompletedToday(); loadStats();
+      autoPrintReceipt(ticketId);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed');
+    } finally {
+      hideLoading();
+    }
   }
 
   // Merge flow
@@ -1879,7 +1906,13 @@ export function renderScaleHouse(): string {
 
   function renderLiveTicketCards() {
     const panel = ensureLiveTicketsPanel();
-    const active = openTickets.filter(t => t.status === 'weighed_in' && !t.weight_out);
+    // Sort by oldest weight-in first so the truck that drove on first is #1.
+    // This number is a "yard position" — it's not the persistent ticket
+    // number, which still lives on each card as "Load #".
+    const active = openTickets
+      .filter(t => t.status === 'weighed_in' && !t.weight_out)
+      .slice()
+      .sort((a, b) => new Date(a.weight_in_at || a.created_at || 0) - new Date(b.weight_in_at || b.created_at || 0));
     const activeIds = new Set(active.map(t => t.id));
 
     // Remove cards for tickets no longer active (completed, voided, weighed out)
@@ -1913,9 +1946,10 @@ export function renderScaleHouse(): string {
       const safeNum = (t.ticket_number||'').replace(/[\\\\\'"<>]/g,'');
       const collapsed = !!liveCardCollapsed[t.id];
 
+      const liveSeq = idx + 1; // #1 = oldest active ticket in the yard
       const header =
         '<div class="live-card-drag-handle bg-gradient-to-r from-rc-green to-emerald-600 text-white px-4 py-3 select-none flex items-center justify-between" style="cursor:move;" data-drag-handle="1">' +
-          '<div class="font-bold text-base flex items-center gap-2"><i class="fas fa-grip-vertical opacity-60"></i> Live Ticket <span class="font-mono">#' + escHtml(t.ticket_number) + '</span></div>' +
+          '<div class="font-bold text-base flex items-center gap-2"><i class="fas fa-grip-vertical opacity-60"></i> Live Ticket <span class="font-mono">#' + liveSeq + '</span></div>' +
           '<div class="flex items-center gap-1">' +
             '<button title="' + (collapsed ? 'Expand' : 'Minimize') + '" onclick="event.stopPropagation();toggleLiveCardCollapse(' + t.id + ')" class="text-white/80 hover:text-white px-1.5 py-0.5"><i class="fas fa-' + (collapsed ? 'plus' : 'minus') + ' text-xs"></i></button>' +
           '</div>' +
