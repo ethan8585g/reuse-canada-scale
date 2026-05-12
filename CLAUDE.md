@@ -11,7 +11,7 @@ Reuse Canada Scale CRM — a multi-portal operations platform for tire recycling
 - **Styling**: TailwindCSS via CDN (no build step), FontAwesome 6.5 icons
 - **Language**: TypeScript (ESNext target, Vite build)
 - **Payments**: Square Terminal REST API
-- **Hardware**: Web Bluetooth (Accuren Apex scale), Web Serial, browser print for 80mm thermal receipts
+- **Hardware**: Web Bluetooth (Western APX indicator, model AM5332C, via IRXON RS-232↔BT adapter), Web Serial, browser print for 80mm thermal receipts
 
 ## Commands
 
@@ -60,6 +60,13 @@ migrations/              # D1 SQL migrations (sequential numbered)
 - **Database**: D1 SQLite with prepared statements and parameter binding. Auto-increment IDs, `CURRENT_TIMESTAMP` defaults. Booleans as INTEGER 0/1. Images stored as base64 text.
 - **Styling**: All Tailwind utility classes, no CSS files. Brand colors: `rc-green`, `rc-orange`, `rc-gray`. Card-hover class for interactive elements.
 - **Error format**: JSON `{ error: string }` with appropriate HTTP status codes (400/401/403/500).
+
+## Scale House Module
+
+- **Print-trigger flow**: `POST /api/scale-tickets/print-trigger` creates a weighed-in ticket assigned to the sentinel `walk-in@reuse-canada.local` customer (kept `is_active=0`). Operator then either assigns a real customer via `POST /:id/assign`, quick-creates one via `POST /quick-customer`, or leaves it unassigned ("Unknown — Live Ticket").
+- **Live ticket cards**: Active (status `weighed_in`, no `weight_out`) tickets render as floating `position: fixed` cards in `#live-tickets-panel` (top-right by default, draggable). Positions persist in the `liveTicketPositions` JS object through the 15s auto-refresh in `loadOpenTickets()`. Drag uses delegated mouse + touch handlers on the panel.
+- **Connect to Truck on Scale**: Each live ticket card has a button that pulls `currentLiveWeight` from the connected scale, sets `lastPrintWeight`, captures a photo, and routes through the existing `previewMerge(ticketId)` → merge-confirm flow → `POST /:id/merge-out`. Same debounce window (3s) as the print-trigger path so a single stable reading can't fire twice.
+- **Walk-in detection**: A ticket is "unassigned" when `customer_id` is the sentinel walk-in row (`company_name === 'Walk-In'`). Don't treat `customer_id IS NULL` as unassigned — the FK on `scale_tickets.customer_id` requires a value, so the placeholder is used instead.
 
 ## Database
 

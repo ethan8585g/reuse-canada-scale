@@ -88,6 +88,7 @@ export function renderScaleHouse(): string {
           <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Protocol</label>
           <select id="cfg-protocol" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-2 py-1.5">
             <option value="auto" selected>Auto-detect</option>
+            <option value="apx">Western APX (STX-delimited)</option>
             <option value="toledo">Toledo Continuous (binary)</option>
             <option value="cardinal">Cardinal / Print Format</option>
             <option value="sics">Mettler SICS / line</option>
@@ -521,7 +522,26 @@ export function renderScaleHouse(): string {
       <div class="p-6">
         <div class="bg-blue-50 rounded-xl p-3 mb-4"><div class="text-sm text-blue-700">Ticket: <span class="font-bold font-mono" id="assign-ticket-num">—</span> &middot; Weight In: <span class="font-bold font-mono" id="assign-weight-in">—</span> kg</div></div>
         <div class="space-y-4">
-          <div><label class="block text-sm font-semibold text-gray-700 mb-1">Customer</label><select id="assign-customer" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none"><option value="">Select customer...</option></select></div>
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-sm font-semibold text-gray-700">Customer</label>
+              <button type="button" onclick="toggleNewCustomerForm()" id="btn-toggle-new-customer" class="text-xs font-semibold text-blue-600 hover:text-blue-700"><i class="fas fa-plus mr-1"></i>Add new</button>
+            </div>
+            <select id="assign-customer" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none"><option value="">Select customer...</option></select>
+
+            <!-- Inline new-customer form -->
+            <div id="new-customer-form" class="hidden mt-3 p-4 border-2 border-dashed border-blue-200 rounded-xl bg-blue-50/40 space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-bold uppercase tracking-wider text-blue-700"><i class="fas fa-user-plus mr-1"></i> New Customer</div>
+                <button type="button" onclick="toggleNewCustomerForm()" class="text-gray-400 hover:text-gray-600 text-sm"><i class="fas fa-times"></i></button>
+              </div>
+              <input type="text" id="nc-company" placeholder="Company name *" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:border-blue-500 outline-none text-sm" />
+              <input type="text" id="nc-contact" placeholder="Contact name (optional)" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:border-blue-500 outline-none text-sm" />
+              <input type="tel" id="nc-phone" placeholder="Phone (optional)" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:border-blue-500 outline-none text-sm" />
+              <button type="button" onclick="saveNewCustomer()" id="btn-save-new-customer" class="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg btn-press"><i class="fas fa-check mr-1"></i> Save &amp; Select</button>
+              <div id="nc-error" class="hidden text-xs text-red-600 font-semibold"></div>
+            </div>
+          </div>
           <div><label class="block text-sm font-semibold text-gray-700 mb-1">Material</label><select id="assign-material" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none"><option value="shingles">Asphalt Roofing Shingles</option><option value="mixed">Tires — Mixed</option><option value="passenger">Tires — Passenger</option><option value="truck">Tires — Commercial Truck</option><option value="off-road">Tires — Off-Road</option></select></div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Vehicle (stored tare)</label>
@@ -535,9 +555,9 @@ export function renderScaleHouse(): string {
           </div>
         </div>
         <input type="hidden" id="assign-ticket-id">
-        <div class="mt-6 flex gap-3">
-          <button onclick="submitAssignment()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-check mr-1"></i> Done</button>
-          <button onclick="closeAssignModal()" class="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Later</button>
+        <div class="mt-6 flex flex-col gap-2">
+          <button onclick="submitAssignment()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-check mr-1"></i> Done</button>
+          <button onclick="markUnknownLiveTicket()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-circle-question mr-1"></i> Unknown — Live Ticket</button>
         </div>
       </div>
     </div>
@@ -597,6 +617,7 @@ export function renderScaleHouse(): string {
   let scaleCfg = loadScaleCfg();
   let serialBytes = []; // raw byte ring buffer (for binary protocols + hex view)
   let totalBytesRx = 0; // cumulative byte count since connect — used to tell silent-scale from wrong-format
+  let apxDetected = false; // sticky: once Western APX STX-delimited frames are decoded, suppress other parsers
   let lastWeightAt = 0;
   let isStale = false; // true when connectionMode looks connected but no frame has arrived in STALE_AFTER_MS
   let staleWatchdogId = null;
@@ -643,7 +664,7 @@ export function renderScaleHouse(): string {
     switch(e.key) {
       case ' ':
         e.preventDefault();
-        if (!activeModalId && currentLiveWeight > 100 && isWeightStable && isLive()) captureWeight();
+        if (!activeModalId && currentLiveWeight > 0 && isLive()) captureWeight();
         break;
       case 'Escape':
         if (activeModalId) closeModal(activeModalId);
@@ -707,17 +728,25 @@ export function renderScaleHouse(): string {
     autoPromptShown = true;
   }
 
-  function captureWeight() {
+  async function captureWeight() {
     if (currentLiveWeight <= 0) return;
     if (!isLive() && connectionMode !== 'sim') {
       alert('Live weight is stale — reconnect the scale or use Manual Entry.');
       return;
     }
+    // Debounce double-clicks: 3s window matches the indicator's typical
+    // print-cycle so we can't fire two tickets from one truck.
+    if (Date.now() - lastPrintTrigger < 3000) return;
+    lastPrintTrigger = Date.now();
     lastPrintWeight = currentLiveWeight;
     autoPromptShown = true;
     dismissAutoPrompt();
     autoCapturePhoto();
-    onPrintTrigger(currentLiveWeight);
+    // Skip the orange "Merge or New?" card — that's for hardware print-frame
+    // triggers where merge-with-open-ticket might be wanted. A manual button
+    // press goes straight to: create weighed-in ticket → assign customer.
+    // createTicketFromPrint handles both API calls and refreshes the sidebar.
+    await createTicketFromPrint();
   }
 
   function manualWeightCapture() {
@@ -1029,6 +1058,7 @@ export function renderScaleHouse(): string {
       hex: $('cfg-hex').checked,
     };
     persistScaleCfg();
+    apxDetected = false;
     document.getElementById('log-hex-toggle').checked = scaleCfg.hex;
     document.getElementById('serial-log-mode').textContent = scaleCfg.hex ? '— HEX (last 32 bytes)' : '— ASCII';
     if (connectionMode === 'usb') {
@@ -1059,16 +1089,35 @@ export function renderScaleHouse(): string {
       baudRate: scaleCfg.baud, dataBits: scaleCfg.dataBits, stopBits: scaleCfg.stopBits,
       parity: scaleCfg.parity, flowControl: 'none',
     };
-    try {
-      await port.open(opts);
-      return;
-    } catch (err) {
-      const msg = (err && err.message) || '';
-      if (!/Failed to open|already open|InvalidStateError/i.test(msg) && err.name !== 'InvalidStateError') throw err;
-      try { await port.close(); } catch {}
-      await new Promise(r => setTimeout(r, 250));
-      await port.open(opts);
+    // Retry with exponential backoff. Chrome holds USB-serial port handles for
+    // up to a few seconds after a tab closes/refreshes — the previous 250ms
+    // wait wasn't enough on slower machines or when the previous session was
+    // mid-read. 0ms / 500ms / 1500ms / 3000ms covers the worst case.
+    const waits = [0, 500, 1500, 3000];
+    let lastErr;
+    for (const wait of waits) {
+      if (wait > 0) {
+        try { await port.close(); } catch {}
+        await new Promise(r => setTimeout(r, wait));
+      }
+      try {
+        await port.open(opts);
+        // Assert DTR + RTS high. Many USB-RS232 adapters (IRXON included) and
+        // scale indicators won't transmit unless these handshake lines are
+        // asserted by the host. Web Serial leaves them in an undefined state
+        // after open(), which can cause the indicator to go silent on
+        // reconnect even though the port is technically open.
+        try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch {}
+        return;
+      } catch (err) {
+        lastErr = err;
+        const msg = (err && err.message) || '';
+        // Only retry on the specific "already open" / state-conflict errors —
+        // wrong-baud / device-disconnected errors should fail fast.
+        if (!/Failed to open|already open|InvalidStateError/i.test(msg) && err.name !== 'InvalidStateError') throw err;
+      }
     }
+    throw lastErr;
   }
 
   function explainSerialOpenError(err) {
@@ -1107,6 +1156,7 @@ export function renderScaleHouse(): string {
       // but we can't decode it" — radically different fixes.
       lastWeightAt = 0;
       totalBytesRx = 0;
+      apxDetected = false;
       setTimeout(() => {
         if (connectionMode !== 'usb' || lastWeightAt) return;
         if (totalBytesRx === 0) {
@@ -1194,6 +1244,48 @@ export function renderScaleHouse(): string {
   }
 
   // ─── PROTOCOL DECODERS ───
+  // Western APX (AM5332C) STX-delimited ASCII frame:
+  //   <STX> "      10 KG"  — frame is bounded by STX bytes only (no CR/LF/ETX).
+  // The next STX marks the end of the previous frame. Optional sign before digits,
+  // optional decimal point, KG/LB/T after the number, optional trailing motion flag.
+  // Once this parser successfully decodes a frame in auto mode it sets apxDetected,
+  // which suppresses Toledo/Cardinal/ASCII for the rest of the session — Toledo's
+  // shift-on-no-CR loop would otherwise eat APX frames byte-by-byte.
+  function tryWesternApxStx() {
+    let consumed = false;
+    while (true) {
+      const stx1 = serialBytes.indexOf(0x02);
+      if (stx1 < 0) return consumed;
+      // If STX isn't at index 0, leave the leading garbage for other decoders.
+      if (stx1 > 0) return consumed;
+      const stx2 = serialBytes.indexOf(0x02, 1);
+      if (stx2 < 0) return consumed; // frame not complete yet — wait for next STX
+      const frameBytes = serialBytes.slice(1, stx2);
+      // Strip any control bytes (some firmwares append CR/LF before next STX).
+      const text = String.fromCharCode(...frameBytes).replace(/[\\x00-\\x1F\\x7F]/g, '').trim();
+      const m = text.match(/([+-]?)\\s*(\\d+(?:\\.\\d+)?)\\s*(KG|LB|T)\\b\\s*([A-Z]*)/i);
+      if (!m) {
+        // Not an APX-shaped frame — leave bytes for Toledo/Cardinal/ASCII to try.
+        return consumed;
+      }
+      let w = parseFloat(m[2]);
+      if (m[1] === '-') w = -w;
+      const unit = m[3].toLowerCase();
+      if (unit === 'lb') w *= 0.453592;
+      else if (unit === 't') w *= 1000;
+      const flags = (m[4] || '').toUpperCase();
+      // Trailing M/MOT/MOTION = motion (unstable). Anything else: let acceptWeight's
+      // delta-based stability check decide.
+      const motion = /\\bM(OT|OTION)?\\b/.test(flags) || /\\bM(OT|OTION)?\\b/.test(text);
+      logFrame('[APX]', serialBytes.slice(0, stx2), 'w=' + w.toFixed(1) + 'kg' + (motion ? ' MOT' : ''));
+      acceptWeight(w, !motion, false);
+      apxDetected = true; // sticky lock — see processSerialBuffer
+      // Consume up to (but not including) the next STX so the loop re-enters cleanly.
+      serialBytes.splice(0, stx2);
+      consumed = true;
+    }
+  }
+
   // Toledo Continuous: <STX> <SWA> <SWB> <SWC> 6×weight 6×tare <CR> [chk]  (17 or 18 bytes)
   //   SWA bits 0-1: decimal divisor (000=x100, 001=x10, 010=x1, 011=x0.1, 100=x0.01, 101=x0.001)
   //   SWB bit 0: NET indicator, bit 1: SIGN (1=neg), bit 3: MOTION (1=unstable),
@@ -1320,14 +1412,21 @@ export function renderScaleHouse(): string {
     const startLen = serialBytes.length;
     const proto = scaleCfg.protocol;
     let progress = true;
-    // Run protocol decoders. In auto mode, try the binary framer first because
-    // binary frames don't terminate on newline so the line parser would never consume them.
+    // Run protocol decoders. In auto mode, try APX (STX-delimited ASCII) first
+    // because Toledo's shift-on-no-CR loop would otherwise eat APX frames byte by
+    // byte. Once APX has decoded a real frame, lock to APX-only for the session.
     let safety = 32;
     while (progress && safety-- > 0) {
       progress = false;
-      if (proto === 'toledo' || proto === 'auto') if (tryToledoContinuous()) progress = true;
-      if (proto === 'cardinal' || proto === 'auto') if (tryCardinalPrint()) progress = true;
-      if (proto === 'sics' || proto === 'ascii' || proto === 'auto') if (tryAsciiLine()) progress = true;
+      if (proto === 'apx' || proto === 'auto') if (tryWesternApxStx()) progress = true;
+      // Sticky lock: if APX already claimed the stream, don't let other parsers
+      // run on subsequent frames — they'd corrupt the buffer.
+      const otherParsersAllowed = !(apxDetected && proto === 'auto') && proto !== 'apx';
+      if (otherParsersAllowed) {
+        if (proto === 'toledo' || proto === 'auto') if (tryToledoContinuous()) progress = true;
+        if (proto === 'cardinal' || proto === 'auto') if (tryCardinalPrint()) progress = true;
+        if (proto === 'sics' || proto === 'ascii' || proto === 'auto') if (tryAsciiLine()) progress = true;
+      }
     }
     // If no decoder claimed bytes, surface a hex peek so the operator can see what's
     // actually arriving — otherwise the feed sits silent and there's nothing to diagnose.
@@ -1377,7 +1476,8 @@ export function renderScaleHouse(): string {
 
   function startStaleWatchdog() {
     if (staleWatchdogId) clearInterval(staleWatchdogId);
-    staleWatchdogId = setInterval(() => {
+    let lastWakeAttempt = 0;
+    staleWatchdogId = setInterval(async () => {
       if (!connectionMode || connectionMode === 'sim') return;
       const age = lastWeightAt ? Date.now() - lastWeightAt : Infinity;
       if (age > STALE_AFTER_MS && !isStale) {
@@ -1387,6 +1487,21 @@ export function renderScaleHouse(): string {
       } else if (age < 3000 && isStale) {
         isStale = false;
         try { updateScaleUI('connected', connectionMode === 'bt' ? 'BT' : (connectionMode === 'bridge' ? 'BRIDGE' : 'USB')); } catch(e) {}
+      }
+      // Auto-recover: if USB has been silent for >20s, pulse DTR/RTS once per
+      // 30s to nudge the adapter. Some USB-RS232 chips fall asleep; toggling
+      // the handshake lines kicks them back into pass-through mode without
+      // requiring the user to disconnect/reconnect.
+      if (connectionMode === 'usb' && serialPort && age > 20000 && Date.now() - lastWakeAttempt > 30000) {
+        lastWakeAttempt = Date.now();
+        try {
+          await serialPort.setSignals({ dataTerminalReady: false, requestToSend: false });
+          await new Promise(r => setTimeout(r, 100));
+          await serialPort.setSignals({ dataTerminalReady: true, requestToSend: true });
+          logSerial('[wake] DTR/RTS pulsed — if adapter was asleep, frames should resume');
+        } catch (e) {
+          logSerial('[wake] setSignals not supported by this adapter');
+        }
       }
     }, 2000);
   }
@@ -1430,6 +1545,7 @@ export function renderScaleHouse(): string {
     if (serialPort) { try { await serialPort.close(); } catch(e) {} serialPort = null; }
     disconnectBridge();
     serialBytes.length = 0; connectionMode = null;
+    apxDetected = false;
     updateScaleUI('disconnected');
     document.getElementById('connection-mode-badge').classList.add('hidden');
     document.getElementById('serial-log-section').classList.add('hidden');
@@ -1449,7 +1565,11 @@ export function renderScaleHouse(): string {
 
   function updateCaptureButton() {
     const btn = document.getElementById('btn-capture-weight');
-    btn.disabled = !(currentLiveWeight > 100 && isWeightStable);
+    // Enable on any positive live reading. The 100 kg / stable gate kept the
+    // button greyed for legitimate sub-100 kg loads and during normal indicator
+    // jitter on the AM5332C (e=10 kg increments). captureWeight() still blocks
+    // <=0 and stale data, so this only widens the click window, not the safety.
+    btn.disabled = !(currentLiveWeight > 0 && isLive());
   }
 
   function showConnectionMode(mode) {
@@ -1549,9 +1669,67 @@ export function renderScaleHouse(): string {
     document.getElementById('assign-weight-in').textContent = parseFloat(weightIn).toLocaleString('en-CA', {minimumFractionDigits:1});
     loadCustomerDropdown('assign-customer'); loadVehicleDropdown();
     document.getElementById('stored-tare-info').classList.add('hidden');
+    resetNewCustomerForm();
     openModal('assign-modal');
   }
   function closeAssignModal() { closeModal('assign-modal'); }
+
+  // Toggle the inline "Add new customer" mini-form inside the Assign modal.
+  function toggleNewCustomerForm() {
+    const form = document.getElementById('new-customer-form');
+    const isHidden = form.classList.contains('hidden');
+    if (isHidden) {
+      form.classList.remove('hidden');
+      document.getElementById('nc-company').focus();
+    } else {
+      resetNewCustomerForm();
+    }
+  }
+  function resetNewCustomerForm() {
+    const form = document.getElementById('new-customer-form');
+    if (!form) return;
+    form.classList.add('hidden');
+    ['nc-company','nc-contact','nc-phone'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const err = document.getElementById('nc-error'); if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  }
+  async function saveNewCustomer() {
+    const company = document.getElementById('nc-company').value.trim();
+    const contact = document.getElementById('nc-contact').value.trim();
+    const phone = document.getElementById('nc-phone').value.trim();
+    const errEl = document.getElementById('nc-error');
+    const btn = document.getElementById('btn-save-new-customer');
+    if (!company) {
+      errEl.textContent = 'Company name is required';
+      errEl.classList.remove('hidden');
+      document.getElementById('nc-company').focus();
+      return;
+    }
+    errEl.classList.add('hidden'); errEl.textContent = '';
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Saving...';
+    try {
+      const res = await axios.post('/api/scale-tickets/quick-customer', { company_name: company, contact_name: contact, phone });
+      const newCust = res.data;
+      // Add to cache and re-render dropdown with new customer pre-selected
+      customersCache.push({ id: newCust.id, company_name: newCust.company_name });
+      customersCache.sort((a,b) => (a.company_name||'').localeCompare(b.company_name||''));
+      const sel = document.getElementById('assign-customer');
+      sel.innerHTML = '<option value="">Select customer...</option>' + customersCache.map(c => '<option value="'+c.id+'">'+escHtml(c.company_name)+'</option>').join('');
+      sel.value = String(newCust.id);
+      resetNewCustomerForm();
+    } catch (err) {
+      errEl.textContent = err.response?.data?.error || 'Failed to create customer';
+      errEl.classList.remove('hidden');
+    } finally {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-check mr-1"></i> Save &amp; Select';
+    }
+  }
+
+  // "Unknown — Live Ticket": don't assign a customer; the ticket stays in the
+  // Open Tickets sidebar with the UNASSIGNED badge until someone reopens it.
+  function markUnknownLiveTicket() {
+    closeAssignModal();
+    loadOpenTickets();
+  }
 
   async function submitAssignment() {
     const id = document.getElementById('assign-ticket-id').value;
@@ -1664,7 +1842,187 @@ export function renderScaleHouse(): string {
           '<button onclick="openAssignModal(' + t.id + ',\\'' + (t.ticket_number || '').replace(/[\\\\\'"<>]/g,'') + '\\',' + (t.weight_in||0) + ')" class="px-2 py-1 ' + (isUn ? 'bg-amber-500 text-white' : 'bg-blue-100 text-blue-700') + ' text-[10px] font-bold rounded hover:opacity-80 btn-press"><i class="fas fa-' + (isUn ? 'user-tag' : 'edit') + '"></i></button>' +
           '<button onclick="openVoidModal(' + t.id + ',\\'' + (t.ticket_number || '').replace(/[\\\\\'"<>]/g,'') + '\\')" class="px-2 py-1 bg-red-100 text-red-600 text-[10px] rounded hover:bg-red-200 btn-press"><i class="fas fa-ban"></i></button></div></div>';
       }).join('') + '</div>';
+      renderLiveTicketCards();
     } catch(err) { console.error(err); }
+  }
+
+  // ══════════════════════════════════════════
+  // FLOATING LIVE TICKET CARDS (draggable)
+  // ══════════════════════════════════════════
+  // Each open ticket also renders as a draggable floating card top-right of the
+  // screen. Positions persist in liveTicketPositions through 15s auto-refresh.
+  let liveTicketPositions = {}; // { [ticketId]: { x, y } }
+  let draggingTicketId = null;
+  let dragOffset = { x: 0, y: 0 };
+  let liveCardCollapsed = {}; // { [ticketId]: true } — minimized cards
+
+  function ensureLiveTicketsPanel() {
+    let panel = document.getElementById('live-tickets-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'live-tickets-panel';
+      // pointer-events:none on container so it doesn't block clicks elsewhere;
+      // individual cards opt back in via pointer-events:auto.
+      panel.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; pointer-events:none; z-index:45;';
+      document.body.appendChild(panel);
+    }
+    return panel;
+  }
+
+  function defaultLiveCardPosition(idx) {
+    // Stack top-right with vertical offset; clamp width to viewport.
+    const cardW = 340;
+    const x = Math.max(16, window.innerWidth - cardW - 16);
+    const y = 96 + (idx * 36);
+    return { x, y };
+  }
+
+  function renderLiveTicketCards() {
+    const panel = ensureLiveTicketsPanel();
+    const active = openTickets.filter(t => t.status === 'weighed_in' && !t.weight_out);
+    const activeIds = new Set(active.map(t => t.id));
+
+    // Remove cards for tickets no longer active (completed, voided, weighed out)
+    Array.from(panel.children).forEach(child => {
+      const id = parseInt(child.dataset.ticketId);
+      if (!activeIds.has(id)) {
+        child.remove();
+        delete liveTicketPositions[id];
+        delete liveCardCollapsed[id];
+      }
+    });
+
+    active.forEach((t, idx) => {
+      if (!liveTicketPositions[t.id]) liveTicketPositions[t.id] = defaultLiveCardPosition(idx);
+      const pos = liveTicketPositions[t.id];
+      let card = panel.querySelector('[data-ticket-id="' + t.id + '"]');
+      if (!card) {
+        card = document.createElement('div');
+        card.dataset.ticketId = t.id;
+        card.style.cssText = 'position:absolute; width:340px; pointer-events:auto;';
+        card.className = 'bg-white rounded-2xl shadow-2xl border-2 border-gray-200 overflow-hidden';
+        panel.appendChild(card);
+      }
+      card.style.left = pos.x + 'px';
+      card.style.top = pos.y + 'px';
+
+      const isUn = !t.customer_id || t.customer_id === 0 || (t.company_name === 'Walk-In');
+      const matLabel = getMaterialLabel(t.tire_type);
+      const timeIn = t.weight_in_at ? new Date(t.weight_in_at).toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit'}) : '—';
+      const dateStr = t.weight_in_at ? new Date(t.weight_in_at).toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}) : 'Today';
+      const safeNum = (t.ticket_number||'').replace(/[\\\\\'"<>]/g,'');
+      const collapsed = !!liveCardCollapsed[t.id];
+
+      const header =
+        '<div class="live-card-drag-handle bg-gradient-to-r from-rc-green to-emerald-600 text-white px-4 py-3 select-none flex items-center justify-between" style="cursor:move;" data-drag-handle="1">' +
+          '<div class="font-bold text-base flex items-center gap-2"><i class="fas fa-grip-vertical opacity-60"></i> Live Ticket <span class="font-mono">#' + escHtml(t.ticket_number) + '</span></div>' +
+          '<div class="flex items-center gap-1">' +
+            '<button title="' + (collapsed ? 'Expand' : 'Minimize') + '" onclick="event.stopPropagation();toggleLiveCardCollapse(' + t.id + ')" class="text-white/80 hover:text-white px-1.5 py-0.5"><i class="fas fa-' + (collapsed ? 'plus' : 'minus') + ' text-xs"></i></button>' +
+          '</div>' +
+        '</div>';
+
+      if (collapsed) {
+        card.innerHTML = header + '<div class="px-4 py-2 text-xs text-gray-600 flex justify-between items-center bg-gray-50"><span class="font-mono font-bold">' + parseFloat(t.weight_in||0).toLocaleString('en-CA',{minimumFractionDigits:0}) + ' kg</span><span>' + escHtml(matLabel) + '</span><span class="text-gray-400">' + timeIn + '</span></div>';
+        return;
+      }
+
+      card.innerHTML = header +
+        '<div class="p-4">' +
+          '<div class="text-center mb-3"><div class="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Weight In</div><div class="text-3xl font-mono font-bold text-gray-800 leading-tight">' + parseFloat(t.weight_in||0).toLocaleString('en-CA',{minimumFractionDigits:1}) + ' <span class="text-base text-gray-500 font-semibold">kg</span></div></div>' +
+          '<div class="flex gap-3 mb-3">' +
+            '<div class="w-28 h-28 rounded-lg overflow-hidden border-2 border-gray-200 bg-gray-50 flex items-center justify-center flex-shrink-0">' +
+              (t.photo_in ? '<img src="' + t.photo_in + '" class="w-full h-full object-cover cursor-pointer" onclick="window.open(this.src)" />' : '<i class="fas fa-camera text-gray-300 text-2xl"></i>') +
+            '</div>' +
+            '<div class="flex-1 text-xs space-y-1">' +
+              '<div><span class="text-gray-400 font-semibold">Material:</span><div class="font-semibold text-gray-700 leading-tight">' + escHtml(matLabel) + '</div></div>' +
+              '<div><span class="text-gray-400 font-semibold">Time in:</span> <span class="font-mono text-gray-700">' + timeIn + '</span></div>' +
+              '<div><span class="text-gray-400 font-semibold">Load #:</span> <span class="font-mono text-gray-700">' + escHtml(t.ticket_number) + '</span></div>' +
+              '<div><span class="text-gray-400 font-semibold">Date:</span> <span class="text-gray-700">' + dateStr + '</span></div>' +
+            '</div>' +
+          '</div>' +
+          (isUn
+            ? '<div class="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between gap-2"><span><i class="fas fa-circle-exclamation mr-1"></i>Unknown customer</span><button onclick="openAssignModal(' + t.id + ',\\'' + safeNum + '\\',' + (t.weight_in||0) + ')" class="underline font-bold whitespace-nowrap">Assign</button></div>'
+            : '<div class="mb-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 truncate"><i class="fas fa-building mr-1"></i>' + escHtml(t.company_name||'Walk-in') + '</div>') +
+          '<button onclick="connectToTruckOnScale(' + t.id + ')" class="w-full bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl btn-press flex items-center justify-center gap-2 mb-2 text-sm"><i class="fas fa-truck"></i> Connect to Truck on Scale</button>' +
+          '<div class="flex gap-2">' +
+            '<button onclick="loadTicketDetail(' + t.id + ')" class="flex-1 px-2 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg"><i class="fas fa-eye mr-1"></i>View</button>' +
+            '<button onclick="openVoidModal(' + t.id + ',\\'' + safeNum + '\\')" class="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-lg" title="Void ticket"><i class="fas fa-ban"></i></button>' +
+          '</div>' +
+        '</div>';
+    });
+  }
+
+  function toggleLiveCardCollapse(ticketId) {
+    liveCardCollapsed[ticketId] = !liveCardCollapsed[ticketId];
+    renderLiveTicketCards();
+  }
+
+  // Drag handlers — delegated on the panel since cards re-render on data refresh.
+  function liveCardPointerDown(e) {
+    const handle = e.target.closest('[data-drag-handle="1"]');
+    if (!handle) return;
+    // Ignore clicks on header buttons (minimize/close)
+    if (e.target.closest('button')) return;
+    const card = handle.parentElement;
+    if (!card || !card.dataset.ticketId) return;
+    const id = parseInt(card.dataset.ticketId);
+    const pos = liveTicketPositions[id] || { x: 0, y: 0 };
+    const point = e.touches ? e.touches[0] : e;
+    draggingTicketId = id;
+    dragOffset = { x: point.clientX - pos.x, y: point.clientY - pos.y };
+    e.preventDefault();
+    document.addEventListener('mousemove', liveCardPointerMove);
+    document.addEventListener('touchmove', liveCardPointerMove, { passive: false });
+    document.addEventListener('mouseup', liveCardPointerUp);
+    document.addEventListener('touchend', liveCardPointerUp);
+  }
+  function liveCardPointerMove(e) {
+    if (draggingTicketId == null) return;
+    const point = e.touches ? e.touches[0] : e;
+    const x = point.clientX - dragOffset.x;
+    const y = point.clientY - dragOffset.y;
+    // Clamp to viewport so cards can't fly off-screen
+    const cardW = 340, margin = 8;
+    const clampedX = Math.max(margin, Math.min(window.innerWidth - cardW - margin, x));
+    const clampedY = Math.max(margin, Math.min(window.innerHeight - 40 - margin, y));
+    liveTicketPositions[draggingTicketId] = { x: clampedX, y: clampedY };
+    const card = document.querySelector('#live-tickets-panel [data-ticket-id="' + draggingTicketId + '"]');
+    if (card) { card.style.left = clampedX + 'px'; card.style.top = clampedY + 'px'; }
+    if (e.cancelable) e.preventDefault();
+  }
+  function liveCardPointerUp() {
+    draggingTicketId = null;
+    document.removeEventListener('mousemove', liveCardPointerMove);
+    document.removeEventListener('touchmove', liveCardPointerMove);
+    document.removeEventListener('mouseup', liveCardPointerUp);
+    document.removeEventListener('touchend', liveCardPointerUp);
+  }
+  // Attach delegated listeners once
+  (function attachLiveCardDrag(){
+    const panel = ensureLiveTicketsPanel();
+    panel.addEventListener('mousedown', liveCardPointerDown);
+    panel.addEventListener('touchstart', liveCardPointerDown, { passive: false });
+  })();
+
+  // "Connect to Truck on Scale" — grabs the live scale weight as the outbound
+  // reading for the selected ticket, then routes through the existing merge
+  // confirm flow so the operator can verify net weight + total before printing.
+  async function connectToTruckOnScale(ticketId) {
+    if (!isLive() && connectionMode !== 'sim') {
+      alert('Scale is disconnected or stale — reconnect to capture the outbound weight.');
+      return;
+    }
+    if (!currentLiveWeight || currentLiveWeight <= 0) {
+      alert('No live weight on the scale. Drive the truck onto the scale and try again.');
+      return;
+    }
+    // Reuse the print-trigger debounce so we can't fire two outbound captures
+    // from one stable reading.
+    if (Date.now() - lastPrintTrigger < 3000) return;
+    lastPrintTrigger = Date.now();
+    lastPrintWeight = currentLiveWeight;
+    autoCapturePhoto();
+    previewMerge(ticketId);
   }
 
   async function loadCompletedToday() {

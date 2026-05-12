@@ -3,6 +3,7 @@ import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { photoOversize } from '../utils/photo'
 import { GST_RATE, cents } from '../utils/money'
 import { todayEdmonton } from '../utils/date'
+import { hashPassword } from '../utils/passwords'
 
 type Bindings = { DB: D1Database }
 
@@ -286,6 +287,41 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
     })
   } catch (err: any) {
     console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// Quick-create a walk-in customer from the scale-house Assign modal. Any
+// employee can do this (including yard_operator) — the scale operator needs
+// to capture a customer mid-ticket without leaving the screen. We auto-fill
+// the auth fields (email/password) since walk-ins don't log in.
+scaleTicketRoutes.post('/quick-customer', async (c) => {
+  try {
+    const { company_name, contact_name, phone } = await c.req.json()
+    if (!company_name || !company_name.trim()) {
+      return c.json({ error: 'Company name is required' }, 400)
+    }
+
+    const company = company_name.trim().slice(0, 200)
+    const contact = (contact_name || '').trim().slice(0, 200) || company
+    const phoneClean = (phone || '').trim().slice(0, 50) || null
+
+    // Synthesize a unique placeholder login — walk-ins never authenticate, but
+    // the customers table requires email UNIQUE NOT NULL + password_hash NOT NULL.
+    const suffix = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
+    const email = `walkin-${suffix}@reusecanada.local`
+    const randomPassword = crypto.randomUUID() + crypto.randomUUID()
+    const passwordHash = await hashPassword(randomPassword)
+
+    const result = await c.env.DB.prepare(
+      `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, province, is_active)
+       VALUES (?, ?, ?, ?, ?, 'AB', 1)`
+    ).bind(email, passwordHash, company, contact, phoneClean).run()
+
+    const id = result.meta.last_row_id as number
+    return c.json({ id, company_name: company, contact_name: contact, phone: phoneClean })
+  } catch (err: any) {
+    console.error('scaleTickets quick-customer error:', err)
+    return c.json({ error: 'Server error' }, 500)
   }
 })
 
