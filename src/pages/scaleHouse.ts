@@ -390,8 +390,9 @@ export function renderScaleHouse(): string {
 
       <!-- Material Pricing -->
       <div class="bg-white rounded-xl shadow-card border border-gray-100">
-        <div class="p-3 border-b border-gray-100">
+        <div class="p-3 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-tags text-rc-green"></i> Pricing</h3>
+          <button id="btn-manage-pricing" onclick="openPricingModal()" class="hidden text-xs font-semibold text-blue-600 hover:text-blue-700"><i class="fas fa-sliders mr-1"></i>Manage</button>
         </div>
         <div id="pricing-table" class="p-3">
           <div class="text-center text-gray-400 text-xs py-2"><i class="fas fa-spinner fa-spin mr-1"></i>Loading...</div>
@@ -574,6 +575,37 @@ export function renderScaleHouse(): string {
         <button onclick="closeDetailModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
       </div>
       <div id="detail-body" class="p-6"></div>
+    </div>
+  </div>
+
+  <!-- Manage Materials & Pricing Modal (admin/manager only) -->
+  <div id="pricing-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-tags mr-2 text-rc-green"></i>Materials &amp; Pricing</h3>
+        <button onclick="closePricingModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div class="p-6 space-y-6">
+        <!-- Add new material -->
+        <div class="p-4 border-2 border-dashed border-blue-200 rounded-xl bg-blue-50/40">
+          <div class="text-xs font-bold uppercase tracking-wider text-blue-700 mb-3"><i class="fas fa-plus mr-1"></i>Add Material</div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="col-span-2"><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Display Name *</label><input type="text" id="pm-name" placeholder="e.g. Copper Wire" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-blue-500 outline-none" /></div>
+            <div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per kg *</label><input type="number" id="pm-price-kg" step="0.01" min="0" placeholder="0.00" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-blue-500 outline-none font-mono" /></div>
+            <div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per tire</label><input type="number" id="pm-price-tire" step="0.01" min="0" placeholder="0.00" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-blue-500 outline-none font-mono" /></div>
+          </div>
+          <div class="mt-3 flex items-center justify-between gap-3">
+            <div id="pm-add-error" class="hidden text-xs text-red-600 font-semibold"></div>
+            <button onclick="createMaterial()" id="btn-pm-create" class="ml-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg btn-press"><i class="fas fa-check mr-1"></i>Add Material</button>
+          </div>
+        </div>
+
+        <!-- Existing materials -->
+        <div>
+          <div class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Existing Materials</div>
+          <div id="pm-list" class="space-y-2"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2167,9 +2199,125 @@ export function renderScaleHouse(): string {
     try {
       const res = await axios.get('/api/pricing'); pricingData = res.data.pricing || [];
       const div = document.getElementById('pricing-table');
-      if (!pricingData.length) { div.innerHTML = '<div class="text-center text-gray-400 text-xs">No pricing</div>'; return; }
-      div.innerHTML = '<div class="space-y-1">' + pricingData.map(p => '<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span class="text-gray-600">'+getMaterialLabel(p.material_type)+'</span><span class="font-mono font-semibold text-gray-800">$'+parseFloat(p.price_per_kg).toFixed(2)+'/kg</span></div>').join('') + '</div>';
+      if (!pricingData.length) { div.innerHTML = '<div class="text-center text-gray-400 text-xs">No pricing</div>'; }
+      else div.innerHTML = '<div class="space-y-1">' + pricingData.map(p => '<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span class="text-gray-600">'+escHtml(getMaterialLabel(p.material_type))+'</span><span class="font-mono font-semibold text-gray-800">$'+parseFloat(p.price_per_kg).toFixed(2)+'/kg</span></div>').join('') + '</div>';
+      // Keep ticket-creation dropdowns in sync with the current material list.
+      refreshMaterialDropdowns();
     } catch(err) {}
+  }
+
+  // ══════════════════════════════════════════
+  // MATERIALS & PRICING MANAGEMENT
+  // ══════════════════════════════════════════
+  // Populate the assign-modal and new-ticket-modal material <select>s from
+  // pricingData so newly-added materials appear without a page reload.
+  function refreshMaterialDropdowns() {
+    const options = pricingData.map(p => '<option value="'+escHtml(p.material_type)+'">'+escHtml(getMaterialLabel(p.material_type))+'</option>').join('');
+    ['assign-material', 'nt-material'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      const prev = sel.value;
+      sel.innerHTML = options;
+      // Preserve selection if it still exists in the list
+      if (prev && pricingData.some(p => p.material_type === prev)) sel.value = prev;
+    });
+  }
+
+  function openPricingModal() {
+    renderPricingManagementList();
+    document.getElementById('pm-name').value = '';
+    document.getElementById('pm-price-kg').value = '';
+    document.getElementById('pm-price-tire').value = '';
+    document.getElementById('pm-add-error').classList.add('hidden');
+    openModal('pricing-modal');
+  }
+  function closePricingModal() { closeModal('pricing-modal'); }
+
+  function renderPricingManagementList() {
+    const list = document.getElementById('pm-list');
+    if (!list) return;
+    if (!pricingData.length) { list.innerHTML = '<div class="text-center text-gray-400 text-xs py-4">No materials yet</div>'; return; }
+    list.innerHTML = pricingData.map(p => {
+      const id = p.id;
+      const label = escHtml(getMaterialLabel(p.material_type));
+      const slug = escHtml(p.material_type);
+      const ppk = parseFloat(p.price_per_kg || 0).toFixed(2);
+      const ppt = parseFloat(p.price_per_tire || 0).toFixed(2);
+      return ''+
+        '<div class="border border-gray-200 rounded-xl p-3" data-pricing-row="'+id+'">' +
+          '<div class="flex items-center justify-between mb-2 gap-2">' +
+            '<div class="min-w-0 flex-1"><div class="font-semibold text-sm text-gray-800 truncate">'+label+'</div><div class="text-[10px] text-gray-400 font-mono">slug: '+slug+'</div></div>' +
+            '<button onclick="deleteMaterial('+id+')" class="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-lg" title="Deactivate"><i class="fas fa-trash"></i></button>' +
+          '</div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per kg</label><input type="number" step="0.01" min="0" value="'+ppk+'" data-field="price_per_kg" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm font-mono focus:border-blue-500 outline-none" /></div>' +
+            '<div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per tire</label><input type="number" step="0.01" min="0" value="'+ppt+'" data-field="price_per_tire" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm font-mono focus:border-blue-500 outline-none" /></div>' +
+          '</div>' +
+          '<div class="mt-2 flex items-center justify-end gap-2"><span class="hidden text-xs text-green-600 font-semibold" data-saved-tag><i class="fas fa-check mr-1"></i>Saved</span><button onclick="saveMaterial('+id+')" class="px-3 py-1.5 bg-rc-green hover:bg-rc-green-light text-white text-xs font-bold rounded-lg btn-press">Save Price</button></div>' +
+        '</div>';
+    }).join('');
+  }
+
+  async function createMaterial() {
+    const name = document.getElementById('pm-name').value.trim();
+    const ppk = parseFloat(document.getElementById('pm-price-kg').value);
+    const pptRaw = document.getElementById('pm-price-tire').value;
+    const ppt = pptRaw === '' ? 0 : parseFloat(pptRaw);
+    const errEl = document.getElementById('pm-add-error');
+    const btn = document.getElementById('btn-pm-create');
+    errEl.classList.add('hidden'); errEl.textContent = '';
+    if (!name) { errEl.textContent = 'Display name is required'; errEl.classList.remove('hidden'); return; }
+    if (!Number.isFinite(ppk) || ppk < 0) { errEl.textContent = '$/kg must be a non-negative number'; errEl.classList.remove('hidden'); return; }
+    if (!Number.isFinite(ppt) || ppt < 0) { errEl.textContent = '$/tire must be a non-negative number'; errEl.classList.remove('hidden'); return; }
+    // Auto-slug from display name. Server sanitizes again, but we send a
+    // reasonable starting point so the human sees what they're creating.
+    const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 50);
+    if (!slug) { errEl.textContent = 'Display name produces an empty slug'; errEl.classList.remove('hidden'); return; }
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Saving...';
+    try {
+      await axios.post('/api/pricing', { material_type: slug, description: name, price_per_kg: ppk, price_per_tire: ppt });
+      await loadPricing();
+      renderPricingManagementList();
+      document.getElementById('pm-name').value = '';
+      document.getElementById('pm-price-kg').value = '';
+      document.getElementById('pm-price-tire').value = '';
+    } catch (err) {
+      errEl.textContent = err.response?.data?.error || 'Failed to create material';
+      errEl.classList.remove('hidden');
+    } finally {
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-check mr-1"></i>Add Material';
+    }
+  }
+
+  async function saveMaterial(id) {
+    const row = document.querySelector('[data-pricing-row="' + id + '"]');
+    if (!row) return;
+    const ppk = parseFloat(row.querySelector('[data-field="price_per_kg"]').value);
+    const ppt = parseFloat(row.querySelector('[data-field="price_per_tire"]').value);
+    if (!Number.isFinite(ppk) || ppk < 0) { alert('$/kg must be a non-negative number'); return; }
+    if (!Number.isFinite(ppt) || ppt < 0) { alert('$/tire must be a non-negative number'); return; }
+    try {
+      await axios.post('/api/pricing/' + id, { price_per_kg: ppk, price_per_tire: ppt });
+      await loadPricing();
+      // Flash a "Saved" tag inline instead of re-rendering the row mid-edit.
+      const tag = row.querySelector('[data-saved-tag]');
+      if (tag) { tag.classList.remove('hidden'); setTimeout(() => tag.classList.add('hidden'), 1500); }
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to save');
+    }
+  }
+
+  async function deleteMaterial(id) {
+    const p = pricingData.find(x => x.id === id);
+    if (!p) return;
+    if (!confirm('Deactivate "' + getMaterialLabel(p.material_type) + '"? Historical tickets keep this material; it just stops appearing in pickers.')) return;
+    try {
+      await axios.delete('/api/pricing/' + id);
+      await loadPricing();
+      renderPricingManagementList();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to deactivate');
+    }
   }
 
   // Settlement
@@ -2269,9 +2417,16 @@ export function renderScaleHouse(): string {
   }
 
   // ── Helpers ──
+  // pricingData is the source of truth for material labels — newly-added
+  // materials carry their display name in the description column. Fall back
+  // to the seeded map for legacy slugs if pricingData hasn't loaded yet.
   function getMaterialLabel(type) {
+    if (type && Array.isArray(pricingData)) {
+      const p = pricingData.find(x => x.material_type === type);
+      if (p && p.description) return p.description;
+    }
     const map = { shingles:'Asphalt Shingles', mixed:'Tires — Mixed', passenger:'Tires — Passenger', truck:'Tires — Truck', 'off-road':'Tires — Off-Road', scrap_metal:'Scrap Metal' };
-    return map[type] || (type||'Mixed').replace('_',' ');
+    return map[type] || (type||'Mixed').replace(/_/g,' ');
   }
   function timeAgo(dt) { if (!dt) return ''; const d=(Date.now()-new Date(dt).getTime())/60000; if(d<1) return 'now'; if(d<60) return Math.round(d)+'m'; if(d<1440) return Math.round(d/60)+'h'; return Math.round(d/1440)+'d'; }
   async function loadCustomerDropdown(id) {
@@ -2289,6 +2444,11 @@ export function renderScaleHouse(): string {
       if (savedIP) { document.getElementById('printer-ip').value = savedIP; connectPrinter(); }
       bootstrapScale();
       startStaleWatchdog();
+      // Reveal price-management button only to roles permitted by the backend
+      // (mirrors roleRequired('admin','manager') on POST/DELETE /api/pricing).
+      if (['admin','manager'].includes(userRole)) {
+        document.getElementById('btn-manage-pricing')?.classList.remove('hidden');
+      }
     } else setTimeout(init, 500);
   })();
   </script>
