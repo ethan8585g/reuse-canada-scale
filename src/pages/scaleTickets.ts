@@ -116,8 +116,13 @@ export function renderScaleTickets(): string {
             <input type="number" id="weight-value" step="0.1" min="0" required
               class="w-full px-4 py-4 border-2 border-gray-200 rounded-xl text-2xl font-bold text-center focus:border-rc-green outline-none"
               placeholder="0.0">
-            <p class="text-xs text-gray-400 mt-2 text-center">
-              <i class="fas fa-info-circle mr-1"></i>Enter reading from Western APX (AM5332C) indicator
+            <button type="button" id="pull-bridge-btn" onclick="pullWeightFromBridge()"
+              class="mt-3 w-full bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+              <i class="fas fa-satellite-dish"></i>
+              <span id="pull-bridge-label">Pull from Scale House</span>
+            </button>
+            <p id="pull-bridge-status" class="text-xs text-center mt-2 text-gray-400">
+              <i class="fas fa-info-circle mr-1"></i>Pulls the live reading from the connected scale-house terminal
             </p>
           </div>
           <div class="flex gap-3">
@@ -259,13 +264,64 @@ export function renderScaleTickets(): string {
         document.getElementById('weight-modal-title').textContent = type === 'in' ? 'Record Weight In (Gross)' : 'Record Weight Out (Tare)';
         document.getElementById('weight-modal-ticket').textContent = 'Ticket: ' + ticketNumber;
         document.getElementById('weight-value').value = '';
+        document.getElementById('pull-bridge-status').className = 'text-xs text-center mt-2 text-gray-400';
+        document.getElementById('pull-bridge-status').innerHTML = '<i class="fas fa-info-circle mr-1"></i>Pulls the live reading from the connected scale-house terminal';
         document.getElementById('weight-modal').style.display = 'flex';
         document.getElementById('weight-value').focus();
+        refreshBridgePreview();
       }
       function closeWeightModal() {
         document.getElementById('weight-modal').style.display = 'none';
         currentWeightTicketId = null;
         currentWeightType = null;
+      }
+
+      // Show the current scale-bridge reading on the button label so the
+      // operator can see at a glance whether the scale house is live before
+      // tapping. Best-effort — silent on failure so the modal still works
+      // when the user is offline or the bridge is empty.
+      async function refreshBridgePreview() {
+        const labelEl = document.getElementById('pull-bridge-label');
+        const btn = document.getElementById('pull-bridge-btn');
+        if (!labelEl || !btn) return;
+        labelEl.textContent = 'Pull from Scale House';
+        btn.disabled = false;
+        try {
+          const res = await axios.get('/api/scale-bridge/current');
+          const d = res.data || {};
+          if (d.fresh && d.weight_kg > 0) {
+            labelEl.textContent = 'Pull from Scale House (' + Number(d.weight_kg).toLocaleString('en-CA', {maximumFractionDigits:1}) + ' kg)';
+          } else {
+            labelEl.textContent = 'Scale House — no live reading';
+            btn.disabled = true;
+          }
+        } catch (e) { /* leave default label */ }
+      }
+
+      async function pullWeightFromBridge() {
+        const statusEl = document.getElementById('pull-bridge-status');
+        try {
+          const res = await axios.get('/api/scale-bridge/current');
+          const d = res.data || {};
+          if (!d.fresh) {
+            statusEl.className = 'text-xs text-center mt-2 text-red-600 font-semibold';
+            statusEl.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i>Scale house terminal is not publishing live weight. Ask them to connect the scale, or enter the weight manually.';
+            return;
+          }
+          if (!(d.weight_kg > 0)) {
+            statusEl.className = 'text-xs text-center mt-2 text-amber-600 font-semibold';
+            statusEl.innerHTML = '<i class="fas fa-exclamation-circle mr-1"></i>Scale shows 0 kg — drive the truck onto the scale.';
+            return;
+          }
+          document.getElementById('weight-value').value = Number(d.weight_kg).toFixed(1);
+          const stableTag = d.is_stable ? ' (stable)' : ' (unstable — wait for the truck to settle)';
+          const ageTag = d.age_seconds != null ? ' · ' + d.age_seconds + 's old' : '';
+          statusEl.className = 'text-xs text-center mt-2 ' + (d.is_stable ? 'text-rc-green' : 'text-amber-600') + ' font-semibold';
+          statusEl.innerHTML = '<i class="fas fa-check-circle mr-1"></i>Pulled ' + Number(d.weight_kg).toFixed(1) + ' kg' + stableTag + ageTag;
+        } catch (err) {
+          statusEl.className = 'text-xs text-center mt-2 text-red-600 font-semibold';
+          statusEl.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i>Failed to reach the scale bridge.';
+        }
       }
 
       async function submitWeight() {

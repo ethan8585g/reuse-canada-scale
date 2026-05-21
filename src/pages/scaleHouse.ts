@@ -659,6 +659,29 @@ export function renderScaleHouse(): string {
   const STALE_AFTER_MS = 15000;
   let bridgeES = null;
   const BRIDGE_URL = localStorage.getItem('scale_bridge_url') || 'http://localhost:5555';
+  // Web scale-bridge publish throttle. The scale streams ~10 frames/sec; we
+  // only post once per second so phones and the office can read the latest
+  // value without us hammering D1.
+  let lastWebBridgePublishAt = 0;
+  let lastWebBridgePublishedWeight = null;
+  const WEB_BRIDGE_PUBLISH_MS = 1000;
+  function publishToWebBridge() {
+    try {
+      const now = Date.now();
+      // Always post on a clear weight change so the remote view doesn't lag
+      // behind a fast-moving reading, but otherwise throttle to 1s.
+      const weightChangedABunch = lastWebBridgePublishedWeight === null ||
+        Math.abs(currentLiveWeight - lastWebBridgePublishedWeight) >= 50;
+      if (!weightChangedABunch && (now - lastWebBridgePublishAt) < WEB_BRIDGE_PUBLISH_MS) return;
+      lastWebBridgePublishAt = now;
+      lastWebBridgePublishedWeight = currentLiveWeight;
+      axios.post('/api/scale-bridge/publish', {
+        weight: currentLiveWeight,
+        stable: !!isWeightStable,
+        connection_mode: connectionMode || null,
+      }).catch(() => { /* fire-and-forget — network blips must not stall the scale UI */ });
+    } catch (e) { /* never throw from the hot path */ }
+  }
   let isKioskMode = window.location.search.includes('kiosk');
   let activeModalId = null;
   let userRole = (JSON.parse(localStorage.getItem('rc_session') || '{}')).role || 'yard_operator';
@@ -1435,6 +1458,7 @@ export function renderScaleHouse(): string {
     updateLiveWeightDisplay();
     checkAutoCapture();
     updateCaptureButton();
+    publishToWebBridge();
     if (isPrint && isWeightStable && currentLiveWeight > 100) {
       logSerial('>>> PRINT TRIGGER: ' + currentLiveWeight + ' kg');
       onPrintTrigger(currentLiveWeight);
@@ -1569,6 +1593,7 @@ export function renderScaleHouse(): string {
     updateLiveWeightDisplay(); updateCaptureButton();
     updateScaleUI('connected', 'SIM'); showConnectionMode('Simulated');
     document.getElementById('manual-entry-panel').classList.add('hidden');
+    publishToWebBridge();
     lastPrintWeight = currentLiveWeight;
     onPrintTrigger(lastPrintWeight);
   }
