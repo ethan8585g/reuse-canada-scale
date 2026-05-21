@@ -335,7 +335,13 @@ export function renderCustomerManagement(): string {
       }
 
       (function init() {
-        if (typeof axios !== 'undefined') { loadCustomers(); }
+        if (typeof axios !== 'undefined') {
+          loadCustomers();
+          // Auto-open the create modal when arriving from the dashboard "Create Account" chooser.
+          if (new URLSearchParams(window.location.search).get('new') === '1') {
+            openCreateModal();
+          }
+        }
         else { setTimeout(init, 500); }
       })();
     </script>

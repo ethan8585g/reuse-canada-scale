@@ -4,6 +4,41 @@ import { YARD_LAT, YARD_LNG } from '../utils/yard'
 
 export function renderEmployeeDashboard(): string {
   return layout('Employee Dashboard', employeePageWrapper('dashboard', 'Operations Dashboard', `
+    <!-- Quick Actions Bar (admin/manager only — toggled in script below) -->
+    <div id="quick-actions" class="flex items-center justify-end mb-4" style="display:none;">
+      <button onclick="openCreateAccountChooser()" class="bg-rc-green hover:bg-rc-green-light text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-lg flex items-center gap-2">
+        <i class="fas fa-user-plus"></i> Create Account
+      </button>
+    </div>
+
+    <!-- Create Account Chooser Modal -->
+    <div id="create-account-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none;">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-user-plus mr-2 text-rc-green"></i>Create New Account</h3>
+          <button onclick="closeCreateAccountChooser()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <div class="p-6 grid grid-cols-1 gap-3">
+          <a href="/employee/customers?new=1" class="flex items-center gap-4 p-4 rounded-xl border-2 border-gray-100 hover:border-rc-green hover:bg-green-50 transition-all">
+            <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center"><i class="fas fa-building text-xl text-blue-600"></i></div>
+            <div class="flex-1">
+              <div class="font-bold text-gray-800">New Customer</div>
+              <div class="text-xs text-gray-500">Company login + contact, address, region</div>
+            </div>
+            <i class="fas fa-arrow-right text-gray-300"></i>
+          </a>
+          <a id="create-account-staff-link" href="/employee/drivers?new=1" class="flex items-center gap-4 p-4 rounded-xl border-2 border-gray-100 hover:border-rc-green hover:bg-green-50 transition-all">
+            <div class="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center"><i class="fas fa-id-badge text-xl text-rc-orange"></i></div>
+            <div class="flex-1">
+              <div class="font-bold text-gray-800">New Staff / Driver</div>
+              <div class="text-xs text-gray-500" id="create-account-staff-hint">Driver, yard operator, manager, or admin</div>
+            </div>
+            <i class="fas fa-arrow-right text-gray-300"></i>
+          </a>
+        </div>
+      </div>
+    </div>
+
     <!-- Stats Grid - ALL CLICKABLE -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <a href="/employee/pickups" class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-5 shadow-card border border-amber-100/60 card-hover cursor-pointer block group">
@@ -148,6 +183,26 @@ export function renderEmployeeDashboard(): string {
       let dashboardMap = null;
       let dashboardMapLoaded = false;
       let dashboardMarkers = [];
+
+      // ═══ CREATE ACCOUNT CHOOSER ═══
+      // Visibility: backend gates customer create on admin/manager and staff create on admin.
+      // Show the quick-action button for admin+manager; non-admins clicking staff get a backend 403,
+      // so we also hide that row for managers to avoid a dead-end.
+      (function gateCreateAccount() {
+        try {
+          const s = JSON.parse(localStorage.getItem('rc_session') || '{}');
+          const role = s.role || '';
+          if (role === 'admin' || role === 'manager') {
+            document.getElementById('quick-actions').style.display = 'flex';
+          }
+          if (role !== 'admin') {
+            const staffLink = document.getElementById('create-account-staff-link');
+            if (staffLink) staffLink.style.display = 'none';
+          }
+        } catch (e) {}
+      })();
+      function openCreateAccountChooser() { document.getElementById('create-account-modal').style.display = 'flex'; }
+      function closeCreateAccountChooser() { document.getElementById('create-account-modal').style.display = 'none'; }
 
       async function loadDashboard() {
         const pickupsDiv = document.getElementById('recent-pickups');
