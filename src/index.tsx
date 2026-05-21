@@ -5,6 +5,9 @@ import { customerRoutes } from './routes/customer'
 import { employeeRoutes } from './routes/employee'
 import { scaleTicketRoutes } from './routes/scaleTickets'
 import { scaleBridgeRoutes } from './routes/scaleBridge'
+import { craneTicketRoutes } from './routes/craneTickets'
+import { craneBridgeRoutes } from './routes/craneBridge'
+import { cranePricingRoutes } from './routes/cranePricing'
 import { pickupRoutes } from './routes/pickups'
 import { routeRoutes } from './routes/routing'
 import { squareRoutes } from './routes/square'
@@ -16,6 +19,8 @@ import { renderCustomerDashboard } from './pages/customerDashboard'
 import { renderEmployeeDashboard } from './pages/employeeDashboard'
 import { renderScaleHouse } from './pages/scaleHouse'
 import { renderScaleTickets } from './pages/scaleTickets'
+import { renderOverheadCrane } from './pages/overheadCrane'
+import { renderCraneTickets } from './pages/craneTickets'
 import { renderPickupManagement } from './pages/pickupManagement'
 import { renderRouting } from './pages/routing'
 import { renderFieldForm } from './pages/fieldForm'
@@ -47,6 +52,9 @@ app.route('/api/customer', customerRoutes)
 app.route('/api/employee', employeeRoutes)
 app.route('/api/scale-tickets', scaleTicketRoutes)
 app.route('/api/scale-bridge', scaleBridgeRoutes)
+app.route('/api/crane-tickets', craneTicketRoutes)
+app.route('/api/crane-bridge', craneBridgeRoutes)
+app.route('/api/crane-pricing', cranePricingRoutes)
 app.route('/api/pickups', pickupRoutes)
 app.route('/api/routes', routeRoutes)
 app.route('/api/square', squareRoutes)
@@ -88,6 +96,9 @@ app.get('/employee/dashboard', (c) => c.html(renderEmployeeDashboard()))
 app.get('/employee/scale-house', (c) => c.html(renderScaleHouse()))
 app.get('/employee/scale-tickets', (c) => c.html(renderScaleTickets()))
 app.get('/employee/scale-tickets/new', (c) => c.html(renderScaleTickets()))
+app.get('/employee/overhead-crane', (c) => c.html(renderOverheadCrane()))
+app.get('/employee/crane-tickets', (c) => c.html(renderCraneTickets()))
+app.get('/employee/crane-tickets/new', (c) => c.html(renderCraneTickets()))
 app.get('/employee/pickups', (c) => c.html(renderPickupManagement()))
 app.get('/employee/routing', (c) => c.html(renderRouting()))
 app.get('/employee/customers', (c) => c.html(renderCustomerManagement()))
