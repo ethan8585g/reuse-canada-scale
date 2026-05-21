@@ -70,7 +70,7 @@
 
 ### 5. Scale House (`/employee/scale-house`)
 Full-featured scale house ticketing station:
-- **Bluetooth Accuren Apex Integration**: Web Bluetooth API connects to the Apex indicator via BLE
+- **Bluetooth Western APX Integration**: Web Bluetooth API connects to the Western APX indicator (model AM5332C) via an IRXON RS-232↔BT adapter
 - **3-Step Workflow**: Create Ticket -> Capture Weight In (Gross) -> Capture Weight Out (Tare) -> Auto-calculate Net Weight
 - **Auto Pricing**: Pulls rates from pricing table by material type. Calculates subtotal + 5% GST
 - **Square Terminal Payment**: Sends $ amount to Square Reader for card tap/insert
@@ -270,11 +270,11 @@ Full-featured scale house ticketing station:
 
 ## Hardware Integration
 
-### Accuren Apex Indicator (Bluetooth)
-- Connects via Web Bluetooth API in Chrome/Edge
-- Scans for BLE weight scale services
-- Reads live weight data from the indicator
-- Displays stable/unstable indicator
+### Western APX Indicator (Bluetooth via IRXON adapter)
+- Indicator: Western Scale APX, model **AM5332C** (mfg Accurate Scale Industries, Edmonton AB). Load cell unit: Western AM4913. Capacity 32,000 kg, class III HD, e=d=10 kg.
+- Connection: IRXON RS-232↔Bluetooth adapter on the indicator's DB9 serial port (USB-powered).
+- Web Bluetooth API in Chrome/Edge scans for the IRXON BLE service and reads the APX serial frames.
+- Displays live weight + stable/unstable indicator.
 
 ### Square Terminal Reader
 - Sends payment amounts via Square Terminal API

@@ -3,6 +3,14 @@ node_modules/
 dist/
 .dev.vars
 .env
+.env.local
 *.log
 .pm2/
 pids/
+.DS_Store
+*.swp
+*.swo
+*.tmp
+.idea/
+.cache/
+coverage/
