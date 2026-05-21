@@ -4,10 +4,12 @@ import { authRoutes } from './routes/auth'
 import { customerRoutes } from './routes/customer'
 import { employeeRoutes } from './routes/employee'
 import { scaleTicketRoutes } from './routes/scaleTickets'
+import { scaleBridgeRoutes } from './routes/scaleBridge'
 import { pickupRoutes } from './routes/pickups'
 import { routeRoutes } from './routes/routing'
 import { squareRoutes } from './routes/square'
 import { pricingRoutes } from './routes/pricing'
+import { invoiceRoutes } from './routes/invoices'
 import { junkRemovalRoutes } from './routes/junkRemoval'
 import { renderLogin } from './pages/login'
 import { renderCustomerDashboard } from './pages/customerDashboard'
@@ -21,13 +23,17 @@ import { renderCustomerManagement } from './pages/customerManagement'
 import { renderDriverManagement } from './pages/driverManagement'
 import { renderDriverPortal } from './pages/driverPortal'
 import { renderJunkRemovalQuoting } from './pages/junkRemovalQuoting'
+import { renderInvoices } from './pages/invoices'
+import { renderInvoiceBuilder } from './pages/invoiceBuilder'
+import { renderInvoicePrint } from './pages/invoicePrint'
 
 type Bindings = {
   DB: D1Database
+  maps_key: string
   GOOGLE_MAPS_API_KEY: string
   SQUARE_APP_ID: string
   SQUARE_ACCESS_TOKEN: string
-  OPENAI_API_KEY: string
+  open_ai: string
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -40,15 +46,18 @@ app.route('/api/auth', authRoutes)
 app.route('/api/customer', customerRoutes)
 app.route('/api/employee', employeeRoutes)
 app.route('/api/scale-tickets', scaleTicketRoutes)
+app.route('/api/scale-bridge', scaleBridgeRoutes)
 app.route('/api/pickups', pickupRoutes)
 app.route('/api/routes', routeRoutes)
 app.route('/api/square', squareRoutes)
 app.route('/api/pricing', pricingRoutes)
+app.route('/api/invoices', invoiceRoutes)
 app.route('/api/junk-removal', junkRemovalRoutes)
 
 // ── Config endpoint (serves safe public keys) ──
 app.get('/api/config/maps-key', (c) => {
-  return c.json({ key: c.env.GOOGLE_MAPS_API_KEY || '' })
+  const key = c.env.maps_key || c.env.GOOGLE_MAPS_API_KEY || ''
+  return c.json({ key })
 })
 
 // ── No-cache middleware for all page routes ──
@@ -84,6 +93,16 @@ app.get('/employee/routing', (c) => c.html(renderRouting()))
 app.get('/employee/customers', (c) => c.html(renderCustomerManagement()))
 app.get('/employee/drivers', (c) => c.html(renderDriverManagement()))
 app.get('/employee/junk-removal', (c) => c.html(renderJunkRemovalQuoting()))
+app.get('/employee/invoices', (c) => c.html(renderInvoices()))
+app.get('/employee/invoices/new', (c) => c.html(renderInvoiceBuilder()))
+// Print shell: a static HTML page that fetches /api/invoices/:id client-side
+// with a Bearer token. The worker never reads D1 here, so an unauthenticated
+// visitor cannot pull invoice PII by guessing IDs.
+app.get('/employee/invoices/:id/print', (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isFinite(id)) return c.text('Invalid id', 400)
+  return c.html(renderInvoicePrint())
+})
 app.get('/employee/field-form/:ticketId', (c) => c.html(renderFieldForm()))
 app.get('/employee/field-form', (c) => c.html(renderFieldForm()))
 

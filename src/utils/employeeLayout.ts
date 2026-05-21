@@ -5,10 +5,13 @@ export function employeeSidebar(activePage: string): string {
     { id: 'dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', href: '/employee/dashboard', roles: ['admin','manager','yard_operator'] },
     { id: 'scale-house', icon: 'fas fa-balance-scale', label: 'Scale House', href: '/employee/scale-house', roles: ['admin','manager','yard_operator'] },
     { id: 'scale-tickets', icon: 'fas fa-receipt', label: 'Ticket History', href: '/employee/scale-tickets', roles: ['admin','manager','yard_operator'] },
+    { id: 'overhead-crane', icon: 'fas fa-arrows-up-to-line', label: 'Overhead Crane', href: '/employee/overhead-crane', roles: ['admin','manager','yard_operator'] },
+    { id: 'crane-tickets', icon: 'fas fa-clipboard-list', label: 'Crane History', href: '/employee/crane-tickets', roles: ['admin','manager','yard_operator'] },
     { id: 'pickups', icon: 'fas fa-truck-pickup', label: 'Pickup Requests', href: '/employee/pickups', roles: ['admin','manager'] },
     { id: 'routing', icon: 'fas fa-route', label: 'Routing', href: '/employee/routing', roles: ['admin','manager'] },
     { id: 'customers', icon: 'fas fa-users', label: 'Customers', href: '/employee/customers', roles: ['admin','manager'] },
     { id: 'drivers', icon: 'fas fa-id-badge', label: 'Drivers & Staff', href: '/employee/drivers', roles: ['admin','manager'] },
+    { id: 'invoices', icon: 'fas fa-file-invoice-dollar', label: 'Invoices', href: '/employee/invoices', roles: ['admin','manager'] },
     { id: 'junk-removal', icon: 'fas fa-dumpster', label: 'Junk Removal Quoting', href: '/employee/junk-removal', roles: ['admin','manager','yard_operator'] },
   ];
   // Filter based on role stored in localStorage (checked client-side for nav visibility)
