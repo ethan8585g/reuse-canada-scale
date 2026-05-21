@@ -399,6 +399,13 @@ export function renderRouting(): string {
         }
       }
 
+      // Google calls this if the API key is invalid, referrer-restricted, or billing is disabled.
+      // Without it, Google paints its default "Oops!" overlay inside the map div.
+      window.gm_authFailure = function() {
+        gmapsLoadFailed = true;
+        showMapFallback('Map unavailable (check API key / billing).');
+      };
+
       window.onGMapsReady = function() {
         gmapsLoaded = true;
         const mapEl = document.getElementById('map-container');

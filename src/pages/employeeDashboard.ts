@@ -303,6 +303,13 @@ export function renderEmployeeDashboard(): string {
         createDashboardMap(window._pendingDashboardPickups || []);
       };
 
+      // Google calls this if the API key is invalid, referrer-restricted, or billing is disabled.
+      // Without it, Google paints its default "Oops! Something went wrong" overlay inside the map div.
+      window.gm_authFailure = function() {
+        dashboardMapLoaded = true;
+        showDashboardMapFallback(window._pendingDashboardPickups || [], 'Map unavailable (check API key / billing)');
+      };
+
       function createDashboardMap(pickups) {
         dashboardMapLoaded = true;
         const mapEl = document.getElementById('dashboard-map');
