@@ -1,5 +1,14 @@
 # CLAUDE.md
 
+## Scope (IMPORTANT)
+
+This project is **exclusively** tied to:
+- **GitHub repo**: `reuse-canada-scale`
+- **Cloudflare Pages project**: `reuse-canada-scale`
+- **Production domain**: `www.reusecanadascale.com`
+
+Do NOT deploy, push, or reference any other GitHub repo, Cloudflare project, or domain from this working directory. All `npm run deploy`, `wrangler` commands, `git push`, and PR operations must target the above resources only. If a command or task appears to point elsewhere, stop and confirm with the user before proceeding.
+
 ## Project Overview
 
 Reuse Canada Scale CRM — a multi-portal operations platform for tire recycling logistics. Handles customer pickup requests, driver routing, scale house ticketing, and Square payments.
@@ -77,3 +86,9 @@ Key tables: `customers` (with region N/S/E/W), `employees` (roles: admin/manager
 - D1 database binding configured in `wrangler.jsonc`
 - Cloudflare bindings typed via `cf-typegen` script
 - No `.env` file — secrets managed via Cloudflare dashboard
+
+## Recent Work Log
+
+Append-only log of significant tasks Claude has completed. One dated bullet per task — scope, what shipped, and any non-obvious decisions a future Claude would benefit from knowing without re-reading every diff.
+
+- **2026-05-20** — Audited the dirty working tree and shipped 4 scoped commits: (1) backfilled the forgotten `migrations/0005_junk_removal_quotes.sql` that supported the already-merged junk-removal module; (2) web scale-bridge (`scale_bridge_state` single-row table + `/api/scale-bridge` publish/current + scaleHouse throttled publishToWebBridge() + "Pull from Scale House" button on the scale-tickets weight modal); (3) invoicing module (draft → issued → void with UNIQUE constraint on `invoice_line_items.scale_ticket_id`, retry-on-conflict number allocation, walk-in sentinel guard, audit log); (4) chore commit (hardware rename, .gitignore, PM2 deletion, CF project rename). Fixed P0 PII leak: `/employee/invoices/:id/print` was reading D1 server-side with no auth — converted to a static shell that fetches `/api/invoices/:id` client-side with the Bearer token. Dropped unused `MAPS_KEY` (uppercase) binding and the `--commit-dirty=true` deploy flag. Excluded the user's parallel crane WIP (imports + routes + files) from every commit per [feedback_scope_guard]. **Deploy attempt blocked from this environment**: SSH deploy key on this machine is read-only on `ethan8585g/reuse-canada-scale`, and the CF API token's IP allowlist excludes this machine's IP — both `git push origin main` and `npm run deploy` must be run from the user's normal dev machine. Subsequently resolved the 3-way CF project-name mismatch: `wrangler.jsonc`, `package.json`, and `CLAUDE.md` Scope all now agree on `reuse-canada-scale`. Then shipped the overhead crane module (parallel-to-scale stack: `crane_tickets`, `crane_audit_log`, `crane_weight_edits`, `crane_anomalies`, `crane_payment_batches`, `crane_pricing`, `crane_bridge_state`, ticket prefix `RC-CR-YYYY-NNNNN`) — caught and fixed a runtime bug along the way: the crane payment route was inserting into `payment_log` with `crane_ticket_id`, but that table has `scale_ticket_id NOT NULL` and no crane column. Added a parallel `crane_payment_log` table (same shape + partial UNIQUE on `square_payment_id` matching 0009) and pointed the route at it.
