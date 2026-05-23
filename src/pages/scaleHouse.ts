@@ -371,19 +371,17 @@ export function renderScaleHouse(): string {
       <!-- Receipt Printer -->
       <div class="bg-white rounded-xl shadow-card border border-gray-100">
         <div class="p-3 border-b border-gray-100">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-print text-gray-600"></i> Printer</h3>
+          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-print text-gray-600"></i> Receipt Printer</h3>
         </div>
         <div class="p-3 space-y-2">
           <div class="flex items-center gap-1.5">
-            <div id="printer-status-dot" class="w-2 h-2 rounded-full bg-red-400"></div>
-            <span id="printer-status-text" class="text-[10px] text-gray-500">Not connected</span>
+            <div class="w-2 h-2 rounded-full bg-green-400"></div>
+            <span class="text-[10px] text-gray-500">Browser print &middot; uses macOS default</span>
           </div>
-          <div class="flex gap-1.5">
-            <input type="text" id="printer-ip" placeholder="Printer IP" class="flex-1 px-2 py-1.5 text-[10px] border border-gray-200 rounded-lg">
-            <button onclick="connectPrinter()" class="px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-plug"></i></button>
-          </div>
+          <p class="text-[10px] text-gray-500 leading-snug">Set your Epson TM-T88VI (USB) as the default printer in System Settings &rarr; Printers, then auto-print fires the OS print dialog after each weigh-out.</p>
+          <button onclick="printTestReceipt()" class="w-full px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-vial mr-1"></i> Test Print</button>
           <label class="flex items-center gap-1.5 text-[10px] text-gray-600">
-            <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print 2 copies
+            <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out
           </label>
         </div>
       </div>
@@ -621,10 +619,14 @@ export function renderScaleHouse(): string {
   <div id="print-area" class="hidden print:block"></div>
   <style>
     @media print {
+      @page { size: 80mm auto; margin: 0; }
       body * { visibility: hidden !important; }
       #print-area, #print-area * { visibility: visible !important; }
-      #print-area { position: fixed; top: 0; left: 0; width: 80mm; font-family: 'Courier New', monospace; font-size: 11px; color: #000; padding: 4mm; display: block !important; }
-      #print-area .print-divider { border-top: 1px dashed #000; margin: 3mm 0; }
+      #print-area { position: fixed; top: 0; left: 0; width: 76mm; font-family: 'Menlo','Courier New',monospace; font-size: 11px; line-height: 1.35; color: #000; padding: 2mm 2mm 8mm 2mm; display: block !important; }
+      #print-area .print-divider { border-top: 1px dashed #000; margin: 2mm 0; }
+      #print-area .print-row { display: flex; justify-content: space-between; }
+      #print-area .print-center { text-align: center; }
+      #print-area .print-bold { font-weight: bold; }
     }
     /* Kiosk mode */
     body.kiosk-mode #sidebar, body.kiosk-mode #sidebar-overlay, body.kiosk-mode .lg\\:hidden.fixed { display: none !important; }
@@ -643,7 +645,7 @@ export function renderScaleHouse(): string {
   let weightHistory = [], lastPrintTrigger = 0, lastPrintWeight = 0;
   let openTickets = [], pricingData = [], customersCache = [], vehiclesCache = [];
   let cameraStream = null, lastCapturedPhoto = null;
-  let printerConnected = false, printerIP = '';
+  // Receipt printing flows through the OS print dialog (see printReceiptToThermal).
   let pendingMergeTicketId = null, pendingMergeTicket = null, autoRefreshTimer = null;
   // New v3 state
   let stableTimer = null, stableStartWeight = 0, autoPromptShown = false;
@@ -1673,39 +1675,42 @@ export function renderScaleHouse(): string {
   // ══════════════════════════════════════════
   // RECEIPT PRINTER
   // ══════════════════════════════════════════
-  function connectPrinter() {
-    printerIP = document.getElementById('printer-ip').value.trim();
-    if (!printerIP) { alert('Enter printer IP'); return; }
-    printerConnected = true;
-    document.getElementById('printer-status-dot').className = 'w-2 h-2 rounded-full bg-green-400';
-    document.getElementById('printer-status-text').textContent = 'Connected — ' + printerIP;
-    localStorage.setItem('printer_ip', printerIP);
-  }
+  // Receipt printing
+  // ─────────────────
+  // The Epson TM-T88VI is connected to the operator's Mac via USB and exposed
+  // by CUPS. We can't talk to it from a browser directly (vendor-class), so
+  // we render an 80mm-wide receipt into #print-area and trigger window.print(),
+  // which opens the macOS print dialog with the OS default printer selected.
+  // Operator sets the Epson as default once; subsequent prints are a single
+  // Enter press. For fully-silent printing Chrome must be launched with
+  // --kiosk --kiosk-printing (out of scope of this app).
   async function printReceiptToThermal(receipt) {
-    if (printerConnected && printerIP) {
-      try {
-        const printData = formatReceiptText(receipt);
-        await fetch('http://' + printerIP + '/StarWebPRNT/SendMessage', { method:'POST', headers:{'Content-Type':'text/xml'}, body:'<StarWebPRNT><SetCharacterStyle bold="true"/><PrintNormal>' + escapeXml(printData) + '</PrintNormal><CutPaper/></StarWebPRNT>' }).catch(() => fetch('http://' + printerIP + '/print', { method:'POST', body:printData }));
-      } catch(e) { browserPrintReceipt(receipt); }
-    } else { browserPrintReceipt(receipt); }
-  }
-  function escapeXml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  function formatReceiptText(r) {
-    const matLabel = getMaterialLabel(r.material), dateStr = r.date ? new Date(r.date).toLocaleString('en-CA') : '';
-    let t = '\\n        REUSE CANADA\\n   Waste-to-Value Recycling\\n      Alberta, Canada\\n================================\\n       SCALE TICKET\\n       ' + (r.ticket_number||'') + '\\n================================\\n';
-    t += 'Date:     ' + dateStr + '\\nCustomer: ' + (r.customer||'Walk-in') + '\\nMaterial: ' + matLabel + '\\n================================\\n';
-    if (r.weight_in) t += 'Gross (In):  ' + parseFloat(r.weight_in).toFixed(1) + ' kg\\n';
-    if (r.weight_out) t += 'Tare (Out):  ' + parseFloat(r.weight_out).toFixed(1) + ' kg\\n';
-    t += 'NET WEIGHT:  ' + parseFloat(r.net_weight||0).toFixed(1) + ' kg\\n================================\\n';
-    if (r.price_per_kg) t += 'Rate:     $' + parseFloat(r.price_per_kg).toFixed(2) + '/kg\\n';
-    if (r.subtotal) t += 'Subtotal: $' + parseFloat(r.subtotal).toFixed(2) + '\\n';
-    if (r.tax_amount) t += 'GST (5%): $' + parseFloat(r.tax_amount).toFixed(2) + '\\n';
-    t += '================================\\nTOTAL:    $' + parseFloat(r.grand_total||0).toFixed(2) + ' CAD\\n================================\\n\\n  Thank you for choosing\\n      Reuse Canada!\\n\\n\\n';
-    return t;
+    browserPrintReceipt(receipt);
   }
   async function autoPrintReceipt(ticketId) {
     if (!document.getElementById('auto-print-receipt').checked) return;
-    try { const res = await axios.get('/api/scale-tickets/' + ticketId + '/receipt'); const receipt = res.data.receipt; await printReceiptToThermal(receipt); await printReceiptToThermal(receipt); await axios.post('/api/scale-tickets/' + ticketId + '/receipt-printed'); } catch(e) {}
+    try {
+      const res = await axios.get('/api/scale-tickets/' + ticketId + '/receipt');
+      browserPrintReceipt(res.data.receipt);
+      await axios.post('/api/scale-tickets/' + ticketId + '/receipt-printed');
+    } catch(e) { /* never block the completion path on a failed print */ }
+  }
+  // Sample print to verify the Epson is set up correctly without burning a
+  // real ticket number. Mirrors the live receipt layout exactly.
+  function printTestReceipt() {
+    browserPrintReceipt({
+      ticket_number: 'TEST-PRINT',
+      date: new Date().toISOString(),
+      customer: 'Test Customer',
+      material: 'mixed',
+      weight_in: 12000,
+      weight_out: 8000,
+      net_weight: 4000,
+      price_per_kg: 0.14,
+      subtotal: 560.00,
+      tax_amount: 28.00,
+      grand_total: 588.00,
+    });
   }
 
   // ══════════════════════════════════════════
@@ -2433,8 +2438,37 @@ export function renderScaleHouse(): string {
   }
 
   function browserPrintReceipt(r) {
-    const netW = parseFloat(r.net_weight)||0;
-    document.getElementById('print-area').innerHTML = '<div style="text-align:center;margin-bottom:3mm"><div style="font-size:16px;font-weight:bold;letter-spacing:2px">REUSE CANADA</div><div style="font-size:9px">Waste-to-Value Recycling &middot; Alberta</div></div><div class="print-divider"></div><div style="text-align:center;font-size:14px;font-weight:bold">SCALE TICKET</div><div style="text-align:center;font-size:12px;font-weight:bold;margin-bottom:2mm">'+(r.ticket_number||'')+'</div><div class="print-divider"></div><table style="width:100%;font-size:10px"><tr><td>Date:</td><td style="text-align:right">'+(r.date?new Date(r.date).toLocaleDateString('en-CA'):'')+'</td></tr><tr><td>Customer:</td><td style="text-align:right">'+(r.customer||'Walk-in')+'</td></tr><tr><td>Material:</td><td style="text-align:right">'+getMaterialLabel(r.material)+'</td></tr></table><div class="print-divider"></div><table style="width:100%;font-size:11px"><tr><td>Gross:</td><td style="text-align:right;font-weight:bold">'+(r.weight_in?parseFloat(r.weight_in).toFixed(1)+' kg':'—')+'</td></tr><tr><td>Tare:</td><td style="text-align:right;font-weight:bold">'+(r.weight_out?parseFloat(r.weight_out).toFixed(1)+' kg':'—')+'</td></tr><tr style="font-size:13px"><td style="font-weight:bold">NET:</td><td style="text-align:right;font-weight:bold">'+netW.toFixed(1)+' kg</td></tr></table><div class="print-divider"></div><table style="width:100%;font-size:10px"><tr><td>Rate:</td><td style="text-align:right">$'+parseFloat(r.price_per_kg||0).toFixed(2)+'/kg</td></tr><tr><td>Subtotal:</td><td style="text-align:right">$'+parseFloat(r.subtotal||0).toFixed(2)+'</td></tr><tr><td>GST:</td><td style="text-align:right">$'+parseFloat(r.tax_amount||0).toFixed(2)+'</td></tr></table><div class="print-divider"></div><div style="text-align:center;font-size:16px;font-weight:bold;margin:2mm 0">TOTAL: $'+parseFloat(r.grand_total||0).toFixed(2)+' CAD</div><div class="print-divider"></div><div style="text-align:center;font-size:8px;margin-top:3mm">Thank you — Reuse Canada</div>';
+    const netW = parseFloat(r.net_weight) || 0;
+    const dateStr = r.date ? new Date(r.date).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const fmt = (v, d) => v != null && v !== '' ? parseFloat(v).toFixed(d) : '—';
+    const row = (l, v) => '<div class="print-row"><span>' + l + '</span><span>' + v + '</span></div>';
+    const rowB = (l, v) => '<div class="print-row print-bold"><span>' + l + '</span><span>' + v + '</span></div>';
+    document.getElementById('print-area').innerHTML =
+      '<div class="print-center print-bold" style="font-size:15px;letter-spacing:2px">REUSE CANADA</div>' +
+      '<div class="print-center" style="font-size:9px">Waste-to-Value Recycling &middot; Alberta</div>' +
+      '<div class="print-center" style="font-size:9px">www.reusecanadascale.com</div>' +
+      '<div class="print-divider"></div>' +
+      '<div class="print-center print-bold" style="font-size:13px">SCALE TICKET</div>' +
+      '<div class="print-center print-bold" style="font-size:12px">' + (r.ticket_number || '') + '</div>' +
+      '<div class="print-divider"></div>' +
+      row('Date', dateStr) +
+      row('Customer', r.customer || 'Walk-in') +
+      row('Material', getMaterialLabel(r.material)) +
+      '<div class="print-divider"></div>' +
+      row('Gross (in)', fmt(r.weight_in, 1) + ' kg') +
+      row('Tare (out)', fmt(r.weight_out, 1) + ' kg') +
+      '<div class="print-row print-bold" style="font-size:13px;margin-top:1mm"><span>NET</span><span>' + netW.toFixed(1) + ' kg</span></div>' +
+      '<div class="print-divider"></div>' +
+      row('Rate', '$' + fmt(r.price_per_kg, 2) + '/kg') +
+      row('Subtotal', '$' + fmt(r.subtotal, 2)) +
+      row('GST (5%)', '$' + fmt(r.tax_amount, 2)) +
+      '<div class="print-divider"></div>' +
+      '<div class="print-row print-bold" style="font-size:14px"><span>TOTAL</span><span>$' + fmt(r.grand_total, 2) + ' CAD</span></div>' +
+      '<div class="print-divider"></div>' +
+      '<div class="print-center" style="font-size:9px">Thank you for choosing</div>' +
+      '<div class="print-center print-bold" style="font-size:11px">Reuse Canada</div>' +
+      // Trailing feed so the auto-cutter doesn't slice the "Thank you" line.
+      '<div style="height:8mm"></div>';
     window.print();
   }
   async function printReceipt(ticketId) {
@@ -2465,8 +2499,6 @@ export function renderScaleHouse(): string {
     if (typeof axios !== 'undefined') {
       loadOpenTickets(); loadCompletedToday(); loadPricing(); loadStats(); loadSettlement();
       enumerateCameras(); startAutoRefresh();
-      const savedIP = localStorage.getItem('printer_ip');
-      if (savedIP) { document.getElementById('printer-ip').value = savedIP; connectPrinter(); }
       bootstrapScale();
       startStaleWatchdog();
       // Reveal price-management button only to roles permitted by the backend
