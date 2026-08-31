@@ -458,6 +458,25 @@ employeeRoutes.put('/staff/:id', roleRequired('admin'), async (c) => {
   }
 })
 
+// Narrow, phone-only update on a staff record. The full PUT /staff/:id is
+// admin-only, but the scale house has to keep a driver's number current from
+// the ticket form, so this single field is opened to the roles that actually
+// create tickets. Nothing else on the employee row is writable here.
+employeeRoutes.post('/staff/:id/phone', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
+  try {
+    const id = c.req.param('id')
+    const { phone } = await c.req.json()
+    const clean = (phone || '').trim().slice(0, 50)
+    if (!clean) return c.json({ error: 'Phone is required' }, 400)
+    await c.env.DB.prepare(
+      "UPDATE employees SET phone = ?, updated_at = datetime('now') WHERE id = ?"
+    ).bind(clean, id).run()
+    return c.json({ success: true, phone: clean })
+  } catch (err: any) {
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 employeeRoutes.post('/staff/:id/toggle', roleRequired('admin'), async (c) => {
   const id = c.req.param('id')
   try {

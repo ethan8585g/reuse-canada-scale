@@ -57,60 +57,87 @@ export function renderScaleTickets(): string {
     </div>
 
     <!-- New Ticket Modal -->
-    <div id="new-ticket-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center p-4" style="display:none;">
-      <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-weight mr-2 text-rc-orange"></i>New Scale Ticket</h3>
-          <button onclick="closeNewTicketModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
-        </div>
-        <div class="p-6">
-          <form id="new-ticket-form" onsubmit="createTicket(event)">
-            <div class="space-y-4">
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-1">Customer</label>
-                <select id="ticket-customer" required class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none">
-                  <option value="">Select customer...</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-1">Tire Type</label>
-                <select id="ticket-tire-type" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none">
-                  <option value="mixed">Mixed</option>
-                  <option value="passenger">Passenger</option>
-                  <option value="truck">Commercial Truck</option>
-                  <option value="off-road">Off-Road</option>
-                  <option value="shingles">Asphalt Roofing Shingles</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-1">Vehicle</label>
-                <select id="ticket-vehicle" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none">
-                  <option value="">Select vehicle...</option>
-                </select>
-              </div>
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-sm font-semibold text-gray-700 mb-1">Driver Name</label>
-                  <input id="ticket-driver-name" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none" placeholder="Who drove the truck">
-                </div>
-                <div>
-                  <label class="block text-sm font-semibold text-gray-700 mb-1">Driver Phone</label>
-                  <input id="ticket-driver-phone" type="tel" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none" placeholder="780-555-0100">
-                </div>
-              </div>
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-1">Notes</label>
-                <textarea id="ticket-notes" rows="2" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none" placeholder="Optional notes..."></textarea>
-              </div>
+    <div id="new-ticket-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;">
+      <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-2xl max-h-[92vh] overflow-y-auto">
+        <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white rounded-t-2xl z-10">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center"><i class="fas fa-weight text-rc-orange"></i></div>
+            <div>
+              <h3 class="text-lg font-bold text-gray-800">New Scale Ticket</h3>
+              <p class="text-xs text-gray-400">Choose a customer and driver, then create the ticket</p>
             </div>
-            <div class="mt-6 flex gap-3">
-              <button type="submit" class="flex-1 bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2">
-                <i class="fas fa-plus"></i> Create Ticket
-              </button>
-              <button type="button" onclick="closeNewTicketModal()" class="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl transition-all">Cancel</button>
-            </div>
-          </form>
+          </div>
+          <button onclick="closeNewTicketModal()" class="w-9 h-9 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"><i class="fas fa-times"></i></button>
         </div>
+
+        <form id="new-ticket-form" onsubmit="createTicket(event)" class="px-6 py-5 space-y-6">
+
+          <!-- CUSTOMER: one-click pick from a filtered list, or add a new one inline -->
+          <section>
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-sm font-semibold text-gray-700"><i class="fas fa-building text-gray-300 mr-1.5"></i>Customer</label>
+              <button type="button" onclick="toggleNewCustomer()" class="text-xs font-semibold text-rc-green hover:opacity-70 flex items-center gap-1"><i class="fas fa-plus"></i> New Customer</button>
+            </div>
+            <div id="nc-form" style="display:none;" class="mb-3 p-4 rounded-xl border-2 border-dashed border-green-200 bg-green-50/40 space-y-2">
+              <div class="grid grid-cols-2 gap-2">
+                <input id="nc-company" class="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-rc-green" placeholder="Company name *">
+                <input id="nc-contact" class="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-rc-green" placeholder="Contact name">
+              </div>
+              <input id="nc-phone" type="tel" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-rc-green" placeholder="Phone">
+              <div class="flex gap-2">
+                <button type="button" onclick="saveNewCustomer()" class="flex-1 bg-rc-green hover:opacity-90 text-white text-sm font-semibold py-2 rounded-lg">Save and select</button>
+                <button type="button" onclick="toggleNewCustomer()" class="px-4 py-2 bg-white border border-gray-200 text-gray-600 text-sm rounded-lg">Cancel</button>
+              </div>
+              <p id="nc-error" style="display:none;" class="text-xs text-red-500"></p>
+            </div>
+            <div class="relative mb-2">
+              <i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
+              <input id="cust-search" oninput="renderCustomerList()" class="w-full pl-9 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm outline-none focus:border-rc-orange" placeholder="Search customers...">
+            </div>
+            <div id="cust-list" class="border border-gray-100 rounded-xl divide-y divide-gray-50 max-h-44 overflow-y-auto"></div>
+            <input type="hidden" id="ticket-customer">
+            <p id="cust-error" style="display:none;" class="text-xs text-red-500 mt-1.5"><i class="fas fa-exclamation-circle mr-1"></i>Pick a customer first.</p>
+          </section>
+
+          <!-- MATERIAL: one-click pills instead of a dropdown -->
+          <section>
+            <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-layer-group text-gray-300 mr-1.5"></i>Material</label>
+            <div id="mat-pills" class="flex flex-wrap gap-2"></div>
+            <input type="hidden" id="ticket-tire-type" value="mixed">
+          </section>
+
+          <!-- DRIVER: pick from staff to auto-fill the number, still editable -->
+          <section>
+            <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-id-card text-gray-300 mr-1.5"></i>Driver</label>
+            <select id="ticket-driver-select" onchange="onDriverSelected()" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none focus:border-rc-orange mb-2 bg-white">
+              <option value="">Select a driver...</option>
+            </select>
+            <div class="grid grid-cols-2 gap-3">
+              <input id="ticket-driver-name" class="px-4 py-3 border-2 border-gray-200 rounded-xl outline-none focus:border-rc-orange" placeholder="Driver name">
+              <input id="ticket-driver-phone" type="tel" oninput="onDriverPhoneEdited()" class="px-4 py-3 border-2 border-gray-200 rounded-xl outline-none focus:border-rc-orange" placeholder="780-555-0100">
+            </div>
+            <label id="save-phone-wrap" style="display:none;" class="mt-2 items-center gap-2 text-xs text-gray-600 cursor-pointer">
+              <input type="checkbox" id="save-phone-to-profile" checked class="rounded border-gray-300 text-rc-green">
+              <span id="save-phone-label">Save this number to the driver&apos;s profile</span>
+            </label>
+          </section>
+
+          <section class="grid md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-truck text-gray-300 mr-1.5"></i>Vehicle <span class="text-gray-300 font-normal">(optional)</span></label>
+              <select id="ticket-vehicle" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none focus:border-rc-orange bg-white"><option value="">Select vehicle...</option></select>
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-sticky-note text-gray-300 mr-1.5"></i>Notes <span class="text-gray-300 font-normal">(optional)</span></label>
+              <textarea id="ticket-notes" rows="1" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl outline-none focus:border-rc-orange" placeholder="Optional notes..."></textarea>
+            </div>
+          </section>
+
+          <div class="flex gap-3 pt-1">
+            <button type="submit" id="create-ticket-btn" class="flex-1 bg-rc-orange hover:opacity-90 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"><i class="fas fa-plus"></i> Create Ticket</button>
+            <button type="button" onclick="closeNewTicketModal()" class="px-6 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl transition-all">Cancel</button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -263,6 +290,15 @@ export function renderScaleTickets(): string {
       }
 
       function openNewTicketModal() {
+        selectedCustomerId = null;
+        document.getElementById('new-ticket-form').reset();
+        document.getElementById('ticket-customer').value = '';
+        document.getElementById('ticket-tire-type').value = 'mixed';
+        document.getElementById('cust-search').value = '';
+        document.getElementById('nc-form').style.display = 'none';
+        document.getElementById('nc-error').style.display = 'none';
+        document.getElementById('cust-error').style.display = 'none';
+        document.getElementById('save-phone-wrap').style.display = 'none';
         loadCustomersAndVehicles();
         document.getElementById('new-ticket-modal').style.display = 'flex';
       }
@@ -351,18 +387,161 @@ export function renderScaleTickets(): string {
         }
       }
 
+      // ═══ NEW TICKET FORM ═══
+      // Caches so the customer list can be filtered and the driver's number
+      // looked up without another round trip on every keystroke.
+      var custCache = [], vehCache = [], driverCache = [], selectedCustomerId = null;
+
+      var MATERIALS = [
+        ['mixed', 'Tires - Mixed'],
+        ['passenger', 'Tires - Passenger'],
+        ['truck', 'Commercial Truck'],
+        ['off-road', 'Off-Road'],
+        ['shingles', 'Roofing Shingles']
+      ];
+
+      function renderMaterialPills() {
+        var cur = document.getElementById('ticket-tire-type').value || 'mixed';
+        // &quot; keeps the inline handler quoting simple inside this template string.
+        document.getElementById('mat-pills').innerHTML = MATERIALS.map(function(m) {
+          var on = m[0] === cur;
+          return '<button type="button" onclick="pickMaterial(&quot;' + m[0] + '&quot;)" class="px-3.5 py-2 rounded-full text-xs font-semibold border-2 transition-all ' +
+            (on ? 'border-rc-orange bg-orange-50 text-rc-orange' : 'border-gray-200 text-gray-500 hover:border-gray-300') + '">' + m[1] + '</button>';
+        }).join('');
+      }
+      function pickMaterial(v) {
+        document.getElementById('ticket-tire-type').value = v;
+        renderMaterialPills();
+      }
+
+      function renderCustomerList() {
+        var q = (document.getElementById('cust-search').value || '').toLowerCase();
+        var list = custCache.filter(function(c) {
+          if (!q) return true;
+          return (c.company_name || '').toLowerCase().indexOf(q) >= 0 ||
+                 (c.contact_name || '').toLowerCase().indexOf(q) >= 0;
+        });
+        var el = document.getElementById('cust-list');
+        if (!list.length) {
+          el.innerHTML = '<div class="px-4 py-6 text-center text-xs text-gray-400">No customers match that search</div>';
+          return;
+        }
+        el.innerHTML = list.map(function(c) {
+          var on = String(c.id) === String(selectedCustomerId);
+          return '<div onclick="pickCustomer(' + c.id + ')" class="px-4 py-2.5 flex items-center justify-between cursor-pointer transition-colors ' +
+            (on ? 'bg-orange-50' : 'hover:bg-gray-50') + '">' +
+            '<div><div class="text-sm font-semibold text-gray-800">' + escHtml(c.company_name || '') + '</div>' +
+            '<div class="text-xs text-gray-400">' + escHtml(c.contact_name || '') + '</div></div>' +
+            (on ? '<i class="fas fa-check-circle text-rc-orange"></i>' : '') + '</div>';
+        }).join('');
+      }
+      function pickCustomer(id) {
+        selectedCustomerId = id;
+        document.getElementById('ticket-customer').value = id;
+        document.getElementById('cust-error').style.display = 'none';
+        renderCustomerList();
+      }
+
+      function toggleNewCustomer() {
+        var f = document.getElementById('nc-form');
+        var open = f.style.display === 'block';
+        f.style.display = open ? 'none' : 'block';
+        document.getElementById('nc-error').style.display = 'none';
+        if (!open) document.getElementById('nc-company').focus();
+      }
+
+      async function saveNewCustomer() {
+        var company = document.getElementById('nc-company').value.trim();
+        var err = document.getElementById('nc-error');
+        if (!company) { err.textContent = 'Company name is required.'; err.style.display = 'block'; return; }
+        try {
+          // Reuses the scale-house quick-customer endpoint: it synthesises the
+          // placeholder login the customers table requires, so no password UI here.
+          var res = await axios.post('/api/scale-tickets/quick-customer', {
+            company_name: company,
+            contact_name: document.getElementById('nc-contact').value.trim(),
+            phone: document.getElementById('nc-phone').value.trim()
+          });
+          custCache.unshift({ id: res.data.id, company_name: res.data.company_name, contact_name: res.data.contact_name });
+          document.getElementById('nc-company').value = '';
+          document.getElementById('nc-contact').value = '';
+          document.getElementById('nc-phone').value = '';
+          document.getElementById('nc-form').style.display = 'none';
+          document.getElementById('cust-search').value = '';
+          pickCustomer(res.data.id);
+        } catch (e2) {
+          err.textContent = (e2.response && e2.response.data && e2.response.data.error) || 'Could not create customer.';
+          err.style.display = 'block';
+        }
+      }
+
+      function renderDriverSelect() {
+        document.getElementById('ticket-driver-select').innerHTML =
+          '<option value="">Select a driver...</option>' +
+          driverCache.map(function(d) {
+            var nm = (d.first_name || '') + ' ' + (d.last_name || '');
+            return '<option value="' + d.id + '">' + escHtml(nm.trim()) + (d.phone ? ' - ' + escHtml(d.phone) : ' (no number on file)') + '</option>';
+          }).join('') +
+          '<option value="other">Other / not on staff</option>';
+      }
+
+      // Selecting a driver fills the number from their staff record; both fields
+      // stay editable because a walk-in driver is not on staff at all.
+      function onDriverSelected() {
+        var v = document.getElementById('ticket-driver-select').value;
+        var nameEl = document.getElementById('ticket-driver-name');
+        var phoneEl = document.getElementById('ticket-driver-phone');
+        document.getElementById('save-phone-wrap').style.display = 'none';
+        if (!v || v === 'other') {
+          nameEl.value = ''; phoneEl.value = '';
+          if (v === 'other') nameEl.focus();
+          return;
+        }
+        var d = driverCache.filter(function(x) { return String(x.id) === String(v); })[0];
+        if (!d) return;
+        nameEl.value = ((d.first_name || '') + ' ' + (d.last_name || '')).trim();
+        phoneEl.value = d.phone || '';
+        if (!d.phone) offerToSavePhone(d);
+      }
+
+      function offerToSavePhone(d) {
+        document.getElementById('save-phone-label').textContent = "Save this number to " + (d.first_name || 'this driver') + "'s profile";
+        document.getElementById('save-phone-wrap').style.display = 'flex';
+      }
+
+      // Typing a number that differs from the one on file offers to write it back,
+      // so the number travels with the driver instead of living on one ticket.
+      function onDriverPhoneEdited() {
+        var v = document.getElementById('ticket-driver-select').value;
+        if (!v || v === 'other') return;
+        var d = driverCache.filter(function(x) { return String(x.id) === String(v); })[0];
+        if (!d) return;
+        var typed = document.getElementById('ticket-driver-phone').value.trim();
+        if (typed && typed !== (d.phone || '')) offerToSavePhone(d);
+        else document.getElementById('save-phone-wrap').style.display = 'none';
+      }
+
       async function loadCustomersAndVehicles() {
         try {
-          const [custRes, vehRes] = await Promise.all([
+          const [custRes, vehRes, staffRes] = await Promise.all([
             axios.get('/api/employee/customers'),
-            axios.get('/api/employee/vehicles')
+            axios.get('/api/employee/vehicles'),
+            axios.get('/api/employee/staff')
           ]);
-          const custSelect = document.getElementById('ticket-customer');
-          custSelect.innerHTML = '<option value="">Select customer...</option>' +
-            (custRes.data.customers || []).map(c => \`<option value="\${c.id}">\${escHtml(c.company_name)} - \${escHtml(c.contact_name)}</option>\`).join('');
-          const vehSelect = document.getElementById('ticket-vehicle');
-          vehSelect.innerHTML = '<option value="">Select vehicle...</option>' +
-            (vehRes.data.vehicles || []).map(v => \`<option value="\${v.id}">\${escHtml(v.name)} (\${escHtml(v.plate_number)})</option>\`).join('');
+          // Hide the Walk-In sentinel: it is a placeholder row, not a real customer.
+          custCache = (custRes.data.customers || []).filter(function(c) { return c.company_name !== 'Walk-In'; });
+          vehCache = vehRes.data.vehicles || [];
+          // Anyone on staff can end up behind the wheel, but list drivers first.
+          driverCache = (staffRes.data.employees || [])
+            .filter(function(e) { return e.is_active; })
+            .sort(function(a, b) { return (a.role === 'driver' ? 0 : 1) - (b.role === 'driver' ? 0 : 1); });
+          renderCustomerList();
+          renderDriverSelect();
+          renderMaterialPills();
+          document.getElementById('ticket-vehicle').innerHTML = '<option value="">Select vehicle...</option>' +
+            vehCache.map(function(v) {
+              return '<option value="' + v.id + '">' + escHtml(v.name || '') + (v.plate_number ? ' (' + escHtml(v.plate_number) + ')' : '') + '</option>';
+            }).join('');
         } catch (err) {
           console.error('Failed to load dropdown data:', err);
         }
@@ -370,19 +549,44 @@ export function renderScaleTickets(): string {
 
       async function createTicket(e) {
         e.preventDefault();
+        var custId = document.getElementById('ticket-customer').value;
+        if (!custId) {
+          document.getElementById('cust-error').style.display = 'block';
+          return;
+        }
+        var btn = document.getElementById('create-ticket-btn');
+        btn.disabled = true;
         try {
+          var vehVal = document.getElementById('ticket-vehicle').value;
+          var driverPhone = document.getElementById('ticket-driver-phone').value.trim() || null;
+          var driverSel = document.getElementById('ticket-driver-select').value;
           await axios.post('/api/scale-tickets', {
-            customer_id: parseInt(document.getElementById('ticket-customer').value),
+            customer_id: parseInt(custId),
             tire_type: document.getElementById('ticket-tire-type').value,
             notes: document.getElementById('ticket-notes').value,
+            vehicle_id: vehVal ? parseInt(vehVal) : null,
             driver_name: document.getElementById('ticket-driver-name').value.trim() || null,
-            driver_phone: document.getElementById('ticket-driver-phone').value.trim() || null
+            driver_phone: driverPhone
           });
+          // Write the number back to the driver's staff record so the next ticket
+          // fills itself in. Best-effort: a failure here must not lose the ticket.
+          if (driverSel && driverSel !== 'other' && driverPhone &&
+              document.getElementById('save-phone-wrap').style.display !== 'none' &&
+              document.getElementById('save-phone-to-profile').checked) {
+            try {
+              await axios.post('/api/employee/staff/' + driverSel + '/phone', { phone: driverPhone });
+              var d = driverCache.filter(function(x) { return String(x.id) === String(driverSel); })[0];
+              if (d) d.phone = driverPhone;
+            } catch (e2) {
+              console.error('Could not save phone to driver profile:', e2);
+            }
+          }
           closeNewTicketModal();
-          document.getElementById('new-ticket-form').reset();
           loadTickets();
         } catch (err) {
           alert(err.response?.data?.error || 'Failed to create ticket');
+        } finally {
+          btn.disabled = false;
         }
       }
 

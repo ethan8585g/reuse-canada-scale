@@ -185,7 +185,7 @@ scaleTicketRoutes.get('/:id', async (c) => {
 // Create new scale ticket (from office/yard)
 scaleTicketRoutes.post('/', async (c) => {
   try {
-    const { customer_id, tire_type, notes, vehicle_plate, driver_name, driver_phone } = await c.req.json()
+    const { customer_id, tire_type, notes, vehicle_plate, vehicle_id, driver_name, driver_phone } = await c.req.json()
     const employeeId = c.get('userId')
 
     if (!customer_id) {
@@ -193,10 +193,10 @@ scaleTicketRoutes.post('/', async (c) => {
     }
 
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
-      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, driver_name, driver_phone, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'field_pending')`,
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, vehicle_id, driver_name, driver_phone, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'field_pending')`,
       params: [tn, customer_id, employeeId, tire_type || 'mixed', notes || null, vehicle_plate || null,
-               driver_name || null, driver_phone || null],
+               vehicle_id || null, driver_name || null, driver_phone || null],
     }))
 
     await auditLog(c.env.DB, ticketId, 'created', employeeId, { source: 'office', customer_id, tire_type })
