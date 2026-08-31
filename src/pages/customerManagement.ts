@@ -3,66 +3,53 @@ import { employeePageWrapper } from '../utils/employeeLayout'
 
 export function renderCustomerManagement(): string {
   return layout('Customer Management', employeePageWrapper('customers', 'Customer Onboarding & Management', `
+    <!-- Summary strip -->
+    <div class="flex flex-wrap items-end justify-end gap-x-10 gap-y-3 mb-5">
+      <div class="text-right"><div class="text-2xl font-extrabold text-rc-green" id="stat-active">-</div><div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Active Customers</div></div>
+      <div class="text-right"><div class="text-2xl font-extrabold text-gray-400" id="stat-inactive">-</div><div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Inactive</div></div>
+      <div class="text-right"><div class="text-2xl font-extrabold text-yellow-600" id="stat-pending">-</div><div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Pending Pickups</div></div>
+      <div class="text-right"><div class="text-2xl font-extrabold text-blue-600" id="stat-month">-</div><div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Added This Month</div></div>
+    </div>
+
     <!-- Action Bar -->
-    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
-      <div class="flex flex-wrap items-center gap-3">
-        <input type="text" id="search-input" placeholder="Search company, contact, city..." oninput="filterCustomers()"
-          class="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none w-64">
-        <select id="filter-status" onchange="loadCustomers()" class="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none">
+    <div class="flex flex-col xl:flex-row xl:items-center justify-between mb-4 gap-3">
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="relative">
+          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
+          <input type="text" id="search-input" placeholder="Search company, contact, city..." oninput="filterCustomers()"
+            class="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all w-64">
+        </div>
+        <select id="filter-status" onchange="loadCustomers()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none bg-white">
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
-          <option value="">All</option>
+          <option value="">All statuses</option>
         </select>
+        <select id="filter-region" onchange="filterCustomers()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none bg-white">
+          <option value="">All regions</option>
+          <option value="north">North</option>
+          <option value="south">South</option>
+          <option value="east">East</option>
+          <option value="west">West</option>
+        </select>
+        <button type="button" onclick="clearCustomerFilters()" id="clear-cust-filters" style="display:none;" class="px-3 py-2.5 text-xs font-semibold text-gray-400 hover:text-gray-600"><i class="fas fa-times mr-1"></i>Clear</button>
       </div>
-      <button onclick="openCreateModal()" class="bg-rc-green hover:bg-rc-green-light text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-lg flex items-center gap-2">
-        <i class="fas fa-user-plus"></i> New Customer
-      </button>
-    </div>
-
-    <!-- Stats -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-      <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <div class="text-sm text-gray-500">Total Active</div>
-        <div class="text-2xl font-bold text-rc-green" id="stat-active">-</div>
-      </div>
-      <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <div class="text-sm text-gray-500">Total Inactive</div>
-        <div class="text-2xl font-bold text-gray-400" id="stat-inactive">-</div>
-      </div>
-      <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <div class="text-sm text-gray-500">With Pending Pickups</div>
-        <div class="text-2xl font-bold text-yellow-600" id="stat-pending">-</div>
-      </div>
-      <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <div class="text-sm text-gray-500">Added This Month</div>
-        <div class="text-2xl font-bold text-blue-600" id="stat-month">-</div>
+      <div class="flex items-center gap-3">
+        <div class="inline-flex bg-gray-100 rounded-xl p-1">
+          <button type="button" id="cview-list" onclick="setCustView('list')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">List</button>
+          <button type="button" id="cview-cards" onclick="setCustView('cards')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">Cards</button>
+          <button type="button" id="cview-compact" onclick="setCustView('compact')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">Compact</button>
+        </div>
+        <button onclick="openCreateModal()" class="bg-rc-green hover:opacity-90 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-sm flex items-center gap-2 whitespace-nowrap">
+          <i class="fas fa-user-plus"></i> New Customer
+        </button>
       </div>
     </div>
 
-    <!-- Customer Count -->
-    <div class="text-sm text-gray-500 mb-3"><span id="customer-count">0</span> customers found</div>
+    <div class="text-xs text-gray-400 mb-3"><span id="customer-count">0</span> customers</div>
 
-    <!-- Customer Table -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      <div class="overflow-x-auto">
-        <table class="w-full">
-          <thead class="bg-gray-50">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Company</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Contact</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Location</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Region</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Username</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
-              <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Pickups</th>
-              <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="customer-table-body" class="divide-y divide-gray-50">
-            <tr><td colspan="8" class="px-6 py-8 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
+    <!-- Results: filled by renderCustomers() in whichever view is active -->
+    <div id="customers-view">
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</div>
     </div>
 
     <!-- Create / Edit Modal -->
@@ -207,52 +194,140 @@ export function renderCustomerManagement(): string {
         } catch(e) {}
       }
 
+      var custView = 'list';
+
+      var REGION_CLS = { north:'bg-blue-50 text-blue-700', south:'bg-red-50 text-red-700', east:'bg-green-50 text-green-700', west:'bg-purple-50 text-purple-700' };
+
+      function regionPill(c) {
+        return '<span class="px-2 py-0.5 rounded-full text-xs font-semibold ' + (REGION_CLS[c.region] || 'bg-gray-50 text-gray-600') + '">' +
+          escHtml((c.region || 'N/A').toUpperCase()) + '</span>';
+      }
+      function custStatusPill(c) {
+        return '<span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + (c.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800') + '">' +
+          (c.is_active ? 'ACTIVE' : 'INACTIVE') + '</span>';
+      }
+      function pendingPill(c) {
+        return c.pending_pickups > 0
+          ? '<span class="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full text-xs font-semibold">' + c.pending_pickups + ' pending</span>'
+          : '<span class="text-xs text-gray-300">0</span>';
+      }
+      function custLocation(c) {
+        return ((c.address ? escHtml(c.address) + ', ' : '') + escHtml(c.city || '') + ' ' + escHtml(c.province || '')).trim() || '-';
+      }
+      function custActions(c) {
+        return '<button onclick="editCustomer(' + c.id + ')" class="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Edit"><i class="fas fa-edit"></i></button>' +
+          '<button onclick="toggleCustomer(' + c.id + ', ' + (c.is_active ? 1 : 0) + ')" class="p-2 ' +
+          (c.is_active ? 'text-red-500 hover:bg-red-50' : 'text-green-500 hover:bg-green-50') + ' rounded-lg" title="' +
+          (c.is_active ? 'Deactivate' : 'Activate') + '"><i class="fas fa-' + (c.is_active ? 'ban' : 'check-circle') + '"></i></button>';
+      }
+
       function filterCustomers() {
         const q = (document.getElementById('search-input').value || '').toLowerCase();
-        const filtered = q ? allCustomers.filter(c =>
+        const region = document.getElementById('filter-region').value;
+        const status = document.getElementById('filter-status').value;
+        document.getElementById('clear-cust-filters').style.display = (q || region || status !== 'active') ? 'block' : 'none';
+        let filtered = allCustomers;
+        if (q) filtered = filtered.filter(c =>
           (c.company_name || '').toLowerCase().includes(q) ||
           (c.contact_name || '').toLowerCase().includes(q) ||
           (c.city || '').toLowerCase().includes(q) ||
           (c.email || '').toLowerCase().includes(q)
-        ) : allCustomers;
-        renderTable(filtered);
+        );
+        if (region) filtered = filtered.filter(c => c.region === region);
+        renderCustomers(filtered);
       }
 
-      function renderTable(customers) {
-        document.getElementById('customer-count').textContent = customers.length;
-        const tbody = document.getElementById('customer-table-body');
-        if (customers.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-gray-400"><i class="fas fa-inbox text-2xl mb-2 block"></i>No customers found</td></tr>';
+      function clearCustomerFilters() {
+        document.getElementById('search-input').value = '';
+        document.getElementById('filter-region').value = '';
+        document.getElementById('filter-status').value = 'active';
+        loadCustomers();
+      }
+
+      function renderCustList(list) {
+        return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50 overflow-hidden">' +
+          list.map(function(c) {
+            return '<div class="px-4 py-3.5 border-l-4 ' + (c.is_active ? 'border-rc-green' : 'border-gray-200') + ' hover:bg-gray-50/80 transition-colors flex items-center gap-4">' +
+              '<div class="flex-1 min-w-0">' +
+                '<div class="text-sm font-bold text-gray-800 truncate">' + escHtml(c.company_name || '') + '</div>' +
+                '<div class="text-xs text-gray-400 truncate">' + escHtml(c.phone || 'No phone') + ' &middot; <span class="font-mono">' + escHtml(c.email || '') + '</span></div>' +
+              '</div>' +
+              '<div class="w-40 shrink-0 hidden lg:block"><div class="text-sm text-gray-700 truncate">' + escHtml(c.contact_name || '-') + '</div></div>' +
+              '<div class="w-52 shrink-0 hidden xl:block text-xs text-gray-500 truncate">' + custLocation(c) + '</div>' +
+              '<div class="w-20 shrink-0 text-center">' + regionPill(c) + '</div>' +
+              '<div class="w-28 shrink-0 text-center">' + pendingPill(c) + '</div>' +
+              '<div class="w-24 shrink-0 text-center">' + custStatusPill(c) + '</div>' +
+              '<div class="shrink-0 flex items-center gap-1">' + custActions(c) + '</div>' +
+            '</div>';
+          }).join('') + '</div>';
+      }
+
+      function renderCustCards(list) {
+        return '<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">' +
+          list.map(function(c) {
+            return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 border-t-4 ' + (c.is_active ? 'border-rc-green' : 'border-gray-300') + ' p-5 hover:shadow-md transition-all">' +
+              '<div class="flex items-start justify-between gap-2 mb-1">' +
+                '<div class="text-sm font-bold text-gray-800 truncate">' + escHtml(c.company_name || '') + '</div>' + custStatusPill(c) +
+              '</div>' +
+              '<div class="text-xs text-gray-400 mb-3">' + escHtml(c.contact_name || 'No contact') + '</div>' +
+              '<div class="grid grid-cols-2 gap-2 py-3 border-t border-gray-50">' +
+                '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Region</div><div class="mt-1">' + regionPill(c) + '</div></div>' +
+                '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Pickups</div><div class="mt-1">' + pendingPill(c) + '</div></div>' +
+              '</div>' +
+              '<div class="text-xs text-gray-500 pt-2 border-t border-gray-50 space-y-1">' +
+                '<div><i class="fas fa-phone text-gray-300 mr-1.5"></i>' + escHtml(c.phone || 'No phone') + '</div>' +
+                '<div class="truncate"><i class="fas fa-user text-gray-300 mr-1.5"></i><span class="font-mono">' + escHtml(c.email || '') + '</span></div>' +
+                '<div class="truncate"><i class="fas fa-location-dot text-gray-300 mr-1.5"></i>' + custLocation(c) + '</div>' +
+              '</div>' +
+              '<div class="flex items-center gap-1 mt-3 pt-3 border-t border-gray-50">' + custActions(c) + '</div>' +
+            '</div>';
+          }).join('') + '</div>';
+      }
+
+      function renderCustCompact(list) {
+        var head = ['Company', 'Contact', 'Location', 'Region', 'Username', 'Status', 'Pickups', ''];
+        return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+          '<thead class="bg-gray-50/80"><tr>' + head.map(function(h) {
+            return '<th class="px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">' + h + '</th>';
+          }).join('') + '</tr></thead><tbody>' +
+          list.map(function(c) {
+            return '<tr class="border-b border-gray-50 hover:bg-gray-50/80">' +
+              '<td class="px-3 py-2 font-semibold text-gray-800 whitespace-nowrap">' + escHtml(c.company_name || '') + '</td>' +
+              '<td class="px-3 py-2 text-gray-600 whitespace-nowrap">' + escHtml(c.contact_name || '-') + '</td>' +
+              '<td class="px-3 py-2 text-gray-500 whitespace-nowrap">' + custLocation(c) + '</td>' +
+              '<td class="px-3 py-2">' + regionPill(c) + '</td>' +
+              '<td class="px-3 py-2"><span class="font-mono text-xs bg-gray-100 px-2 py-1 rounded">' + escHtml(c.email || '') + '</span></td>' +
+              '<td class="px-3 py-2">' + custStatusPill(c) + '</td>' +
+              '<td class="px-3 py-2 text-center">' + pendingPill(c) + '</td>' +
+              '<td class="px-3 py-2 whitespace-nowrap"><div class="flex items-center gap-1">' + custActions(c) + '</div></td>' +
+            '</tr>';
+          }).join('') + '</tbody></table></div></div>';
+      }
+
+      function renderCustomers(list) {
+        document.getElementById('customer-count').textContent = list.length;
+        var host = document.getElementById('customers-view');
+        if (!list.length) {
+          host.innerHTML = '<div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center">' +
+            '<div class="w-14 h-14 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-users text-xl text-gray-300"></i></div>' +
+            '<p class="text-sm font-semibold text-gray-400">No customers found</p>' +
+            '<p class="text-xs text-gray-300 mt-1">Try clearing the filters, or add a customer.</p></div>';
           return;
         }
-        tbody.innerHTML = customers.map(c => \`
-          <tr class="hover:bg-gray-50">
-            <td class="px-4 py-3">
-              <div class="font-semibold text-sm text-gray-800">\${escHtml(c.company_name)}</div>
-              <div class="text-xs text-gray-400">\${escHtml(c.phone || 'No phone')}</div>
-            </td>
-            <td class="px-4 py-3 text-sm text-gray-700">\${escHtml(c.contact_name)}</td>
-            <td class="px-4 py-3 text-sm text-gray-500">\${c.address ? escHtml(c.address) + ', ' : ''}\${escHtml(c.city || '')} \${escHtml(c.province || '')}</td>
-            <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${{'north':'bg-blue-50 text-blue-700','south':'bg-red-50 text-red-700','east':'bg-green-50 text-green-700','west':'bg-purple-50 text-purple-700'}[c.region] || 'bg-gray-50 text-gray-600'}">\${escHtml((c.region || 'N/A').toUpperCase())}</span></td>
-            <td class="px-4 py-3"><span class="font-mono text-sm bg-gray-100 px-2 py-1 rounded">\${escHtml(c.email)}</span></td>
-            <td class="px-4 py-3">
-              <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${c.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                \${c.is_active ? 'ACTIVE' : 'INACTIVE'}
-              </span>
-            </td>
-            <td class="px-4 py-3 text-center">
-              \${c.pending_pickups > 0 ? '<span class="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full text-xs font-semibold">' + c.pending_pickups + ' pending</span>' : '<span class="text-xs text-gray-400">0</span>'}
-            </td>
-            <td class="px-4 py-3 text-center">
-              <div class="flex items-center justify-center gap-1">
-                <button onclick="editCustomer(\${c.id})" class="p-2 text-blue-500 hover:bg-blue-50 rounded-lg" title="Edit"><i class="fas fa-edit"></i></button>
-                <button onclick="toggleCustomer(\${c.id}, \${c.is_active})" class="p-2 \${c.is_active ? 'text-red-500 hover:bg-red-50' : 'text-green-500 hover:bg-green-50'} rounded-lg" title="\${c.is_active ? 'Deactivate' : 'Activate'}">
-                  <i class="fas fa-\${c.is_active ? 'ban' : 'check-circle'}"></i>
-                </button>
-              </div>
-            </td>
-          </tr>
-        \`).join('');
+        host.innerHTML = custView === 'cards' ? renderCustCards(list)
+                       : custView === 'compact' ? renderCustCompact(list)
+                       : renderCustList(list);
+      }
+
+      function setCustView(v) {
+        custView = v;
+        try { localStorage.setItem('rc_customer_view', v); } catch (e) {}
+        ['list', 'cards', 'compact'].forEach(function(k) {
+          var b = document.getElementById('cview-' + k);
+          if (b) b.className = 'px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ' +
+            (k === v ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700');
+        });
+        filterCustomers();
       }
 
       function openCreateModal() {
@@ -336,6 +411,9 @@ export function renderCustomerManagement(): string {
 
       (function init() {
         if (typeof axios !== 'undefined') {
+          var savedView = 'list';
+          try { savedView = localStorage.getItem('rc_customer_view') || 'list'; } catch (e) {}
+          setCustView(savedView);
           loadCustomers();
           // Auto-open the create modal when arriving from the dashboard "Create Account" chooser.
           if (new URLSearchParams(window.location.search).get('new') === '1') {
