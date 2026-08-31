@@ -463,7 +463,10 @@ export function renderScaleTickets(): string {
           \` + photosHtml + voidInfo + auditHtml;
           document.getElementById('detail-modal').style.display = 'flex';
         } catch (err) {
-          alert('Failed to load ticket details');
+          // Log the real error: a bare alert gave no way to tell a 401 from a
+          // missing ticket from a render bug when a deep link failed to open.
+          console.error('viewTicket(' + id + ') failed:', err);
+          alert('Failed to load ticket details: ' + (err && err.message ? err.message : err));
         }
       }
 
