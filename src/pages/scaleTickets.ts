@@ -103,6 +103,17 @@ export function renderScaleTickets(): string {
           <section>
             <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-layer-group text-gray-300 mr-1.5"></i>Material</label>
             <div id="mat-pills" class="flex flex-wrap gap-2"></div>
+            <div id="new-material-form" style="display:none;" class="mt-3 p-4 rounded-xl border-2 border-dashed border-orange-200 bg-orange-50/40 space-y-2">
+              <div class="grid grid-cols-2 gap-2">
+                <input id="nm-name" class="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-rc-orange" placeholder="Material name *">
+                <input id="nm-price" type="number" step="0.01" min="0" class="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-rc-orange" placeholder="Price per kg *">
+              </div>
+              <div class="flex gap-2">
+                <button type="button" onclick="saveNewMaterial()" class="flex-1 bg-rc-orange hover:opacity-90 text-white text-sm font-semibold py-2 rounded-lg">Add material</button>
+                <button type="button" onclick="toggleNewMaterial()" class="px-4 py-2 bg-white border border-gray-200 text-gray-600 text-sm rounded-lg">Cancel</button>
+              </div>
+              <p id="nm-error" style="display:none;" class="text-xs text-red-500"></p>
+            </div>
             <input type="hidden" id="ticket-tire-type" value="mixed">
           </section>
 
@@ -296,6 +307,8 @@ export function renderScaleTickets(): string {
         document.getElementById('ticket-tire-type').value = 'mixed';
         document.getElementById('cust-search').value = '';
         document.getElementById('nc-form').style.display = 'none';
+        document.getElementById('new-material-form').style.display = 'none';
+        document.getElementById('nm-error').style.display = 'none';
         document.getElementById('nc-error').style.display = 'none';
         document.getElementById('cust-error').style.display = 'none';
         document.getElementById('save-phone-wrap').style.display = 'none';
@@ -390,7 +403,7 @@ export function renderScaleTickets(): string {
       // ═══ NEW TICKET FORM ═══
       // Caches so the customer list can be filtered and the driver's number
       // looked up without another round trip on every keystroke.
-      var custCache = [], vehCache = [], driverCache = [], selectedCustomerId = null;
+      var custCache = [], vehCache = [], driverCache = [], materialCache = [], selectedCustomerId = null;
 
       var MATERIALS = [
         ['mixed', 'Tires - Mixed'],
@@ -402,12 +415,63 @@ export function renderScaleTickets(): string {
 
       function renderMaterialPills() {
         var cur = document.getElementById('ticket-tire-type').value || 'mixed';
+        // Source of truth is the pricing table, so a material you price shows up
+        // here automatically (scrap_metal was priced but missing from the old
+        // hardcoded list). MATERIALS is only a fallback if pricing cannot load.
+        var list = materialCache.length ? materialCache : MATERIALS.map(function(m) {
+          return { material_type: m[0], description: m[1] };
+        });
         // &quot; keeps the inline handler quoting simple inside this template string.
-        document.getElementById('mat-pills').innerHTML = MATERIALS.map(function(m) {
-          var on = m[0] === cur;
-          return '<button type="button" onclick="pickMaterial(&quot;' + m[0] + '&quot;)" class="px-3.5 py-2 rounded-full text-xs font-semibold border-2 transition-all ' +
-            (on ? 'border-rc-orange bg-orange-50 text-rc-orange' : 'border-gray-200 text-gray-500 hover:border-gray-300') + '">' + m[1] + '</button>';
+        var html = list.map(function(m) {
+          var on = m.material_type === cur;
+          return '<button type="button" onclick="pickMaterial(&quot;' + m.material_type + '&quot;)" class="px-3.5 py-2 rounded-full text-xs font-semibold border-2 transition-all ' +
+            (on ? 'border-rc-orange bg-orange-50 text-rc-orange' : 'border-gray-200 text-gray-500 hover:border-gray-300') + '">' +
+            escHtml(m.description || m.material_type) + '</button>';
         }).join('');
+        // Empty dashed pill, same height/padding as the others, to add a material.
+        html += '<button type="button" onclick="toggleNewMaterial()" title="Add a material" aria-label="Add a material" class="px-3.5 py-2 min-w-[4.5rem] rounded-full text-xs font-semibold border-2 border-dashed border-gray-300 text-gray-400 hover:border-rc-orange hover:text-rc-orange transition-all"><i class="fas fa-plus"></i></button>';
+        document.getElementById('mat-pills').innerHTML = html;
+      }
+
+      function toggleNewMaterial() {
+        var f = document.getElementById('new-material-form');
+        var open = f.style.display === 'block';
+        f.style.display = open ? 'none' : 'block';
+        document.getElementById('nm-error').style.display = 'none';
+        if (!open) document.getElementById('nm-name').focus();
+      }
+
+      async function saveNewMaterial() {
+        var name = document.getElementById('nm-name').value.trim();
+        var price = parseFloat(document.getElementById('nm-price').value);
+        var err = document.getElementById('nm-error');
+        if (!name) { err.textContent = 'Material name is required.'; err.style.display = 'block'; return; }
+        if (!isFinite(price) || price < 0) { err.textContent = 'Enter a price per kg (0 is fine).'; err.style.display = 'block'; return; }
+        try {
+          // The API slugifies material_type itself; description is the pill label.
+          var res = await axios.post('/api/pricing', {
+            material_type: name, description: name, price_per_kg: price, price_per_tire: 0
+          });
+          await loadMaterials();
+          if (res.data && res.data.material_type) pickMaterial(res.data.material_type);
+          document.getElementById('nm-name').value = '';
+          document.getElementById('nm-price').value = '';
+          document.getElementById('new-material-form').style.display = 'none';
+        } catch (e2) {
+          err.textContent = (e2.response && e2.response.data && e2.response.data.error) ||
+            'Could not add material (admin or manager access required).';
+          err.style.display = 'block';
+        }
+      }
+
+      async function loadMaterials() {
+        try {
+          const res = await axios.get('/api/pricing');
+          materialCache = (res.data.pricing || []).map(function(p) {
+            return { material_type: p.material_type, description: p.description || p.material_type };
+          });
+        } catch (e) { materialCache = []; }
+        renderMaterialPills();
       }
       function pickMaterial(v) {
         document.getElementById('ticket-tire-type').value = v;
@@ -523,11 +587,15 @@ export function renderScaleTickets(): string {
 
       async function loadCustomersAndVehicles() {
         try {
-          const [custRes, vehRes, staffRes] = await Promise.all([
+          const [custRes, vehRes, staffRes, priceRes] = await Promise.all([
             axios.get('/api/employee/customers'),
             axios.get('/api/employee/vehicles'),
-            axios.get('/api/employee/staff')
+            axios.get('/api/employee/staff'),
+            axios.get('/api/pricing')
           ]);
+          materialCache = (priceRes.data.pricing || []).map(function(p) {
+            return { material_type: p.material_type, description: p.description || p.material_type };
+          });
           // Hide the Walk-In sentinel: it is a placeholder row, not a real customer.
           custCache = (custRes.data.customers || []).filter(function(c) { return c.company_name !== 'Walk-In'; });
           vehCache = vehRes.data.vehicles || [];
