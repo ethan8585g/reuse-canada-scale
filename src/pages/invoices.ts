@@ -23,9 +23,6 @@ export function renderInvoices(): string {
         <span class="text-gray-400 text-sm">→</span>
         <input type="date" id="filter-to" onchange="loadInvoices()" class="px-3 py-2 border-2 border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none">
       </div>
-      <a href="/employee/invoices/new" class="bg-rc-green hover:bg-rc-green-light text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-lg flex items-center gap-2">
-        <i class="fas fa-file-invoice-dollar"></i> New Invoice
-      </a>
     </div>
 
     <!-- Stats -->
@@ -285,7 +282,13 @@ export function renderInvoices(): string {
       }
 
       (function init() {
-        if (typeof axios !== 'undefined') { loadInvoices(); }
+        if (typeof axios !== 'undefined') {
+          var slot = document.getElementById('page-header-actions');
+          if (slot) slot.innerHTML =
+            '<a href="/employee/invoices/new" class="bg-rc-green hover:opacity-90 text-white font-semibold text-sm py-2 px-4 rounded-lg transition-all shadow-sm flex items-center gap-2 whitespace-nowrap">' +
+            '<i class="fas fa-file-invoice-dollar"></i> New Invoice</a>';
+          loadInvoices();
+        }
         else { setTimeout(init, 500); }
       })();
     </script>

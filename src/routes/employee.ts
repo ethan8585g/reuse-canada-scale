@@ -129,6 +129,28 @@ employeeRoutes.get('/driver-status-summary', async (c) => {
   }
 })
 
+// Who is behind the sidebar's on-road / idle counts. Same rule as the summary
+// above: an active driver with no driver_status row counts as idle, so the names
+// here always add up to the numbers shown.
+employeeRoutes.get('/driver-status-list', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT e.id, e.first_name, e.last_name, e.phone, e.role,
+              COALESCE(ds.status, 'idle') AS status,
+              ds.current_route_id, ds.last_lat, ds.last_lng, ds.last_updated,
+              r.name AS route_name, r.date AS route_date, r.status AS route_status
+       FROM employees e
+       LEFT JOIN driver_status ds ON ds.employee_id = e.id
+       LEFT JOIN routes r ON r.id = ds.current_route_id
+       WHERE e.is_active = 1 AND (e.role = 'driver' OR ds.id IS NOT NULL)
+       ORDER BY CASE COALESCE(ds.status, 'idle') WHEN 'on_road' THEN 1 ELSE 2 END, e.first_name`
+    ).all()
+    return c.json({ drivers: results })
+  } catch (err: any) {
+    console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 // Update driver status. The employee_id comes from the authenticated
 // session, NOT the request body — otherwise driver A could post location
 // updates impersonating driver B (or the dispatcher).

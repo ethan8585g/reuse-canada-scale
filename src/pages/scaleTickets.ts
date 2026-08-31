@@ -14,14 +14,20 @@ export function renderScaleTickets(): string {
           <input type="text" id="filter-search" onkeyup="debounceSearch()" class="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all w-56" placeholder="Search ticket # or customer...">
         </div>
         <select id="filter-status" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white">
-          <option value="">All statuses</option>
-          <option value="field_pending,field_complete,weighing_in,weighed_in">Open only</option>
-          <option value="field_pending">Field Pending</option>
-          <option value="field_complete">Field Complete</option>
-          <option value="weighing_in">Weighing In</option>
-          <option value="weighed_in">Weighed In</option>
-          <option value="completed">Completed</option>
-          <option value="voided">Voided</option>
+          <option value="">All tickets</option>
+          <option value="field_pending,field_complete,weighing_in,weighed_in">Open &mdash; needs action</option>
+          <optgroup label="Where the load is">
+            <option value="field_pending">In field &mdash; not signed off</option>
+            <option value="field_complete">To weigh in &mdash; field done</option>
+            <option value="weighed_in">In yard &mdash; needs weigh-out</option>
+          </optgroup>
+          <optgroup label="Finished">
+            <option value="completed">Completed</option>
+            <option value="voided">Voided &mdash; cancelled</option>
+          </optgroup>
+        </select>
+        <select id="filter-material" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white">
+          <option value="">All materials</option>
         </select>
         <div class="flex items-center gap-1">
           <input type="date" id="filter-date-from" onchange="loadTickets()" class="px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all">
@@ -226,6 +232,20 @@ export function renderScaleTickets(): string {
       let currentWeightType = null;
       let searchDebounce = null;
 
+      const ticketStatusLabel = {
+        field_pending: 'IN FIELD',
+        field_complete: 'TO WEIGH IN',
+        weighing_in: 'ON SCALE',
+        weighed_in: 'IN YARD',
+        weighing_out: 'ON SCALE',
+        completed: 'COMPLETED',
+        voided: 'VOIDED'
+      };
+
+      function ticketStatusText(status) {
+        return ticketStatusLabel[status] || (status || '').replace(/_/g, ' ').toUpperCase();
+      }
+
       const ticketStatusColors = {
         field_pending: 'bg-yellow-100 text-yellow-800',
         field_complete: 'bg-blue-100 text-blue-800',
@@ -267,7 +287,7 @@ export function renderScaleTickets(): string {
       function statusPill(t) {
         var vi = t.status === 'voided' && t.void_reason ? ' title="' + escAttr(t.void_reason) + '"' : '';
         return '<span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + (ticketStatusColors[t.status] || 'bg-gray-100') + '"' + vi + '>' +
-          escHtml((t.status || '').replace(/_/g, ' ').toUpperCase()) + '</span>';
+          escHtml(ticketStatusText(t.status)) + '</span>';
       }
       function ticketIcons(t) {
         return (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '') +
@@ -464,6 +484,7 @@ export function renderScaleTickets(): string {
         document.getElementById('filter-status').value = '';
         document.getElementById('filter-date-from').value = '';
         document.getElementById('filter-date-to').value = '';
+        document.getElementById('filter-material').value = '';
         loadTickets();
       }
 
@@ -473,13 +494,15 @@ export function renderScaleTickets(): string {
           const dateFrom = document.getElementById('filter-date-from').value;
           const dateTo = document.getElementById('filter-date-to').value;
           const search = document.getElementById('filter-search').value.trim();
+          const material = document.getElementById('filter-material').value;
           document.getElementById('clear-filters').style.display =
-            (status || dateFrom || dateTo || search) ? 'block' : 'none';
+            (status || dateFrom || dateTo || search || material) ? 'block' : 'none';
           let url = '/api/scale-tickets?';
           if (status) url += 'status=' + status + '&';
           if (dateFrom) url += 'date_from=' + dateFrom + '&';
           if (dateTo) url += 'date_to=' + dateTo + '&';
           if (search) url += 'search=' + encodeURIComponent(search) + '&';
+          if (material) url += 'material=' + encodeURIComponent(material) + '&';
           const res = await axios.get(url);
           allTickets = res.data.tickets || [];
           selectedTickets = new Set();
@@ -679,6 +702,20 @@ export function renderScaleTickets(): string {
           });
         } catch (e) { materialCache = []; }
         renderMaterialPills();
+        populateMaterialFilter();
+      }
+
+      // The filter list is the pricing table, same source as the pills, so a
+      // material you can put on a ticket is always one you can filter by.
+      function populateMaterialFilter() {
+        var sel = document.getElementById('filter-material');
+        if (!sel) return;
+        var keep = sel.value;
+        sel.innerHTML = '<option value="">All materials</option>' +
+          materialCache.map(function(m) {
+            return '<option value="' + escAttr(m.material_type) + '">' + escHtml(m.description || m.material_type) + '</option>';
+          }).join('');
+        sel.value = keep;
       }
       function pickMaterial(v) {
         document.getElementById('ticket-tire-type').value = v;
@@ -934,7 +971,7 @@ export function renderScaleTickets(): string {
                 <h4 class="font-bold text-gray-700 mb-3 flex items-center gap-2"><i class="fas fa-info-circle text-rc-green"></i> Ticket Info</h4>
                 <div class="space-y-2 text-sm">
                   <div class="flex justify-between"><span class="text-gray-500">Ticket #</span><span class="font-mono font-bold">\${escHtml(t.ticket_number)}</span></div>
-                  <div class="flex justify-between"><span class="text-gray-500">Status</span><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${ticketStatusColors[t.status]}">\${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Status</span><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${ticketStatusColors[t.status]}">\${escHtml(ticketStatusText(t.status))}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Customer</span><span class="font-semibold">\${escHtml(t.company_name || 'N/A')}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Operator</span><span>\${escHtml(t.employee_name || 'N/A')}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Driver</span><span>\${escHtml(t.driver_display_name || 'Not recorded')}</span></div>
@@ -988,6 +1025,7 @@ export function renderScaleTickets(): string {
           var savedView = 'list';
           try { savedView = localStorage.getItem('rc_ticket_view') || 'list'; } catch (e) {}
           setView(savedView);
+          loadMaterials();
           loadTickets();
           // Deep link from the dashboard "Open Scale Tickets" card:
           // /employee/scale-tickets?ticket=<id> opens that ticket's detail modal

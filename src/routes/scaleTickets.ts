@@ -89,6 +89,7 @@ scaleTicketRoutes.get('/', async (c) => {
     const dateFrom = c.req.query('date_from')
     const dateTo = c.req.query('date_to')
     const search = c.req.query('search')
+    const material = c.req.query('material')
 
     let sql = `SELECT st.*, c.company_name, e.first_name || ' ' || e.last_name as employee_name,
                       COALESCE(NULLIF(st.driver_name, ''), dr.first_name || ' ' || dr.last_name) as driver_display_name,
@@ -128,6 +129,10 @@ scaleTicketRoutes.get('/', async (c) => {
     if (search) {
       sql += ' AND (st.ticket_number LIKE ? OR c.company_name LIKE ?)'
       params.push('%' + search + '%', '%' + search + '%')
+    }
+    if (material) {
+      sql += ' AND st.tire_type = ?'
+      params.push(material)
     }
 
     sql += ' ORDER BY st.created_at DESC LIMIT 100'

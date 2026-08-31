@@ -399,7 +399,7 @@ export function renderEmployeeDashboard(): string {
                   <div class="text-xs text-gray-500">\${escHtml(t.field_store_name || t.company_name || 'N/A')} - \${t.net_weight ? escHtml(t.net_weight) + ' kg' : 'Pending weigh'}</div>
                 </div>
                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${getTicketStatusClass(t.status)}">
-                  \${escHtml((t.status || '').replace('_',' ').toUpperCase())}
+                  \${escHtml(getTicketStatusText(t.status))}
                 </span>
               </div>
             \`).join('');
@@ -595,7 +595,7 @@ export function renderEmployeeDashboard(): string {
           var html = '<div class="flex items-center justify-between mb-4">' +
             '<span class="font-mono font-bold text-lg text-gray-800">' + escHtml(t.ticket_number) + '</span>' +
             '<span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + getTicketStatusClass(t.status) + '">' +
-              escHtml((t.status || '').replace(/_/g, ' ').toUpperCase()) + '</span></div>';
+              escHtml(getTicketStatusText(t.status)) + '</span></div>';
 
           html += '<div class="grid md:grid-cols-2 gap-x-8 text-sm"><div>' +
             row('Customer', escHtml(t.field_store_name || t.company_name || 'N/A')) +
@@ -636,6 +636,15 @@ export function renderEmployeeDashboard(): string {
       }
 
       function closeTicketModal() { document.getElementById('ticket-modal').style.display = 'none'; }
+
+      const dashTicketStatusLabel = {
+        field_pending: 'IN FIELD', field_complete: 'TO WEIGH IN', weighing_in: 'ON SCALE',
+        weighed_in: 'IN YARD', weighing_out: 'ON SCALE', completed: 'COMPLETED', voided: 'VOIDED'
+      };
+
+      function getTicketStatusText(status) {
+        return dashTicketStatusLabel[status] || (status || '').replace(/_/g, ' ').toUpperCase();
+      }
 
       function getTicketStatusClass(status) {
         const map = { field_pending:'bg-yellow-100 text-yellow-800', field_complete:'bg-blue-100 text-blue-800', weighing_in:'bg-indigo-100 text-indigo-800', weighed_in:'bg-purple-100 text-purple-800', weighing_out:'bg-orange-100 text-orange-800', completed:'bg-green-100 text-green-800', voided:'bg-red-100 text-red-800' };

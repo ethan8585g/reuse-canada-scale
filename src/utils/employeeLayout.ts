@@ -99,14 +99,14 @@ export function employeeSidebar(activePage: string): string {
             <span class="text-xs font-bold text-green-200 uppercase tracking-wide">Live Driver Status</span>
           </div>
           <div class="grid grid-cols-2 gap-2">
-            <div class="bg-green-500/20 rounded-lg p-2 text-center">
+            <button type="button" onclick="openDriverStatus('on_road')" title="See who is on the road" class="bg-green-500/20 hover:bg-green-500/30 rounded-lg p-2 text-center btn-press transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-green-300">
               <div class="text-lg font-bold text-green-300" id="sidebar-drivers-on-road">-</div>
               <div class="text-[10px] text-green-200/70 uppercase font-semibold">On Road</div>
-            </div>
-            <div class="bg-blue-500/20 rounded-lg p-2 text-center">
+            </button>
+            <button type="button" onclick="openDriverStatus('idle')" title="See who is idle at the yard" class="bg-blue-500/20 hover:bg-blue-500/30 rounded-lg p-2 text-center btn-press transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
               <div class="text-lg font-bold text-blue-300" id="sidebar-drivers-idle">-</div>
               <div class="text-[10px] text-blue-200/70 uppercase font-semibold">Idle at Yard</div>
-            </div>
+            </button>
           </div>
         </div>
       </div>
@@ -121,6 +121,25 @@ export function employeeSidebar(activePage: string): string {
       </div>
     </div>
   </aside>
+
+  <!-- Who is behind the Live Driver Status counts -->
+  <div id="driver-status-modal" class="fixed inset-0 bg-black/50 z-[60] items-center justify-center p-4" style="display:none;" onclick="if (event.target === this) closeDriverStatus()">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col modal-enter">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-lg font-bold text-gray-800" id="driver-status-title">Drivers</h3>
+        <button onclick="closeDriverStatus()" class="text-gray-400 hover:text-gray-600" title="Close"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div class="px-5 pt-4">
+        <div class="inline-flex bg-gray-100 rounded-xl p-1 w-full">
+          <button type="button" id="ds-tab-on_road" onclick="setDriverStatusTab('on_road')" class="flex-1 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">On Road</button>
+          <button type="button" id="ds-tab-idle" onclick="setDriverStatusTab('idle')" class="flex-1 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">Idle at Yard</button>
+        </div>
+      </div>
+      <div class="p-5 overflow-y-auto flex-1" id="driver-status-list">
+        <div class="text-center py-8 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading drivers...</div>
+      </div>
+    </div>
+  </div>
 
   <script>
     function toggleMobileSidebar() {
@@ -141,6 +160,106 @@ export function employeeSidebar(activePage: string): string {
         if (idleEl) idleEl.textContent = d.idle || 0;
       }).catch(err => console.warn('[DriverStatus]', err));
     }
+    // ── Who is behind those counts ────────────────────────────────────────
+    var driverStatusTab = 'on_road';
+    var driverStatusRows = [];
+
+    function openDriverStatus(tab) {
+      driverStatusTab = tab || 'on_road';
+      document.getElementById('driver-status-modal').style.display = 'flex';
+      paintDriverStatusTabs();
+      loadDriverStatusList();
+    }
+
+    function closeDriverStatus() {
+      document.getElementById('driver-status-modal').style.display = 'none';
+    }
+
+    function setDriverStatusTab(tab) {
+      driverStatusTab = tab;
+      paintDriverStatusTabs();
+      renderDriverStatusList();
+    }
+
+    function paintDriverStatusTabs() {
+      ['on_road', 'idle'].forEach(function (t) {
+        var el = document.getElementById('ds-tab-' + t);
+        if (!el) return;
+        el.className = 'flex-1 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ' +
+          (t === driverStatusTab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700');
+      });
+      var title = document.getElementById('driver-status-title');
+      if (title) title.textContent = driverStatusTab === 'on_road' ? 'On the road' : 'Idle at the yard';
+    }
+
+    function loadDriverStatusList() {
+      if (typeof axios === 'undefined') { setTimeout(loadDriverStatusList, 300); return; }
+      axios.get('/api/employee/driver-status-list').then(function (res) {
+        driverStatusRows = res.data.drivers || [];
+        renderDriverStatusList();
+      }).catch(function (err) {
+        console.warn('[DriverStatus]', err);
+        document.getElementById('driver-status-list').innerHTML =
+          '<p class="text-center py-8 text-sm text-gray-400">Could not load drivers.</p>';
+      });
+    }
+
+    function driverStatusAgo(ts) {
+      if (!ts) return 'no check-in yet';
+      var then = new Date(ts.replace(' ', 'T') + (ts.indexOf('Z') === -1 ? 'Z' : ''));
+      var mins = Math.floor((Date.now() - then.getTime()) / 60000);
+      if (isNaN(mins)) return 'no check-in yet';
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + ' min ago';
+      var hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+      return Math.floor(hrs / 24) + 'd ago';
+    }
+
+    function renderDriverStatusList() {
+      var el = document.getElementById('driver-status-list');
+      if (!el) return;
+      var rows = driverStatusRows.filter(function (d) {
+        return driverStatusTab === 'on_road' ? d.status === 'on_road' : d.status !== 'on_road';
+      });
+
+      if (rows.length === 0) {
+        el.innerHTML = '<p class="text-center py-8 text-sm text-gray-400">' +
+          (driverStatusTab === 'on_road' ? 'Nobody is out on the road right now.' : 'Nobody is idle at the yard right now.') +
+          '</p>';
+        return;
+      }
+
+      el.innerHTML = rows.map(function (d) {
+        var name = ((d.first_name || '') + ' ' + (d.last_name || '')).trim() || 'Unnamed driver';
+        var onRoad = d.status === 'on_road';
+        var dot = onRoad ? 'bg-green-500' : 'bg-blue-400';
+        var route = d.route_name
+          ? '<div class="text-xs text-gray-500 mt-0.5"><i class="fas fa-route mr-1"></i>' + escHtml(d.route_name) + (d.route_date ? ' &middot; ' + escHtml(d.route_date) : '') + '</div>'
+          : '';
+        var phone = d.phone
+          ? '<a href="tel:' + escHtml(d.phone) + '" class="text-xs text-rc-green font-semibold hover:underline"><i class="fas fa-phone mr-1"></i>' + escHtml(d.phone) + '</a>'
+          : '<span class="text-xs text-gray-300">No phone</span>';
+        return '<div class="flex items-start gap-3 py-3 border-b border-gray-100 last:border-0">' +
+            '<span class="w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 ' + dot + '"></span>' +
+            '<div class="min-w-0 flex-1">' +
+              '<div class="font-semibold text-gray-800 text-sm">' + escHtml(name) +
+                '<span class="ml-2 text-[10px] font-bold uppercase text-gray-400">' + escHtml(d.role || '') + '</span>' +
+              '</div>' +
+              route +
+              '<div class="text-[11px] text-gray-400 mt-0.5">Last update: ' + escHtml(driverStatusAgo(d.last_updated)) + '</div>' +
+            '</div>' +
+            '<div class="text-right flex-shrink-0">' + phone + '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      var m = document.getElementById('driver-status-modal');
+      if (m && m.style.display === 'flex') closeDriverStatus();
+    });
+
     // Load immediately and poll every 30 seconds
     setTimeout(loadDriverStatus, 1000);
     setInterval(loadDriverStatus, 30000);
