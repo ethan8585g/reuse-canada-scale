@@ -3,11 +3,19 @@ import { employeePageWrapper } from '../utils/employeeLayout'
 
 export function renderScaleTickets(): string {
   return layout('Scale Tickets', employeePageWrapper('scale-tickets', 'Digital Scale Tickets', `
+    <!-- Summary strip -->
+    <div class="flex flex-wrap items-end justify-end gap-x-10 gap-y-3 mb-5" id="ticket-stats"></div>
+
     <!-- Action Bar -->
-    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
-      <div class="flex items-center gap-3 flex-wrap">
-        <select id="filter-status" onchange="loadTickets()" class="px-4 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green focus:ring-2 focus:ring-rc-green/20 outline-none transition-all duration-200">
-          <option value="">All Statuses</option>
+    <div class="flex flex-col xl:flex-row xl:items-center justify-between mb-5 gap-3">
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="relative">
+          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
+          <input type="text" id="filter-search" onkeyup="debounceSearch()" class="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all w-56" placeholder="Search ticket # or customer...">
+        </div>
+        <select id="filter-status" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white">
+          <option value="">All statuses</option>
+          <option value="field_pending,field_complete,weighing_in,weighed_in">Open only</option>
           <option value="field_pending">Field Pending</option>
           <option value="field_complete">Field Complete</option>
           <option value="weighing_in">Weighing In</option>
@@ -16,44 +24,27 @@ export function renderScaleTickets(): string {
           <option value="voided">Voided</option>
         </select>
         <div class="flex items-center gap-1">
-          <input type="date" id="filter-date-from" onchange="loadTickets()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green focus:ring-2 focus:ring-rc-green/20 outline-none transition-all duration-200" placeholder="From">
-          <span class="text-gray-400 text-xs">to</span>
-          <input type="date" id="filter-date-to" onchange="loadTickets()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green focus:ring-2 focus:ring-rc-green/20 outline-none transition-all duration-200" placeholder="To">
+          <input type="date" id="filter-date-from" onchange="loadTickets()" class="px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all">
+          <span class="text-gray-300 text-xs">to</span>
+          <input type="date" id="filter-date-to" onchange="loadTickets()" class="px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all">
         </div>
-        <div class="relative">
-          <input type="text" id="filter-search" onkeyup="debounceSearch()" class="px-4 py-2 pl-9 border border-gray-200 rounded-lg text-sm focus:border-rc-green focus:ring-2 focus:ring-rc-green/20 outline-none transition-all duration-200 w-48" placeholder="Search ticket # or customer...">
-          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
-        </div>
+        <button type="button" onclick="clearTicketFilters()" id="clear-filters" style="display:none;" class="px-3 py-2.5 text-xs font-semibold text-gray-400 hover:text-gray-600"><i class="fas fa-times mr-1"></i>Clear</button>
       </div>
-      <button onclick="openNewTicketModal()" class="bg-rc-orange hover:bg-rc-orange-light text-white font-semibold py-2.5 px-5 rounded-lg shadow-sm hover:shadow-md btn-press transition-all duration-200 flex items-center gap-2">
-        <i class="fas fa-plus"></i> New Scale Ticket
-      </button>
+      <div class="flex items-center gap-3">
+        <div class="inline-flex bg-gray-100 rounded-xl p-1">
+          <button type="button" id="view-list" onclick="setView('list')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">List</button>
+          <button type="button" id="view-cards" onclick="setView('cards')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">Cards</button>
+          <button type="button" id="view-compact" onclick="setView('compact')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">Compact</button>
+        </div>
+        <button onclick="openNewTicketModal()" class="bg-rc-orange hover:opacity-90 text-white font-semibold py-2.5 px-5 rounded-xl shadow-sm btn-press transition-all flex items-center gap-2 whitespace-nowrap">
+          <i class="fas fa-plus"></i> New Scale Ticket
+        </button>
+      </div>
     </div>
 
-    <!-- Tickets Table -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      <div class="overflow-x-auto">
-        <table class="w-full">
-          <thead class="bg-gray-50/80 sticky top-0">
-            <tr>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Ticket #</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Customer</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Operator</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Driver</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Status</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Weight In</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Weight Out</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Net Weight</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Total</th>
-              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Date</th>
-              <th class="px-4 py-3.5 text-center text-xs font-semibold text-gray-500 tracking-wide">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="tickets-tbody">
-            <tr><td colspan="11" class="px-6 py-8 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
+    <!-- Results: filled by renderTickets() in whichever view is active -->
+    <div id="tickets-view">
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</div>
     </div>
 
     <!-- New Ticket Modal -->
@@ -233,56 +224,180 @@ export function renderScaleTickets(): string {
         searchDebounce = setTimeout(loadTickets, 300);
       }
 
+      // ═══ TICKET LIST: three views over one fetched set ═══
+      var allTickets = [], ticketView = 'list';
+
+      var statusBorder = {
+        field_pending: 'border-yellow-400', field_complete: 'border-blue-400',
+        weighing_in: 'border-indigo-400', weighed_in: 'border-purple-400',
+        weighing_out: 'border-orange-400', completed: 'border-green-500', voided: 'border-red-400'
+      };
+
+      function fmtKg(v) { return v ? parseFloat(v).toFixed(1) + ' kg' : null; }
+      function fmtMoney(v) { return v ? '$' + parseFloat(v).toFixed(2) : null; }
+      function fmtDate(v) { return new Date(v).toLocaleDateString('en-CA'); }
+
+      function statusPill(t) {
+        var vi = t.status === 'voided' && t.void_reason ? ' title="' + escAttr(t.void_reason) + '"' : '';
+        return '<span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + (ticketStatusColors[t.status] || 'bg-gray-100') + '"' + vi + '>' +
+          escHtml((t.status || '').replace(/_/g, ' ').toUpperCase()) + '</span>';
+      }
+      function ticketIcons(t) {
+        return (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '') +
+               (t.receipt_printed ? '<i class="fas fa-print text-blue-400 text-[10px] ml-1" title="Receipt printed"></i>' : '') +
+               (t.manual_entry ? '<i class="fas fa-keyboard text-orange-400 text-[10px] ml-1" title="Manual entry"></i>' : '');
+      }
+      function driverCell(t) {
+        if (!t.driver_display_name) return '<span class="text-gray-300">-</span>';
+        return escHtml(t.driver_display_name) + (t.driver_display_phone ?
+          '<div><a href="tel:' + escAttr(t.driver_display_phone) + '" class="text-xs text-rc-green hover:underline" onclick="event.stopPropagation()">' +
+          escHtml(t.driver_display_phone) + '</a></div>' : '');
+      }
+
+      function renderStats(list) {
+        var net = 0, money = 0, open = 0;
+        list.forEach(function(t) {
+          net += parseFloat(t.net_weight) || 0;
+          money += parseFloat(t.grand_total) || 0;
+          if (t.status !== 'completed' && t.status !== 'voided') open++;
+        });
+        function stat(v, label, cls) {
+          return '<div class="text-right"><div class="text-2xl font-extrabold ' + (cls || 'text-gray-900') + '">' + v + '</div>' +
+            '<div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">' + label + '</div></div>';
+        }
+        document.getElementById('ticket-stats').innerHTML =
+          stat(list.length, 'Tickets') +
+          stat(open, 'Open', open ? 'text-rc-orange' : 'text-gray-900') +
+          stat(Math.round(net).toLocaleString() + ' kg', 'Net Weight') +
+          stat('$' + money.toFixed(2), 'Total Value', 'text-rc-green');
+      }
+
+      function renderList(list) {
+        return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50 overflow-hidden">' +
+          list.map(function(t) {
+            return '<div onclick="viewTicket(' + t.id + ')" class="px-4 py-3.5 border-l-4 ' + (statusBorder[t.status] || 'border-gray-200') +
+              ' hover:bg-gray-50/80 cursor-pointer transition-colors flex items-center gap-4">' +
+              '<div class="w-40 shrink-0">' +
+                '<div class="font-mono font-bold text-sm text-rc-green whitespace-nowrap">' + escHtml(t.ticket_number) + ticketIcons(t) + '</div>' +
+                '<div class="text-xs text-gray-400">' + fmtDate(t.created_at) + '</div>' +
+              '</div>' +
+              '<div class="flex-1 min-w-0">' +
+                '<div class="text-sm font-semibold text-gray-800 truncate">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</div>' +
+                '<div class="text-xs text-gray-400 truncate">' + escHtml((t.tire_type || '-').replace(/_/g, ' ')) + ' &middot; ' + escHtml(t.employee_name || '') + '</div>' +
+              '</div>' +
+              '<div class="w-40 shrink-0 text-sm text-gray-600 hidden xl:block">' + driverCell(t) + '</div>' +
+              '<div class="w-28 shrink-0 text-right hidden md:block">' +
+                (t.net_weight ? '<div class="font-mono font-bold text-sm text-rc-green">' + fmtKg(t.net_weight) + '</div>' : '<div class="text-gray-300 text-sm">-</div>') +
+                (t.weight_in ? '<div class="text-[11px] text-gray-400 font-mono">' + parseFloat(t.weight_in).toFixed(0) + ' &rarr; ' + (t.weight_out ? parseFloat(t.weight_out).toFixed(0) : '?') + '</div>' : '') +
+              '</div>' +
+              '<div class="w-24 shrink-0 text-right font-mono text-sm ' + (t.grand_total ? 'text-rc-green font-bold' : 'text-gray-300') + '">' + (fmtMoney(t.grand_total) || '-') + '</div>' +
+              '<div class="w-32 shrink-0 text-center">' + statusPill(t) + '</div>' +
+              '<div class="shrink-0 flex items-center gap-1" onclick="event.stopPropagation()">' + getTicketActions(t) + '</div>' +
+            '</div>';
+          }).join('') + '</div>';
+      }
+
+      function renderCards(list) {
+        return '<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">' +
+          list.map(function(t) {
+            return '<div onclick="viewTicket(' + t.id + ')" class="bg-white rounded-xl shadow-sm border border-gray-100 border-t-4 ' +
+              (statusBorder[t.status] || 'border-gray-200') + ' p-5 cursor-pointer hover:shadow-md transition-all">' +
+              '<div class="flex items-start justify-between gap-2 mb-3">' +
+                '<div><div class="font-mono font-bold text-sm text-rc-green">' + escHtml(t.ticket_number) + ticketIcons(t) + '</div>' +
+                '<div class="text-xs text-gray-400">' + fmtDate(t.created_at) + '</div></div>' + statusPill(t) +
+              '</div>' +
+              '<div class="text-sm font-semibold text-gray-800 truncate">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</div>' +
+              '<div class="text-xs text-gray-400 mb-3 capitalize">' + escHtml((t.tire_type || '-').replace(/_/g, ' ')) + '</div>' +
+              '<div class="grid grid-cols-2 gap-2 py-3 border-t border-gray-50">' +
+                '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Net weight</div>' +
+                  '<div class="font-mono font-bold text-sm ' + (t.net_weight ? 'text-rc-green' : 'text-gray-300') + '">' + (fmtKg(t.net_weight) || '-') + '</div></div>' +
+                '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Total</div>' +
+                  '<div class="font-mono font-bold text-sm ' + (t.grand_total ? 'text-rc-green' : 'text-gray-300') + '">' + (fmtMoney(t.grand_total) || '-') + '</div></div>' +
+              '</div>' +
+              '<div class="text-xs text-gray-500 pt-2 border-t border-gray-50"><i class="fas fa-id-card text-gray-300 mr-1.5"></i>' + driverCell(t) + '</div>' +
+              '<div class="flex items-center gap-1 mt-3" onclick="event.stopPropagation()">' + getTicketActions(t) + '</div>' +
+            '</div>';
+          }).join('') + '</div>';
+      }
+
+      function renderCompact(list) {
+        var head = ['Ticket #', 'Customer', 'Driver', 'Status', 'In', 'Out', 'Net', 'Total', 'Date', ''];
+        return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
+          '<thead class="bg-gray-50/80"><tr>' + head.map(function(h) {
+            return '<th class="px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">' + h + '</th>';
+          }).join('') + '</tr></thead><tbody>' +
+          list.map(function(t) {
+            return '<tr onclick="viewTicket(' + t.id + ')" class="border-b border-gray-50 hover:bg-gray-50/80 cursor-pointer">' +
+              '<td class="px-3 py-2 font-mono font-bold text-rc-green whitespace-nowrap">' + escHtml(t.ticket_number) + '</td>' +
+              '<td class="px-3 py-2 text-gray-800 whitespace-nowrap">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</td>' +
+              '<td class="px-3 py-2 text-gray-600 whitespace-nowrap">' + escHtml(t.driver_display_name || '-') + '</td>' +
+              '<td class="px-3 py-2">' + statusPill(t) + '</td>' +
+              '<td class="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">' + (fmtKg(t.weight_in) || '-') + '</td>' +
+              '<td class="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">' + (fmtKg(t.weight_out) || '-') + '</td>' +
+              '<td class="px-3 py-2 font-mono font-bold whitespace-nowrap ' + (t.net_weight ? 'text-rc-green' : 'text-gray-300') + '">' + (fmtKg(t.net_weight) || '-') + '</td>' +
+              '<td class="px-3 py-2 font-mono whitespace-nowrap ' + (t.grand_total ? 'text-rc-green font-bold' : 'text-gray-300') + '">' + (fmtMoney(t.grand_total) || '-') + '</td>' +
+              '<td class="px-3 py-2 text-gray-400 whitespace-nowrap">' + fmtDate(t.created_at) + '</td>' +
+              '<td class="px-3 py-2 whitespace-nowrap" onclick="event.stopPropagation()"><div class="flex items-center gap-1">' + getTicketActions(t) + '</div></td>' +
+            '</tr>';
+          }).join('') + '</tbody></table></div></div>';
+      }
+
+      function renderTickets() {
+        renderStats(allTickets);
+        var host = document.getElementById('tickets-view');
+        if (!allTickets.length) {
+          host.innerHTML = '<div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center">' +
+            '<div class="w-14 h-14 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-receipt text-xl text-gray-300"></i></div>' +
+            '<p class="text-sm font-semibold text-gray-400">No scale tickets found</p>' +
+            '<p class="text-xs text-gray-300 mt-1">Try clearing the filters, or create a ticket.</p></div>';
+          return;
+        }
+        host.innerHTML = ticketView === 'cards' ? renderCards(allTickets)
+                       : ticketView === 'compact' ? renderCompact(allTickets)
+                       : renderList(allTickets);
+      }
+
+      function setView(v) {
+        ticketView = v;
+        try { localStorage.setItem('rc_ticket_view', v); } catch (e) {}
+        ['list', 'cards', 'compact'].forEach(function(k) {
+          var b = document.getElementById('view-' + k);
+          if (b) b.className = 'px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ' +
+            (k === v ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700');
+        });
+        renderTickets();
+      }
+
+      function clearTicketFilters() {
+        document.getElementById('filter-search').value = '';
+        document.getElementById('filter-status').value = '';
+        document.getElementById('filter-date-from').value = '';
+        document.getElementById('filter-date-to').value = '';
+        loadTickets();
+      }
+
       async function loadTickets() {
         try {
           const status = document.getElementById('filter-status').value;
           const dateFrom = document.getElementById('filter-date-from').value;
           const dateTo = document.getElementById('filter-date-to').value;
           const search = document.getElementById('filter-search').value.trim();
+          document.getElementById('clear-filters').style.display =
+            (status || dateFrom || dateTo || search) ? 'block' : 'none';
           let url = '/api/scale-tickets?';
           if (status) url += 'status=' + status + '&';
           if (dateFrom) url += 'date_from=' + dateFrom + '&';
           if (dateTo) url += 'date_to=' + dateTo + '&';
           if (search) url += 'search=' + encodeURIComponent(search) + '&';
           const res = await axios.get(url);
-          const tickets = res.data.tickets || [];
-          const tbody = document.getElementById('tickets-tbody');
-
-          if (tickets.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="11" class="px-6 py-8 text-center text-gray-400">No scale tickets found</td></tr>';
-            return;
-          }
-
-          tbody.innerHTML = tickets.map(t => {
-            const photoIcon = t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '';
-            const receiptIcon = t.receipt_printed ? '<i class="fas fa-print text-blue-400 text-[10px] ml-1" title="Receipt printed"></i>' : '';
-            const manualIcon = t.manual_entry ? '<i class="fas fa-keyboard text-orange-400 text-[10px] ml-1" title="Manual entry"></i>' : '';
-            const voidInfo = t.status === 'voided' && t.void_reason ? ' title="' + escAttr(t.void_reason) + '"' : '';
-            return \`
-            <tr class="border-b border-gray-100/60 hover:bg-gray-50/80 cursor-pointer transition-colors duration-150" onclick="viewTicket(\${t.id})">
-              <td class="px-4 py-3 text-sm font-mono font-bold text-rc-green">\${escHtml(t.ticket_number)}\${photoIcon}\${receiptIcon}\${manualIcon}</td>
-              <td class="px-4 py-3 text-sm text-gray-800">\${escHtml(t.company_name || t.field_store_name || 'N/A')}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">\${escHtml(t.employee_name || 'N/A')}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">\${t.driver_display_name ? escHtml(t.driver_display_name) + (t.driver_display_phone ? '<div><a href="tel:' + escAttr(t.driver_display_phone) + '" class="text-xs text-rc-green hover:underline" onclick="event.stopPropagation()">' + escHtml(t.driver_display_phone) + '</a></div>' : '') : '<span class="text-gray-300">-</span>'}</td>
-              <td class="px-4 py-3">
-                <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${ticketStatusColors[t.status] || 'bg-gray-100'}" \${voidInfo}>
-                  \${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}
-                </span>
-              </td>
-              <td class="px-4 py-3 text-sm font-mono">\${t.weight_in ? parseFloat(t.weight_in).toFixed(1) + ' kg' : '-'}</td>
-              <td class="px-4 py-3 text-sm font-mono">\${t.weight_out ? parseFloat(t.weight_out).toFixed(1) + ' kg' : '-'}</td>
-              <td class="px-4 py-3 text-sm font-mono font-bold \${t.net_weight ? 'text-rc-green' : 'text-gray-400'}">\${t.net_weight ? parseFloat(t.net_weight).toFixed(1) + ' kg' : '-'}</td>
-              <td class="px-4 py-3 text-sm font-mono \${t.grand_total ? 'text-rc-green font-bold' : 'text-gray-400'}">\${t.grand_total ? '$' + parseFloat(t.grand_total).toFixed(2) : '-'}</td>
-              <td class="px-4 py-3 text-sm text-gray-500">\${new Date(t.created_at).toLocaleDateString('en-CA')}</td>
-              <td class="px-4 py-3 text-center" onclick="event.stopPropagation()">
-                <div class="flex items-center justify-center gap-1">
-                  \${getTicketActions(t)}
-                </div>
-              </td>
-            </tr>
-          \`}).join('');
+          allTickets = res.data.tickets || [];
+          renderTickets();
         } catch (err) {
           console.error('Failed to load tickets:', err);
+          document.getElementById('tickets-view').innerHTML =
+            '<div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center text-red-400">' +
+            '<i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i>Could not load tickets. ' +
+            '<button onclick="loadTickets()" class="text-rc-green underline">Retry</button></div>';
         }
       }
 
@@ -764,6 +879,9 @@ export function renderScaleTickets(): string {
 
       (function initTicketsPage() {
         if (typeof axios !== 'undefined') {
+          var savedView = 'list';
+          try { savedView = localStorage.getItem('rc_ticket_view') || 'list'; } catch (e) {}
+          setView(savedView);
           loadTickets();
           // Deep link from the dashboard "Open Scale Tickets" card:
           // /employee/scale-tickets?ticket=<id> opens that ticket's detail modal
