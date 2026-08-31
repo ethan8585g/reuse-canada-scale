@@ -45,7 +45,23 @@ export function renderCustomerManagement(): string {
       </div>
     </div>
 
-    <div class="text-xs text-gray-400 mb-3"><span id="customer-count">0</span> customers</div>
+    <div class="flex items-center gap-3 mb-3">
+      <label class="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+        <input type="checkbox" id="select-all-customers" onchange="toggleSelectAllCustomers(this.checked)" class="rounded border-gray-300 text-rc-green">
+        Select all
+      </label>
+      <span class="text-xs text-gray-400"><span id="customer-count">0</span> customers</span>
+    </div>
+
+    <!-- Floating bulk action bar, shown once anything is selected -->
+    <div id="cust-bulk-bar" style="display:none;" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-3">
+      <span class="text-sm font-semibold whitespace-nowrap"><span id="cust-bulk-count">0</span> selected</span>
+      <div class="w-px h-6 bg-white/20"></div>
+      <button type="button" onclick="bulkSetActive(1)" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-rc-green hover:opacity-90 transition-colors whitespace-nowrap"><i class="fas fa-check-circle mr-1.5"></i>Activate</button>
+      <button type="button" onclick="bulkSetActive(0)" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-red-500/90 hover:bg-red-500 transition-colors whitespace-nowrap"><i class="fas fa-ban mr-1.5"></i>Deactivate</button>
+      <button type="button" onclick="exportCustomersCsv()" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-white/10 hover:bg-white/20 transition-colors whitespace-nowrap"><i class="fas fa-file-csv mr-1.5"></i>Export CSV</button>
+      <button type="button" onclick="clearCustomerSelection()" class="text-white/40 hover:text-white px-1" title="Clear selection"><i class="fas fa-times"></i></button>
+    </div>
 
     <!-- Results: filled by renderCustomers() in whichever view is active -->
     <div id="customers-view">
@@ -172,6 +188,7 @@ export function renderCustomerManagement(): string {
           const status = document.getElementById('filter-status').value;
           const res = await axios.get('/api/employee/customers/all' + (status ? '?status=' + status : ''));
           allCustomers = res.data.customers || [];
+          selectedCustomers = new Set();
           filterCustomers();
           updateStats();
         } catch (err) { console.error('Load customers error:', err); }
@@ -195,8 +212,18 @@ export function renderCustomerManagement(): string {
       }
 
       var custView = 'list';
+      // Selection survives a view switch. visibleCustomers is whatever the
+      // current filters leave on screen -- select-all must not reach past it.
+      var selectedCustomers = new Set(), visibleCustomers = [];
 
       var REGION_CLS = { north:'bg-blue-50 text-blue-700', south:'bg-red-50 text-red-700', east:'bg-green-50 text-green-700', west:'bg-purple-50 text-purple-700' };
+
+      function custCheckbox(c) {
+        return '<input type="checkbox" onclick="event.stopPropagation()" onchange="toggleCustSelect(' + c.id + ', this.checked)"' +
+          (selectedCustomers.has(c.id) ? ' checked' : '') +
+          ' class="rounded border-gray-300 text-rc-green cursor-pointer shrink-0">';
+      }
+      function custSelClass(c) { return selectedCustomers.has(c.id) ? 'bg-green-50/70' : ''; }
 
       function regionPill(c) {
         return '<span class="px-2 py-0.5 rounded-full text-xs font-semibold ' + (REGION_CLS[c.region] || 'bg-gray-50 text-gray-600') + '">' +
@@ -247,7 +274,8 @@ export function renderCustomerManagement(): string {
       function renderCustList(list) {
         return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50 overflow-hidden">' +
           list.map(function(c) {
-            return '<div class="px-4 py-3.5 border-l-4 ' + (c.is_active ? 'border-rc-green' : 'border-gray-200') + ' hover:bg-gray-50/80 transition-colors flex items-center gap-4">' +
+            return '<div class="px-4 py-3.5 border-l-4 ' + (c.is_active ? 'border-rc-green' : 'border-gray-200') + ' hover:bg-gray-50/80 transition-colors flex items-center gap-4 ' + custSelClass(c) + '">' +
+              custCheckbox(c) +
               '<div class="flex-1 min-w-0">' +
                 '<div class="text-sm font-bold text-gray-800 truncate">' + escHtml(c.company_name || '') + '</div>' +
                 '<div class="text-xs text-gray-400 truncate">' + escHtml(c.phone || 'No phone') + ' &middot; <span class="font-mono">' + escHtml(c.email || '') + '</span></div>' +
@@ -265,9 +293,10 @@ export function renderCustomerManagement(): string {
       function renderCustCards(list) {
         return '<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">' +
           list.map(function(c) {
-            return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 border-t-4 ' + (c.is_active ? 'border-rc-green' : 'border-gray-300') + ' p-5 hover:shadow-md transition-all">' +
+            return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 border-t-4 ' + (c.is_active ? 'border-rc-green' : 'border-gray-300') + ' p-5 hover:shadow-md transition-all ' + custSelClass(c) + '">' +
               '<div class="flex items-start justify-between gap-2 mb-1">' +
-                '<div class="text-sm font-bold text-gray-800 truncate">' + escHtml(c.company_name || '') + '</div>' + custStatusPill(c) +
+                '<div class="flex items-start gap-2 min-w-0">' + custCheckbox(c) +
+                '<div class="text-sm font-bold text-gray-800 truncate">' + escHtml(c.company_name || '') + '</div></div>' + custStatusPill(c) +
               '</div>' +
               '<div class="text-xs text-gray-400 mb-3">' + escHtml(c.contact_name || 'No contact') + '</div>' +
               '<div class="grid grid-cols-2 gap-2 py-3 border-t border-gray-50">' +
@@ -285,13 +314,14 @@ export function renderCustomerManagement(): string {
       }
 
       function renderCustCompact(list) {
-        var head = ['Company', 'Contact', 'Location', 'Region', 'Username', 'Status', 'Pickups', ''];
+        var head = ['', 'Company', 'Contact', 'Location', 'Region', 'Username', 'Status', 'Pickups', ''];
         return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
           '<thead class="bg-gray-50/80"><tr>' + head.map(function(h) {
             return '<th class="px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">' + h + '</th>';
           }).join('') + '</tr></thead><tbody>' +
           list.map(function(c) {
-            return '<tr class="border-b border-gray-50 hover:bg-gray-50/80">' +
+            return '<tr class="border-b border-gray-50 hover:bg-gray-50/80 ' + custSelClass(c) + '">' +
+              '<td class="px-3 py-2">' + custCheckbox(c) + '</td>' +
               '<td class="px-3 py-2 font-semibold text-gray-800 whitespace-nowrap">' + escHtml(c.company_name || '') + '</td>' +
               '<td class="px-3 py-2 text-gray-600 whitespace-nowrap">' + escHtml(c.contact_name || '-') + '</td>' +
               '<td class="px-3 py-2 text-gray-500 whitespace-nowrap">' + custLocation(c) + '</td>' +
@@ -305,7 +335,9 @@ export function renderCustomerManagement(): string {
       }
 
       function renderCustomers(list) {
+        visibleCustomers = list;
         document.getElementById('customer-count').textContent = list.length;
+        updateCustBulkBar();
         var host = document.getElementById('customers-view');
         if (!list.length) {
           host.innerHTML = '<div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center">' +
@@ -317,6 +349,69 @@ export function renderCustomerManagement(): string {
         host.innerHTML = custView === 'cards' ? renderCustCards(list)
                        : custView === 'compact' ? renderCustCompact(list)
                        : renderCustList(list);
+      }
+
+      function toggleCustSelect(id, on) {
+        if (on) selectedCustomers.add(id); else selectedCustomers.delete(id);
+        renderCustomers(visibleCustomers);
+      }
+      function toggleSelectAllCustomers(on) {
+        selectedCustomers = new Set(on ? visibleCustomers.map(function(c) { return c.id; }) : []);
+        renderCustomers(visibleCustomers);
+      }
+      function clearCustomerSelection() {
+        selectedCustomers = new Set();
+        var sa = document.getElementById('select-all-customers');
+        if (sa) sa.checked = false;
+        renderCustomers(visibleCustomers);
+      }
+      function updateCustBulkBar() {
+        var n = selectedCustomers.size;
+        document.getElementById('cust-bulk-count').textContent = n;
+        document.getElementById('cust-bulk-bar').style.display = n ? 'flex' : 'none';
+        var sa = document.getElementById('select-all-customers');
+        if (sa) sa.checked = n > 0 && n === visibleCustomers.length;
+      }
+      function selectedCustomerRows() {
+        return allCustomers.filter(function(c) { return selectedCustomers.has(c.id); });
+      }
+
+      // The API only exposes a toggle, so only flip the rows that are not
+      // already in the target state -- otherwise "Activate" would deactivate
+      // everything that was already active.
+      async function bulkSetActive(target) {
+        var rows = selectedCustomerRows().filter(function(c) { return (c.is_active ? 1 : 0) !== target; });
+        if (!rows.length) { alert('Every selected customer is already ' + (target ? 'active' : 'inactive') + '.'); return; }
+        if (!confirm((target ? 'Activate ' : 'Deactivate ') + rows.length + ' customer(s)?')) return;
+        var failed = 0;
+        for (var i = 0; i < rows.length; i++) {
+          try { await axios.post('/api/employee/customers/' + rows[i].id + '/toggle'); }
+          catch (e) { failed++; console.error('Toggle failed for ' + rows[i].company_name, e); }
+        }
+        if (failed) alert('Updated ' + (rows.length - failed) + ' of ' + rows.length + '. ' + failed + ' failed.');
+        selectedCustomers = new Set();
+        loadCustomers();
+      }
+
+      function csvCell(v) {
+        var s = (v === null || v === undefined) ? '' : String(v);
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      function exportCustomersCsv() {
+        var rows = selectedCustomerRows();
+        if (!rows.length) return;
+        var out = [['Company','Contact','Username','Phone','Address','City','Province','Postal Code','Region','Status','Pending Pickups']];
+        rows.forEach(function(c) {
+          out.push([c.company_name || '', c.contact_name || '', c.email || '', c.phone || '', c.address || '',
+            c.city || '', c.province || '', c.postal_code || '', c.region || '',
+            c.is_active ? 'Active' : 'Inactive', c.pending_pickups || 0]);
+        });
+        var csv = out.map(function(r) { return r.map(csvCell).join(','); }).join('\r\n');
+        var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+        var a = document.createElement('a');
+        a.href = url; a.download = 'customers-' + new Date().toISOString().slice(0, 10) + '.csv';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
       }
 
       function setCustView(v) {

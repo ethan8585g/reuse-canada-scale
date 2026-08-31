@@ -42,6 +42,23 @@ export function renderScaleTickets(): string {
       </div>
     </div>
 
+    <div class="flex items-center gap-3 mb-3">
+      <label class="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+        <input type="checkbox" id="select-all-tickets" onchange="toggleSelectAllTickets(this.checked)" class="rounded border-gray-300 text-rc-green">
+        Select all
+      </label>
+      <span class="text-xs text-gray-400"><span id="ticket-count">0</span> shown</span>
+    </div>
+
+    <!-- Floating bulk action bar, shown once anything is selected -->
+    <div id="bulk-bar" style="display:none;" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-3">
+      <span class="text-sm font-semibold whitespace-nowrap"><span id="bulk-count">0</span> selected</span>
+      <div class="w-px h-6 bg-white/20"></div>
+      <button type="button" onclick="bulkVoidTickets()" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-red-500/90 hover:bg-red-500 transition-colors whitespace-nowrap"><i class="fas fa-ban mr-1.5"></i>Void</button>
+      <button type="button" onclick="exportTicketsCsv()" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-white/10 hover:bg-white/20 transition-colors whitespace-nowrap"><i class="fas fa-file-csv mr-1.5"></i>Export CSV</button>
+      <button type="button" onclick="clearTicketSelection()" class="text-white/40 hover:text-white px-1" title="Clear selection"><i class="fas fa-times"></i></button>
+    </div>
+
     <!-- Results: filled by renderTickets() in whichever view is active -->
     <div id="tickets-view">
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</div>
@@ -226,12 +243,22 @@ export function renderScaleTickets(): string {
 
       // ═══ TICKET LIST: three views over one fetched set ═══
       var allTickets = [], ticketView = 'list';
+      // Selection is keyed by id and survives a view switch, but is cleared on
+      // every load: after a filter change the old ids may not even be on screen.
+      var selectedTickets = new Set();
 
       var statusBorder = {
         field_pending: 'border-yellow-400', field_complete: 'border-blue-400',
         weighing_in: 'border-indigo-400', weighed_in: 'border-purple-400',
         weighing_out: 'border-orange-400', completed: 'border-green-500', voided: 'border-red-400'
       };
+
+      function ticketCheckbox(t) {
+        return '<input type="checkbox" onclick="event.stopPropagation()" onchange="toggleTicketSelect(' + t.id + ', this.checked)"' +
+          (selectedTickets.has(t.id) ? ' checked' : '') +
+          ' class="rounded border-gray-300 text-rc-green cursor-pointer shrink-0">';
+      }
+      function rowSelClass(t) { return selectedTickets.has(t.id) ? 'bg-green-50/70' : ''; }
 
       function fmtKg(v) { return v ? parseFloat(v).toFixed(1) + ' kg' : null; }
       function fmtMoney(v) { return v ? '$' + parseFloat(v).toFixed(2) : null; }
@@ -276,7 +303,8 @@ export function renderScaleTickets(): string {
         return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50 overflow-hidden">' +
           list.map(function(t) {
             return '<div onclick="viewTicket(' + t.id + ')" class="px-4 py-3.5 border-l-4 ' + (statusBorder[t.status] || 'border-gray-200') +
-              ' hover:bg-gray-50/80 cursor-pointer transition-colors flex items-center gap-4">' +
+              ' hover:bg-gray-50/80 cursor-pointer transition-colors flex items-center gap-4 ' + rowSelClass(t) + '">' +
+              ticketCheckbox(t) +
               '<div class="w-40 shrink-0">' +
                 '<div class="font-mono font-bold text-sm text-rc-green whitespace-nowrap">' + escHtml(t.ticket_number) + ticketIcons(t) + '</div>' +
                 '<div class="text-xs text-gray-400">' + fmtDate(t.created_at) + '</div>' +
@@ -301,10 +329,11 @@ export function renderScaleTickets(): string {
         return '<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">' +
           list.map(function(t) {
             return '<div onclick="viewTicket(' + t.id + ')" class="bg-white rounded-xl shadow-sm border border-gray-100 border-t-4 ' +
-              (statusBorder[t.status] || 'border-gray-200') + ' p-5 cursor-pointer hover:shadow-md transition-all">' +
+              (statusBorder[t.status] || 'border-gray-200') + ' p-5 cursor-pointer hover:shadow-md transition-all ' + rowSelClass(t) + '">' +
               '<div class="flex items-start justify-between gap-2 mb-3">' +
+                '<div class="flex items-start gap-2">' + ticketCheckbox(t) +
                 '<div><div class="font-mono font-bold text-sm text-rc-green">' + escHtml(t.ticket_number) + ticketIcons(t) + '</div>' +
-                '<div class="text-xs text-gray-400">' + fmtDate(t.created_at) + '</div></div>' + statusPill(t) +
+                '<div class="text-xs text-gray-400">' + fmtDate(t.created_at) + '</div></div></div>' + statusPill(t) +
               '</div>' +
               '<div class="text-sm font-semibold text-gray-800 truncate">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</div>' +
               '<div class="text-xs text-gray-400 mb-3 capitalize">' + escHtml((t.tire_type || '-').replace(/_/g, ' ')) + '</div>' +
@@ -321,13 +350,14 @@ export function renderScaleTickets(): string {
       }
 
       function renderCompact(list) {
-        var head = ['Ticket #', 'Customer', 'Driver', 'Status', 'In', 'Out', 'Net', 'Total', 'Date', ''];
+        var head = ['', 'Ticket #', 'Customer', 'Driver', 'Status', 'In', 'Out', 'Net', 'Total', 'Date', ''];
         return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
           '<thead class="bg-gray-50/80"><tr>' + head.map(function(h) {
             return '<th class="px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">' + h + '</th>';
           }).join('') + '</tr></thead><tbody>' +
           list.map(function(t) {
-            return '<tr onclick="viewTicket(' + t.id + ')" class="border-b border-gray-50 hover:bg-gray-50/80 cursor-pointer">' +
+            return '<tr onclick="viewTicket(' + t.id + ')" class="border-b border-gray-50 hover:bg-gray-50/80 cursor-pointer ' + rowSelClass(t) + '">' +
+              '<td class="px-3 py-2">' + ticketCheckbox(t) + '</td>' +
               '<td class="px-3 py-2 font-mono font-bold text-rc-green whitespace-nowrap">' + escHtml(t.ticket_number) + '</td>' +
               '<td class="px-3 py-2 text-gray-800 whitespace-nowrap">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</td>' +
               '<td class="px-3 py-2 text-gray-600 whitespace-nowrap">' + escHtml(t.driver_display_name || '-') + '</td>' +
@@ -344,6 +374,8 @@ export function renderScaleTickets(): string {
 
       function renderTickets() {
         renderStats(allTickets);
+        document.getElementById('ticket-count').textContent = allTickets.length;
+        updateBulkBar();
         var host = document.getElementById('tickets-view');
         if (!allTickets.length) {
           host.innerHTML = '<div class="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center">' +
@@ -355,6 +387,65 @@ export function renderScaleTickets(): string {
         host.innerHTML = ticketView === 'cards' ? renderCards(allTickets)
                        : ticketView === 'compact' ? renderCompact(allTickets)
                        : renderList(allTickets);
+      }
+
+      function toggleTicketSelect(id, on) {
+        if (on) selectedTickets.add(id); else selectedTickets.delete(id);
+        renderTickets();
+      }
+      function toggleSelectAllTickets(on) {
+        selectedTickets = new Set(on ? allTickets.map(function(t) { return t.id; }) : []);
+        renderTickets();
+      }
+      function clearTicketSelection() {
+        selectedTickets = new Set();
+        var sa = document.getElementById('select-all-tickets');
+        if (sa) sa.checked = false;
+        renderTickets();
+      }
+      function updateBulkBar() {
+        var n = selectedTickets.size;
+        document.getElementById('bulk-count').textContent = n;
+        document.getElementById('bulk-bar').style.display = n ? 'flex' : 'none';
+        var sa = document.getElementById('select-all-tickets');
+        if (sa) sa.checked = n > 0 && n === allTickets.length;
+      }
+      function selectedTicketRows() {
+        return allTickets.filter(function(t) { return selectedTickets.has(t.id); });
+      }
+
+      // Void every selected ticket that can still be voided, under one reason.
+      // Completed and already-voided tickets are skipped, not failed.
+      async function bulkVoidTickets() {
+        var rows = selectedTicketRows().filter(function(t) { return t.status !== 'completed' && t.status !== 'voided'; });
+        if (!rows.length) { alert('None of the selected tickets can be voided (they are completed or already voided).'); return; }
+        document.getElementById('void-ticket-id').value = 'bulk';
+        document.getElementById('void-reason').value = '';
+        document.getElementById('void-modal').style.display = 'flex';
+      }
+
+      function csvCell(v) {
+        var s = (v === null || v === undefined) ? '' : String(v);
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      function downloadCsv(name, rows) {
+        var csv = rows.map(function(r) { return r.map(csvCell).join(','); }).join('\r\n');
+        var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+        var a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+      function exportTicketsCsv() {
+        var rows = selectedTicketRows();
+        if (!rows.length) return;
+        var out = [['Ticket #','Date','Customer','Material','Operator','Driver','Driver Phone','Status','Weight In (kg)','Weight Out (kg)','Net Weight (kg)','Total']];
+        rows.forEach(function(t) {
+          out.push([t.ticket_number, fmtDate(t.created_at), t.company_name || t.field_store_name || '', t.tire_type || '',
+            t.employee_name || '', t.driver_display_name || '', t.driver_display_phone || '', t.status || '',
+            t.weight_in || '', t.weight_out || '', t.net_weight || '', t.grand_total || '']);
+        });
+        downloadCsv('scale-tickets-' + new Date().toISOString().slice(0, 10) + '.csv', out);
       }
 
       function setView(v) {
@@ -391,6 +482,7 @@ export function renderScaleTickets(): string {
           if (search) url += 'search=' + encodeURIComponent(search) + '&';
           const res = await axios.get(url);
           allTickets = res.data.tickets || [];
+          selectedTickets = new Set();
           renderTickets();
         } catch (err) {
           console.error('Failed to load tickets:', err);
@@ -784,6 +876,20 @@ export function renderScaleTickets(): string {
         const id = document.getElementById('void-ticket-id').value;
         const reason = document.getElementById('void-reason').value.trim();
         if (!reason) { alert('Please enter a reason for voiding'); return; }
+        if (id === 'bulk') {
+          var rows = selectedTicketRows().filter(function(t) { return t.status !== 'completed' && t.status !== 'voided'; });
+          var failed = 0;
+          // Sequential: D1 is a single writer and a partial failure should be
+          // reported per ticket rather than aborting the whole batch.
+          for (var i = 0; i < rows.length; i++) {
+            try { await axios.post('/api/scale-tickets/' + rows[i].id + '/void', { reason }); }
+            catch (e) { failed++; console.error('Void failed for ' + rows[i].ticket_number, e); }
+          }
+          document.getElementById('void-modal').style.display = 'none';
+          if (failed) alert('Voided ' + (rows.length - failed) + ' of ' + rows.length + ' tickets. ' + failed + ' failed.');
+          loadTickets();
+          return;
+        }
         try {
           await axios.post('/api/scale-tickets/' + id + '/void', { reason });
           document.getElementById('void-modal').style.display = 'none';

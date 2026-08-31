@@ -4,31 +4,46 @@ import { employeePageWrapper } from '../utils/employeeLayout'
 export function renderPickupManagement(): string {
   return layout('Pickup Management', employeePageWrapper('pickups', 'Tire Pickup Management', `
     <!-- Filter Bar -->
-    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
-      <div class="flex flex-wrap items-center gap-3">
-        <select id="filter-status" onchange="loadPickups()" class="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none">
-          <option value="">All Statuses</option>
-          <option value="pending" selected>Pending</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="scheduled">Scheduled</option>
-          <option value="in_progress">In Progress</option>
-          <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-        <select id="filter-region" onchange="loadPickups()" class="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none">
-          <option value="">All Regions</option>
-          <option value="north">North</option>
-          <option value="south">South</option>
-          <option value="east">East</option>
-          <option value="west">West</option>
-        </select>
-        <input type="date" id="filter-date" onchange="loadPickups()" class="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none">
-      </div>
-      <div class="flex items-center gap-3 text-sm text-gray-500">
-        <span><span id="pickup-count">0</span> requests found</span>
-        <button onclick="loadPickups()" class="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-50 transition-all" title="Re-apply the filters">
-          <i class="fas fa-rotate-right mr-1"></i>Refresh
-        </button>
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
+      <!-- Status tabs: one tap per status, each showing how many are in it -->
+      <div class="flex flex-wrap items-center gap-2" id="status-tabs"></div>
+
+      <div class="mt-3 pt-3 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="relative">
+            <i class="fas fa-compass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none"></i>
+            <select id="filter-region" onchange="setRegionFilter(this.value)" class="pl-8 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 focus:border-rc-green focus:bg-white outline-none cursor-pointer transition-all">
+              <option value="">All Regions</option>
+              <option value="north">North</option>
+              <option value="south">South</option>
+              <option value="east">East</option>
+              <option value="west">West</option>
+            </select>
+          </div>
+
+          <div class="inline-flex items-center bg-gray-50 border border-gray-200 rounded-lg focus-within:border-rc-green focus-within:bg-white transition-all">
+            <i class="fas fa-calendar-day text-gray-400 text-xs pl-3"></i>
+            <input type="date" id="filter-date" onchange="setDateFilter(this.value)" class="bg-transparent pl-2 pr-1 py-2 text-sm font-medium text-gray-700 outline-none cursor-pointer" title="Filter by preferred date">
+            <button id="clear-date" onclick="setDateFilter('')" style="display:none;" class="px-2 py-2 text-gray-400 hover:text-red-500 transition-colors" title="Clear the date filter">
+              <i class="fas fa-times-circle"></i>
+            </button>
+          </div>
+
+          <button onclick="setDateFilter(new Date().toISOString().split('T')[0])" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 text-sm font-semibold hover:bg-gray-50 hover:text-gray-900 btn-press transition-all" title="Show only today's preferred date">
+            Today
+          </button>
+
+          <button id="clear-filters" onclick="clearFilters()" style="display:none;" class="px-3 py-2 rounded-lg text-rc-green text-sm font-semibold hover:bg-green-50 btn-press transition-all">
+            <i class="fas fa-filter-circle-xmark mr-1"></i>Clear filters
+          </button>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-gray-500"><span id="pickup-count" class="font-semibold text-gray-700">0</span> shown</span>
+          <button onclick="reloadPickups()" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 text-sm font-semibold hover:bg-gray-50 hover:text-gray-900 btn-press transition-all" title="Re-apply the filters">
+            <i class="fas fa-rotate-right mr-1"></i>Refresh
+          </button>
+        </div>
       </div>
     </div>
 
@@ -78,6 +93,21 @@ export function renderPickupManagement(): string {
     <script>
       let currentAssignPickupId = null;
 
+      // Filter state lives here: the status row is a set of buttons now, not a
+      // <select>, so loadPickups() no longer reads its value off the DOM.
+      let filters = { status: 'pending', region: '', date: '' };
+      let statusCounts = { pending: 0, confirmed: 0, scheduled: 0, in_progress: 0, completed: 0, cancelled: 0, all: 0 };
+
+      const statusTabs = [
+        { key: '',            label: 'All',         icon: 'fas fa-layer-group',  on: 'bg-gray-900 text-white border-gray-900' },
+        { key: 'pending',     label: 'Pending',     icon: 'fas fa-clock',        on: 'bg-amber-500 text-white border-amber-500' },
+        { key: 'confirmed',   label: 'Confirmed',   icon: 'fas fa-check',        on: 'bg-blue-600 text-white border-blue-600' },
+        { key: 'scheduled',   label: 'Scheduled',   icon: 'fas fa-calendar',     on: 'bg-indigo-600 text-white border-indigo-600' },
+        { key: 'in_progress', label: 'In Progress', icon: 'fas fa-truck',        on: 'bg-orange-600 text-white border-orange-600' },
+        { key: 'completed',   label: 'Completed',   icon: 'fas fa-check-circle', on: 'bg-green-600 text-white border-green-600' },
+        { key: 'cancelled',   label: 'Cancelled',   icon: 'fas fa-ban',          on: 'bg-red-600 text-white border-red-600' }
+      ];
+
       // Every action re-renders only the card it touched, so the loaded rows are
       // kept here and mutated locally. Nothing refetches the (filtered) list on its
       // own - a card that no longer matches the filter stays put until Refresh.
@@ -96,11 +126,89 @@ export function renderPickupManagement(): string {
       const regionColors = { north: 'bg-blue-50 text-blue-700', south: 'bg-red-50 text-red-700', east: 'bg-green-50 text-green-700', west: 'bg-purple-50 text-purple-700' };
       const statusLabels = { pending: 'Pending', confirmed: 'Confirmed', scheduled: 'Scheduled', in_progress: 'In Progress', completed: 'Completed', cancelled: 'Cancelled' };
 
+      function renderStatusTabs() {
+        const el = document.getElementById('status-tabs');
+        if (!el) return;
+        el.innerHTML = statusTabs.map(t => {
+          const active = filters.status === t.key;
+          const n = t.key ? (statusCounts[t.key] || 0) : (statusCounts.all || 0);
+          const shell = active
+            ? t.on + ' shadow-sm'
+            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:text-gray-900' + (n === 0 ? ' opacity-60' : '');
+          const badge = active ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-500';
+          return \`<button onclick="setStatusFilter('\${t.key}')" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-full border text-sm font-semibold btn-press transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-rc-green focus-visible:ring-offset-1 \${shell}">
+            <i class="\${t.icon} text-xs"></i>\${t.label}
+            <span class="\${badge} rounded-full px-1.5 min-w-[20px] text-center text-[11px] font-bold">\${n}</span>
+          </button>\`;
+        }).join('');
+      }
+
+      // Keep the region/date controls and the "Clear filters" shortcut showing
+      // exactly what is being filtered on.
+      function syncFilterControls() {
+        document.getElementById('filter-region').value = filters.region;
+        document.getElementById('filter-date').value = filters.date;
+        document.getElementById('clear-date').style.display = filters.date ? '' : 'none';
+        const anyNarrowed = filters.status !== 'pending' || filters.region || filters.date;
+        document.getElementById('clear-filters').style.display = anyNarrowed ? '' : 'none';
+      }
+
+      function setStatusFilter(status) {
+        filters.status = status;
+        renderStatusTabs();
+        syncFilterControls();
+        loadPickups();
+      }
+
+      function setRegionFilter(region) {
+        filters.region = region;
+        reloadPickups();
+      }
+
+      function setDateFilter(date) {
+        filters.date = date || '';
+        reloadPickups();
+      }
+
+      function clearFilters() {
+        filters = { status: 'pending', region: '', date: '' };
+        reloadPickups();
+      }
+
+      // Region and date change what every tab counts, so refresh the badges too.
+      function reloadPickups() {
+        syncFilterControls();
+        loadCounts();
+        loadPickups();
+      }
+
+      async function loadCounts() {
+        try {
+          let url = '/api/pickups/counts?';
+          if (filters.date) url += 'date=' + filters.date + '&';
+          if (filters.region) url += 'region=' + filters.region + '&';
+          const res = await axios.get(url);
+          statusCounts = res.data.counts || statusCounts;
+        } catch (err) {
+          console.error('Failed to load pickup counts:', err);
+        }
+        renderStatusTabs();
+      }
+
+      // Cards are updated in place rather than refetched, so move the badge counts
+      // by hand to keep the tabs honest between refreshes.
+      function bumpCounts(from, to) {
+        if (!from || !to || from === to) return;
+        if (statusCounts[from] > 0) statusCounts[from]--;
+        statusCounts[to] = (statusCounts[to] || 0) + 1;
+        renderStatusTabs();
+      }
+
       async function loadPickups() {
         try {
-          const status = document.getElementById('filter-status').value;
-          const date = document.getElementById('filter-date').value;
-          const region = document.getElementById('filter-region').value;
+          const status = filters.status;
+          const date = filters.date;
+          const region = filters.region;
           let url = '/api/pickups?';
           if (status) url += 'status=' + status + '&';
           if (date) url += 'date=' + date + '&';
@@ -240,7 +348,7 @@ export function renderPickupManagement(): string {
       // The card is deliberately left in place after an action, so say plainly why
       // it no longer looks like the rest of the filtered list.
       function filterHint(p) {
-        const filter = document.getElementById('filter-status').value;
+        const filter = filters.status;
         if (!filter || p.status === filter || p.status === p._base) return '';
         return \`<div class="mt-3 text-xs text-gray-400"><i class="fas fa-info-circle mr-1"></i>Now \${escHtml(statusLabels[p.status] || p.status)} - outside the "\${escHtml(statusLabels[filter] || filter)}" filter, but kept here until you refresh.</div>\`;
       }
@@ -268,6 +376,7 @@ export function renderPickupManagement(): string {
           await axios.post('/api/pickups/' + id + '/status', { status });
           p.status = status;
           p._undo = Object.assign({ kind: 'status', to: from }, undoMeta);
+          bumpCounts(from, status);
         });
       }
 
@@ -290,9 +399,11 @@ export function renderPickupManagement(): string {
       function undoStatus(id) {
         return runCardAction(id, async (p) => {
           const to = p._undo ? p._undo.to : p.status;
+          const from = p.status;
           await axios.post('/api/pickups/' + id + '/status', { status: to });
           p.status = to;
           p._undo = null;
+          bumpCounts(from, to);
         });
       }
 
@@ -300,8 +411,10 @@ export function renderPickupManagement(): string {
         return runCardAction(id, async (p) => {
           const wanted = p._undo ? p._undo.to : 'pending';
           const to = wanted === 'confirmed' ? 'confirmed' : 'pending';
+          const from = p.status;
           await axios.post('/api/pickups/' + id + '/unassign', { revert_to: to });
           p.status = to;
+          bumpCounts(from, to);
           p.assigned_employee_id = null;
           p.assigned_employee_name = null;
           p._undo = null;
@@ -358,6 +471,7 @@ export function renderPickupManagement(): string {
             scheduled_date: date,
             notify_customer: notify ? 1 : 0
           });
+          bumpCounts(from, 'scheduled');
           p.status = 'scheduled';
           p.assigned_employee_name = driverName;
           p.preferred_date = date || p.preferred_date;
@@ -379,6 +493,9 @@ export function renderPickupManagement(): string {
       // Safely call loadPickups - retry if axios isn't ready
       (function initPickups() {
         if (typeof axios !== 'undefined') {
+          renderStatusTabs();
+          syncFilterControls();
+          loadCounts();
           loadPickups();
         } else {
           setTimeout(initPickups, 500);

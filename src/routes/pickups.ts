@@ -59,6 +59,57 @@ pickupRoutes.get('/', async (c) => {
   }
 })
 
+// Per-status counts for the Pickup Management status tabs. Mirrors the list
+// route's driver scoping plus its region/date filters, so a tab's badge matches
+// what clicking it actually shows. Must stay above '/:id' or that route wins.
+pickupRoutes.get('/counts', async (c) => {
+  try {
+    const date = c.req.query('date')
+    const region = c.req.query('region')
+
+    const userId = c.get('userId')
+    const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(userId).first()
+    const isDriver = (me?.role as string) === 'driver'
+
+    let sql = `SELECT pr.status, COUNT(*) AS n
+               FROM pickup_requests pr
+               LEFT JOIN customers c ON pr.customer_id = c.id
+               WHERE 1=1`
+    const params: any[] = []
+
+    if (isDriver) {
+      sql += ' AND pr.assigned_employee_id = ?'
+      params.push(userId)
+    }
+    if (date) {
+      sql += ' AND pr.preferred_date = ?'
+      params.push(date)
+    }
+    if (region) {
+      sql += ' AND c.region = ?'
+      params.push(region)
+    }
+
+    sql += ' GROUP BY pr.status'
+
+    let stmt = c.env.DB.prepare(sql)
+    if (params.length > 0) stmt = stmt.bind(...params)
+    const { results } = await stmt.all()
+
+    const counts: Record<string, number> = {
+      pending: 0, confirmed: 0, scheduled: 0, in_progress: 0, completed: 0, cancelled: 0, all: 0,
+    }
+    for (const row of results as any[]) {
+      counts[row.status as string] = row.n as number
+      counts.all += row.n as number
+    }
+
+    return c.json({ counts })
+  } catch (err: any) {
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 // Get single pickup
 pickupRoutes.get('/:id', async (c) => {
   const id = c.req.param('id')
