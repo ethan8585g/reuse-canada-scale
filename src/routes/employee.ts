@@ -21,7 +21,7 @@ employeeRoutes.get('/dashboard', async (c) => {
      // would get the wrong day's tickets after that point.
     const today = todayEdmonton()
 
-    const [pendingPickups, todaysRoutes, openTickets, completedToday, recentPickups, recentTickets] = await Promise.all([
+    const [pendingPickups, todaysRoutes, openTickets, completedToday, recentPickups, recentTickets, openTicketIds] = await Promise.all([
       c.env.DB.prepare("SELECT COUNT(*) as count FROM pickup_requests WHERE status IN ('pending', 'confirmed')").first(),
       c.env.DB.prepare("SELECT COUNT(*) as count FROM routes WHERE date = ?").bind(today).first(),
       c.env.DB.prepare("SELECT COUNT(*) as count FROM scale_tickets WHERE status NOT IN ('completed', 'voided')").first(),
@@ -31,6 +31,11 @@ employeeRoutes.get('/dashboard', async (c) => {
       ).all(),
       c.env.DB.prepare(
         "SELECT st.*, c.company_name, e.first_name || ' ' || e.last_name as employee_name FROM scale_tickets st LEFT JOIN customers c ON st.customer_id = c.id LEFT JOIN employees e ON st.employee_id = e.id ORDER BY st.created_at DESC LIMIT 5"
+      ).all(),
+      // LIMIT 2 is enough to answer "is there exactly one open ticket, and
+      // which one?" without fetching every open row just to build a link.
+      c.env.DB.prepare(
+        "SELECT id FROM scale_tickets WHERE status NOT IN ('completed', 'voided') ORDER BY created_at DESC LIMIT 2"
       ).all(),
     ])
 
@@ -84,6 +89,11 @@ employeeRoutes.get('/dashboard', async (c) => {
       pending_pickups: (pendingPickups as any)?.count || 0,
       todays_routes: (todaysRoutes as any)?.count || 0,
       open_tickets: (openTickets as any)?.count || 0,
+      // Set only when exactly one ticket is open, so the dashboard card can
+      // deep-link straight into it instead of dropping the operator on a list.
+      open_ticket_id: ((openTicketIds as any)?.results || []).length === 1
+        ? (openTicketIds as any).results[0].id
+        : null,
       completed_today: (completedToday as any)?.count || 0,
       recent_pickups: recentPickups.results || [],
       recent_tickets: recentTickets.results || [],

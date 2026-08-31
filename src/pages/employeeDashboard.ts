@@ -65,7 +65,7 @@ export function renderEmployeeDashboard(): string {
         </div>
         <div class="text-xs text-gray-400 mt-2 group-hover:text-rc-green transition-colors">Click to view <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
-      <a href="/employee/scale-tickets" class="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-5 shadow-card border border-orange-100/60 card-hover cursor-pointer block group">
+      <a href="/employee/scale-tickets" id="stat-tickets-link" class="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-5 shadow-card border border-orange-100/60 card-hover cursor-pointer block group">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Open Scale Tickets</div>
@@ -216,6 +216,14 @@ export function renderEmployeeDashboard(): string {
           document.getElementById('stat-pending').textContent = d.pending_pickups || 0;
           document.getElementById('stat-routes').textContent = d.todays_routes || 0;
           document.getElementById('stat-tickets').textContent = d.open_tickets || 0;
+          // One open ticket: jump straight into it. More than one (or none):
+          // fall back to the plain list, since there is no single ticket to open.
+          const ticketsLink = document.getElementById('stat-tickets-link');
+          if (ticketsLink) {
+            ticketsLink.href = d.open_ticket_id
+              ? '/employee/scale-tickets?ticket=' + d.open_ticket_id
+              : '/employee/scale-tickets';
+          }
           document.getElementById('stat-completed').textContent = d.completed_today || 0;
 
           // Show pending badge

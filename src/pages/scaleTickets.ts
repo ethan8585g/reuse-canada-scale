@@ -472,7 +472,14 @@ export function renderScaleTickets(): string {
       }
 
       (function initTicketsPage() {
-        if (typeof axios !== 'undefined') { loadTickets(); }
+        if (typeof axios !== 'undefined') {
+          loadTickets();
+          // Deep link from the dashboard "Open Scale Tickets" card:
+          // /employee/scale-tickets?ticket=<id> opens that ticket's detail modal
+          // directly. Digits only, so nothing odd reaches the API path.
+          var wanted = new URLSearchParams(window.location.search).get('ticket');
+          if (wanted && /^[0-9]+$/.test(wanted)) viewTicket(wanted);
+        }
         else { setTimeout(initTicketsPage, 500); }
       })();
     </script>
