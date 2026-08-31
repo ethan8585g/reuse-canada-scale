@@ -393,10 +393,15 @@ export function renderRouting(): string {
       }
 
       function showMapFallback(message) {
-        const placeholder = document.getElementById('map-placeholder');
-        if (placeholder) {
-          placeholder.innerHTML = '<div class="text-center"><i class="fas fa-exclamation-triangle text-3xl text-yellow-400 mb-3"></i><p class="text-gray-500 font-semibold text-sm">' + message + '</p><p class="text-xs text-gray-400 mt-2">Routes will still work — map is optional</p></div>';
-        }
+        // Write into #map-container, not #map-placeholder. Once Google Maps
+        // initialises it replaces the container's children (the placeholder
+        // included) with its own DOM — and on an auth failure that DOM is the
+        // "Oops! Something went wrong" overlay. Targeting the placeholder wrote
+        // to a detached node and left Google's overlay on screen.
+        // Matches showDashboardMapFallback() in employeeDashboard.ts.
+        const el = document.getElementById('map-container') || document.getElementById('map-placeholder');
+        if (!el) return;
+        el.innerHTML = '<div class="flex items-center justify-center h-full bg-blue-50"><div class="text-center px-4"><i class="fas fa-exclamation-triangle text-3xl text-yellow-400 mb-3"></i><p class="text-gray-500 font-semibold text-sm">' + message + '</p><p class="text-xs text-gray-400 mt-2">Routes will still work — map is optional</p></div></div>';
       }
 
       // Google calls this if the API key is invalid, referrer-restricted, or billing is disabled.
@@ -407,6 +412,10 @@ export function renderRouting(): string {
       };
 
       window.onGMapsReady = function() {
+        // gm_authFailure can fire before this callback. Without the guard we
+        // would rebuild the Map and let Google repaint its "Oops!" overlay
+        // straight over the fallback we just rendered.
+        if (gmapsLoadFailed) return;
         gmapsLoaded = true;
         const mapEl = document.getElementById('map-container');
         gmap = new google.maps.Map(mapEl, {
