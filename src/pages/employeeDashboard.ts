@@ -39,6 +39,17 @@ export function renderEmployeeDashboard(): string {
       </div>
     </div>
 
+    <!-- Scale Ticket Detail Modal (opened from a Recent Scale Tickets row) -->
+    <div id="ticket-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none;" onclick="if(event.target===this) closeTicketModal()">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div class="p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white rounded-t-2xl">
+          <h3 class="text-lg font-bold text-gray-800" id="ticket-modal-title">Ticket</h3>
+          <button onclick="closeTicketModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <div class="p-6" id="ticket-modal-content"></div>
+      </div>
+    </div>
+
     <!-- Stats Grid - ALL CLICKABLE -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <a href="/employee/pickups" class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-5 shadow-card border border-amber-100/60 card-hover cursor-pointer block group">
@@ -275,7 +286,7 @@ export function renderEmployeeDashboard(): string {
           // Recent tickets
           if (d.recent_tickets && d.recent_tickets.length > 0) {
             ticketsDiv.innerHTML = d.recent_tickets.map(t => \`
-              <a href="/employee/scale-tickets" class="px-5 py-4 flex items-center justify-between hover:bg-orange-50 cursor-pointer transition-colors duration-150 block">
+              <div onclick="openTicketModal(\${t.id})" class="px-5 py-4 flex items-center justify-between hover:bg-orange-50 cursor-pointer transition-colors duration-150">
                 <div>
                   <div class="font-semibold text-sm text-gray-800">\${escHtml(t.ticket_number)}</div>
                   <div class="text-xs text-gray-500">\${escHtml(t.field_store_name || t.company_name || 'N/A')} - \${t.net_weight ? escHtml(t.net_weight) + ' kg' : 'Pending weigh'}</div>
@@ -283,7 +294,7 @@ export function renderEmployeeDashboard(): string {
                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${getTicketStatusClass(t.status)}">
                   \${escHtml((t.status || '').replace('_',' ').toUpperCase())}
                 </span>
-              </a>
+              </div>
             \`).join('');
           } else {
             ticketsDiv.innerHTML = '<div class="py-8 text-center"><div class="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-receipt text-xl text-gray-300"></i></div><p class="text-sm font-medium text-gray-400">No recent scale tickets</p><p class="text-xs text-gray-300 mt-1">Completed tickets will appear here</p></div>';
@@ -453,6 +464,72 @@ export function renderEmployeeDashboard(): string {
         const map = { pending:'bg-yellow-100 text-yellow-800', confirmed:'bg-blue-100 text-blue-800', scheduled:'bg-indigo-100 text-indigo-800', in_progress:'bg-orange-100 text-orange-800', completed:'bg-green-100 text-green-800', cancelled:'bg-red-100 text-red-800' };
         return map[status] || 'bg-gray-100 text-gray-800';
       }
+      // Opens one ticket in place. A Recent Scale Tickets row used to navigate to
+      // /employee/scale-tickets no matter which row was clicked; only "View All"
+      // should leave the dashboard. Built with string concatenation rather than a
+      // nested template literal so nothing needs escaping inside this page string.
+      async function openTicketModal(id) {
+        var modal = document.getElementById('ticket-modal');
+        var content = document.getElementById('ticket-modal-content');
+        document.getElementById('ticket-modal-title').textContent = 'Loading ticket...';
+        content.innerHTML = '<div class="py-12 text-center text-gray-300"><i class="fas fa-spinner fa-spin text-2xl"></i></div>';
+        modal.style.display = 'flex';
+        try {
+          var res = await axios.get('/api/scale-tickets/' + id);
+          var t = res.data.ticket;
+          var audit = res.data.audit_trail || [];
+          document.getElementById('ticket-modal-title').textContent = 'Ticket ' + t.ticket_number;
+
+          var row = function(label, value) {
+            return '<div class="flex justify-between py-1.5 border-b border-gray-50"><span class="text-gray-500">' + label + '</span><span class="font-semibold text-gray-800">' + value + '</span></div>';
+          };
+          var kg = function(v) { return v ? parseFloat(v).toFixed(1) + ' kg' : '<span class="text-gray-300">Pending</span>'; };
+
+          var html = '<div class="flex items-center justify-between mb-4">' +
+            '<span class="font-mono font-bold text-lg text-gray-800">' + escHtml(t.ticket_number) + '</span>' +
+            '<span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + getTicketStatusClass(t.status) + '">' +
+              escHtml((t.status || '').replace(/_/g, ' ').toUpperCase()) + '</span></div>';
+
+          html += '<div class="grid md:grid-cols-2 gap-x-8 text-sm"><div>' +
+            row('Customer', escHtml(t.field_store_name || t.company_name || 'N/A')) +
+            row('Operator', escHtml(t.employee_name || 'N/A')) +
+            row('Material', escHtml((t.tire_type || 'N/A').replace(/_/g, ' '))) +
+            row('Created', new Date(t.created_at).toLocaleString('en-CA')) +
+          '</div><div>' +
+            row('Weight In (Gross)', kg(t.weight_in)) +
+            row('Weight Out (Tare)', kg(t.weight_out)) +
+            row('Net Weight', kg(t.net_weight)) +
+            row('Total', t.grand_total ? '$' + parseFloat(t.grand_total).toFixed(2) : '<span class="text-gray-300">-</span>') +
+          '</div></div>';
+
+          if (t.void_reason) {
+            html += '<div class="mt-4 bg-red-50 rounded-xl p-3"><div class="text-xs text-red-600 font-semibold">VOID REASON</div><div class="text-sm text-red-700">' + escHtml(t.void_reason) + '</div></div>';
+          }
+          if (t.notes) {
+            html += '<div class="mt-4 p-3 bg-gray-50 rounded-lg text-sm text-gray-600"><i class="fas fa-sticky-note mr-1"></i> ' + escHtml(t.notes) + '</div>';
+          }
+          var photos = '';
+          if (t.photo_in) photos += '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-In</div><img src="' + escAttr(t.photo_in) + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)"></div>';
+          if (t.photo_out) photos += '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out</div><img src="' + escAttr(t.photo_out) + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)"></div>';
+          if (photos) html += '<div class="grid grid-cols-2 gap-3 mt-4">' + photos + '</div>';
+
+          if (audit.length) {
+            html += '<div class="mt-6 pt-4 border-t border-gray-100"><div class="text-xs font-bold text-gray-500 uppercase mb-2">Audit Trail</div><div class="space-y-1">' +
+              audit.map(function(a) {
+                return '<div class="flex items-center gap-2 text-xs text-gray-500"><span class="font-semibold">' + escHtml((a.action || '').replace(/_/g, ' ')) + '</span><span class="text-gray-400">' + escHtml(a.employee_name || '') + '</span><span class="ml-auto text-gray-400">' + new Date(a.created_at).toLocaleString('en-CA', {hour:'2-digit',minute:'2-digit',month:'short',day:'numeric'}) + '</span></div>';
+              }).join('') + '</div></div>';
+          }
+
+          content.innerHTML = html;
+        } catch (err) {
+          console.error('openTicketModal(' + id + ') failed:', err);
+          document.getElementById('ticket-modal-title').textContent = 'Ticket';
+          content.innerHTML = '<div class="py-10 text-center text-red-400"><i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i><p class="text-sm">Could not load this ticket.</p><p class="text-xs text-gray-400 mt-1">' + escHtml(err && err.message ? err.message : String(err)) + '</p></div>';
+        }
+      }
+
+      function closeTicketModal() { document.getElementById('ticket-modal').style.display = 'none'; }
+
       function getTicketStatusClass(status) {
         const map = { field_pending:'bg-yellow-100 text-yellow-800', field_complete:'bg-blue-100 text-blue-800', weighing_in:'bg-indigo-100 text-indigo-800', weighed_in:'bg-purple-100 text-purple-800', weighing_out:'bg-orange-100 text-orange-800', completed:'bg-green-100 text-green-800', voided:'bg-red-100 text-red-800' };
         return map[status] || 'bg-gray-100 text-gray-800';
