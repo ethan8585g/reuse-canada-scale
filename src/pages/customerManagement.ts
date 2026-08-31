@@ -406,7 +406,7 @@ export function renderCustomerManagement(): string {
             c.city || '', c.province || '', c.postal_code || '', c.region || '',
             c.is_active ? 'Active' : 'Inactive', c.pending_pickups || 0]);
         });
-        var csv = out.map(function(r) { return r.map(csvCell).join(','); }).join('\r\n');
+        var csv = out.map(function(r) { return r.map(csvCell).join(','); }).join('\\r\\n');
         var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
         var a = document.createElement('a');
         a.href = url; a.download = 'customers-' + new Date().toISOString().slice(0, 10) + '.csv';

@@ -429,7 +429,7 @@ export function renderScaleTickets(): string {
         return '"' + s.replace(/"/g, '""') + '"';
       }
       function downloadCsv(name, rows) {
-        var csv = rows.map(function(r) { return r.map(csvCell).join(','); }).join('\r\n');
+        var csv = rows.map(function(r) { return r.map(csvCell).join(','); }).join('\\r\\n');
         var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
         var a = document.createElement('a');
         a.href = url; a.download = name;
