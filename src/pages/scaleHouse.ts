@@ -542,6 +542,10 @@ export function renderScaleHouse(): string {
             </div>
           </div>
           <div><label class="block text-sm font-semibold text-gray-700 mb-1">Material</label><select id="assign-material" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none"><option value="shingles">Asphalt Roofing Shingles</option><option value="mixed">Tires — Mixed</option><option value="passenger">Tires — Passenger</option><option value="truck">Tires — Commercial Truck</option><option value="off-road">Tires — Off-Road</option></select></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-sm font-semibold text-gray-700 mb-1">Driver Name</label><input id="assign-driver-name" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none" placeholder="Who drove the truck"></div>
+            <div><label class="block text-sm font-semibold text-gray-700 mb-1">Driver Phone</label><input id="assign-driver-phone" type="tel" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none" placeholder="780-555-0100"></div>
+          </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Vehicle Tare</label>
             <button type="button" id="btn-use-live-tare" onclick="useLiveTareInAssignModal()" class="w-full px-4 py-3 border-2 border-green-200 bg-green-50 hover:bg-green-100 rounded-lg outline-none text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed">
@@ -1737,6 +1741,10 @@ export function renderScaleHouse(): string {
     loadCustomerDropdown('assign-customer');
     refreshAssignLiveTare();
     resetNewCustomerForm();
+    // Clear the driver fields: these are per-truck, and carrying the previous
+    // truck's driver into the next ticket would silently record the wrong person.
+    document.getElementById('assign-driver-name').value = '';
+    document.getElementById('assign-driver-phone').value = '';
     openModal('assign-modal');
   }
 
@@ -1816,7 +1824,12 @@ export function renderScaleHouse(): string {
     const tire_type = document.getElementById('assign-material').value;
     showLoading('Assigning...');
     try {
-      await axios.post('/api/scale-tickets/' + id + '/assign', { customer_id: customer_id ? parseInt(customer_id) : null, tire_type });
+      await axios.post('/api/scale-tickets/' + id + '/assign', {
+        customer_id: customer_id ? parseInt(customer_id) : null,
+        tire_type,
+        driver_name: document.getElementById('assign-driver-name').value.trim() || null,
+        driver_phone: document.getElementById('assign-driver-phone').value.trim() || null,
+      });
       closeAssignModal(); loadOpenTickets();
     } catch(err) { alert(err.response?.data?.error || 'Failed'); }
     finally { hideLoading(); }
@@ -1843,8 +1856,15 @@ export function renderScaleHouse(): string {
     lastPrintWeight = currentLiveWeight;
     showLoading('Completing...');
     try {
-      if (customerId) {
-        await axios.post('/api/scale-tickets/' + ticketId + '/assign', { customer_id: parseInt(customerId), tire_type: tireType });
+      const driverName = document.getElementById('assign-driver-name').value.trim() || null;
+      const driverPhone = document.getElementById('assign-driver-phone').value.trim() || null;
+      if (customerId || driverName || driverPhone) {
+        await axios.post('/api/scale-tickets/' + ticketId + '/assign', {
+          customer_id: customerId ? parseInt(customerId) : null,
+          tire_type: tireType,
+          driver_name: driverName,
+          driver_phone: driverPhone,
+        });
       }
       const photo = autoCapturePhoto();
       await axios.post('/api/scale-tickets/' + ticketId + '/merge-out', { weight: currentLiveWeight, photo: photo || null });

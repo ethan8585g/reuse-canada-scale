@@ -52,7 +52,7 @@ export function renderEmployeeDashboard(): string {
 
     <!-- Stats Grid - ALL CLICKABLE -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-      <a href="/employee/pickups" class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-5 shadow-card border border-amber-100/60 card-hover cursor-pointer block group">
+      <a href="/employee/pickups" class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-5 shadow-card border border-amber-100/60 card-hover cursor-pointer block btn-press focus:outline-none focus-visible:ring-2 focus-visible:ring-rc-green focus-visible:ring-offset-2">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Pending Pickups</div>
@@ -62,9 +62,8 @@ export function renderEmployeeDashboard(): string {
             <i class="fas fa-clock text-lg text-rc-orange"></i>
           </div>
         </div>
-        <div class="text-xs text-gray-400 mt-2 group-hover:text-rc-green transition-colors">Click to manage <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
-      <a href="/employee/routing" class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-5 shadow-card border border-emerald-100/60 card-hover cursor-pointer block group">
+      <a href="/employee/routing" class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-5 shadow-card border border-emerald-100/60 card-hover cursor-pointer block btn-press focus:outline-none focus-visible:ring-2 focus-visible:ring-rc-green focus-visible:ring-offset-2">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Today's Routes</div>
@@ -74,9 +73,8 @@ export function renderEmployeeDashboard(): string {
             <i class="fas fa-route text-lg text-rc-green"></i>
           </div>
         </div>
-        <div class="text-xs text-gray-400 mt-2 group-hover:text-rc-green transition-colors">Click to view <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
-      <a href="/employee/scale-tickets" id="stat-tickets-link" class="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-5 shadow-card border border-orange-100/60 card-hover cursor-pointer block group">
+      <a href="/employee/scale-tickets" id="stat-tickets-link" class="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-5 shadow-card border border-orange-100/60 card-hover cursor-pointer block btn-press focus:outline-none focus-visible:ring-2 focus-visible:ring-rc-green focus-visible:ring-offset-2">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Open Scale Tickets</div>
@@ -86,9 +84,8 @@ export function renderEmployeeDashboard(): string {
             <i class="fas fa-weight text-lg text-rc-orange"></i>
           </div>
         </div>
-        <div class="text-xs text-gray-400 mt-2 group-hover:text-rc-green transition-colors">Click to view <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
-      <a href="/employee/scale-house" class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5 shadow-card border border-green-100/60 card-hover cursor-pointer block group relative overflow-hidden">
+      <a href="/employee/scale-house" class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5 shadow-card border border-green-100/60 card-hover cursor-pointer block relative overflow-hidden btn-press focus:outline-none focus-visible:ring-2 focus-visible:ring-rc-green focus-visible:ring-offset-2">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-500 font-medium">Completed Today</div>
@@ -99,7 +96,6 @@ export function renderEmployeeDashboard(): string {
           </div>
         </div>
         <div class="text-xs text-gray-400 mt-1" id="completed-summary"></div>
-        <div class="text-xs text-gray-400 mt-1 group-hover:text-rc-green transition-colors">Click for Scale House <i class="fas fa-arrow-right ml-1"></i></div>
       </a>
     </div>
 

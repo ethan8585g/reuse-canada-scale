@@ -88,6 +88,16 @@ export function renderScaleTickets(): string {
                   <option value="">Select vehicle...</option>
                 </select>
               </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-semibold text-gray-700 mb-1">Driver Name</label>
+                  <input id="ticket-driver-name" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none" placeholder="Who drove the truck">
+                </div>
+                <div>
+                  <label class="block text-sm font-semibold text-gray-700 mb-1">Driver Phone</label>
+                  <input id="ticket-driver-phone" type="tel" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none" placeholder="780-555-0100">
+                </div>
+              </div>
               <div>
                 <label class="block text-sm font-semibold text-gray-700 mb-1">Notes</label>
                 <textarea id="ticket-notes" rows="2" class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-orange outline-none" placeholder="Optional notes..."></textarea>
@@ -215,7 +225,7 @@ export function renderScaleTickets(): string {
               <td class="px-4 py-3 text-sm font-mono font-bold text-rc-green">\${escHtml(t.ticket_number)}\${photoIcon}\${receiptIcon}\${manualIcon}</td>
               <td class="px-4 py-3 text-sm text-gray-800">\${escHtml(t.company_name || t.field_store_name || 'N/A')}</td>
               <td class="px-4 py-3 text-sm text-gray-600">\${escHtml(t.employee_name || 'N/A')}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">\${t.driver_name ? escHtml(t.driver_name) + (t.driver_phone ? '<div><a href="tel:' + escAttr(t.driver_phone) + '" class="text-xs text-rc-green hover:underline" onclick="event.stopPropagation()">' + escHtml(t.driver_phone) + '</a></div>' : '') : '<span class="text-gray-300">-</span>'}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">\${t.driver_display_name ? escHtml(t.driver_display_name) + (t.driver_display_phone ? '<div><a href="tel:' + escAttr(t.driver_display_phone) + '" class="text-xs text-rc-green hover:underline" onclick="event.stopPropagation()">' + escHtml(t.driver_display_phone) + '</a></div>' : '') : '<span class="text-gray-300">-</span>'}</td>
               <td class="px-4 py-3">
                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${ticketStatusColors[t.status] || 'bg-gray-100'}" \${voidInfo}>
                   \${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}
@@ -364,7 +374,9 @@ export function renderScaleTickets(): string {
           await axios.post('/api/scale-tickets', {
             customer_id: parseInt(document.getElementById('ticket-customer').value),
             tire_type: document.getElementById('ticket-tire-type').value,
-            notes: document.getElementById('ticket-notes').value
+            notes: document.getElementById('ticket-notes').value,
+            driver_name: document.getElementById('ticket-driver-name').value.trim() || null,
+            driver_phone: document.getElementById('ticket-driver-phone').value.trim() || null
           });
           closeNewTicketModal();
           document.getElementById('new-ticket-form').reset();
@@ -432,8 +444,8 @@ export function renderScaleTickets(): string {
                   <div class="flex justify-between"><span class="text-gray-500">Status</span><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${ticketStatusColors[t.status]}">\${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Customer</span><span class="font-semibold">\${escHtml(t.company_name || 'N/A')}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Operator</span><span>\${escHtml(t.employee_name || 'N/A')}</span></div>
-                  <div class="flex justify-between"><span class="text-gray-500">Driver</span><span>\${escHtml(t.driver_name || 'Not on a route')}</span></div>
-                  <div class="flex justify-between"><span class="text-gray-500">Driver Phone</span><span>\${t.driver_phone ? '<a href="tel:' + escAttr(t.driver_phone) + '" class="text-rc-green font-semibold hover:underline">' + escHtml(t.driver_phone) + '</a>' : 'N/A'}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Driver</span><span>\${escHtml(t.driver_display_name || 'Not recorded')}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Driver Phone</span><span>\${t.driver_display_phone ? '<a href="tel:' + escAttr(t.driver_display_phone) + '" class="text-rc-green font-semibold hover:underline">' + escHtml(t.driver_display_phone) + '</a>' : 'N/A'}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Material</span><span class="capitalize">\${escHtml((t.tire_type || 'N/A').replace('_',' '))}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Created</span><span>\${new Date(t.created_at).toLocaleString('en-CA')}</span></div>
                   \${t.vehicle_tare_used ? '<div class="flex justify-between"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>' : ''}

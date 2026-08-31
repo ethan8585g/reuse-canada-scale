@@ -91,7 +91,8 @@ scaleTicketRoutes.get('/', async (c) => {
     const search = c.req.query('search')
 
     let sql = `SELECT st.*, c.company_name, e.first_name || ' ' || e.last_name as employee_name,
-                      dr.first_name || ' ' || dr.last_name as driver_name, dr.phone as driver_phone
+                      COALESCE(NULLIF(st.driver_name, ''), dr.first_name || ' ' || dr.last_name) as driver_display_name,
+                      COALESCE(NULLIF(st.driver_phone, ''), dr.phone) as driver_display_phone
                FROM scale_tickets st
                LEFT JOIN customers c ON st.customer_id = c.id
                LEFT JOIN employees e ON st.employee_id = e.id
@@ -148,7 +149,8 @@ scaleTicketRoutes.get('/:id', async (c) => {
     const ticket = await c.env.DB.prepare(
       `SELECT st.*, c.company_name, c.contact_name, c.address, c.city,
               e.first_name || ' ' || e.last_name as employee_name,
-              dr.first_name || ' ' || dr.last_name as driver_name, dr.phone as driver_phone
+              COALESCE(NULLIF(st.driver_name, ''), dr.first_name || ' ' || dr.last_name) as driver_display_name,
+              COALESCE(NULLIF(st.driver_phone, ''), dr.phone) as driver_display_phone
        FROM scale_tickets st
        LEFT JOIN customers c ON st.customer_id = c.id
        LEFT JOIN employees e ON st.employee_id = e.id
@@ -183,7 +185,7 @@ scaleTicketRoutes.get('/:id', async (c) => {
 // Create new scale ticket (from office/yard)
 scaleTicketRoutes.post('/', async (c) => {
   try {
-    const { customer_id, tire_type, notes, vehicle_plate } = await c.req.json()
+    const { customer_id, tire_type, notes, vehicle_plate, driver_name, driver_phone } = await c.req.json()
     const employeeId = c.get('userId')
 
     if (!customer_id) {
@@ -191,9 +193,10 @@ scaleTicketRoutes.post('/', async (c) => {
     }
 
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
-      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'field_pending')`,
-      params: [tn, customer_id, employeeId, tire_type || 'mixed', notes || null, vehicle_plate || null],
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, driver_name, driver_phone, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'field_pending')`,
+      params: [tn, customer_id, employeeId, tire_type || 'mixed', notes || null, vehicle_plate || null,
+               driver_name || null, driver_phone || null],
     }))
 
     await auditLog(c.env.DB, ticketId, 'created', employeeId, { source: 'office', customer_id, tire_type })
@@ -552,7 +555,7 @@ scaleTicketRoutes.post('/:id/finalize', async (c) => {
 scaleTicketRoutes.post('/:id/assign', async (c) => {
   const id = c.req.param('id')
   try {
-    const { customer_id, tire_type, notes, vehicle_id } = await c.req.json()
+    const { customer_id, tire_type, notes, vehicle_id, driver_name, driver_phone } = await c.req.json()
     const employeeId = c.get('userId')
 
     // Snapshot the row before mutation — customer reassignment is a likely
@@ -567,9 +570,12 @@ scaleTicketRoutes.post('/:id/assign', async (c) => {
         tire_type = COALESCE(?, tire_type),
         notes = COALESCE(?, notes),
         vehicle_id = COALESCE(?, vehicle_id),
+        driver_name = COALESCE(?, driver_name),
+        driver_phone = COALESCE(?, driver_phone),
         updated_at = datetime('now')
        WHERE id = ?`
-    ).bind(customer_id || null, tire_type || null, notes || null, vehicle_id || null, id).run()
+    ).bind(customer_id || null, tire_type || null, notes || null, vehicle_id || null,
+           driver_name || null, driver_phone || null, id).run()
 
     await auditLog(c.env.DB, parseInt(id), 'assigned', employeeId, {
       customer_id, tire_type, vehicle_id,
