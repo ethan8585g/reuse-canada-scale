@@ -12,18 +12,19 @@ export function renderPickupManagement(): string {
         <div class="flex flex-wrap items-center gap-2">
           <div class="relative">
             <i class="fas fa-compass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none"></i>
-            <select id="filter-region" onchange="setRegionFilter(this.value)" class="pl-8 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 focus:border-rc-green focus:bg-white outline-none cursor-pointer transition-all">
+            <select id="filter-region" onchange="setRegionFilter(this.value)" class="appearance-none pl-8 pr-9 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 text-sm font-semibold hover:bg-gray-50 hover:text-gray-900 focus:border-rc-green focus:outline-none cursor-pointer transition-all">
               <option value="">All Regions</option>
               <option value="north">North</option>
               <option value="south">South</option>
               <option value="east">East</option>
               <option value="west">West</option>
             </select>
+            <i class="fas fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-[10px] pointer-events-none"></i>
           </div>
 
-          <div class="inline-flex items-center bg-gray-50 border border-gray-200 rounded-lg focus-within:border-rc-green focus-within:bg-white transition-all">
+          <div class="inline-flex items-center bg-white border border-gray-200 rounded-lg hover:bg-gray-50 focus-within:border-rc-green focus-within:bg-white transition-all">
             <i class="fas fa-calendar-day text-gray-400 text-xs pl-3"></i>
-            <input type="date" id="filter-date" onchange="setDateFilter(this.value)" class="bg-transparent pl-2 pr-1 py-2 text-sm font-medium text-gray-700 outline-none cursor-pointer" title="Filter by preferred date">
+            <input type="date" id="filter-date" onchange="setDateFilter(this.value)" class="bg-transparent pl-2 pr-1 py-2 text-sm font-semibold text-gray-600 outline-none cursor-pointer" title="Filter by preferred date">
             <button id="clear-date" onclick="setDateFilter('')" style="display:none;" class="px-2 py-2 text-gray-400 hover:text-red-500 transition-colors" title="Clear the date filter">
               <i class="fas fa-times-circle"></i>
             </button>

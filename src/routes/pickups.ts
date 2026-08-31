@@ -3,6 +3,10 @@ import { authMiddleware, employeeOnly } from '../middleware/auth'
 
 type Bindings = { DB: D1Database }
 
+const TIRE_TYPES = ['passenger', 'light_truck', 'medium_truck', 'heavy_truck', 'truck', 'otr', 'mixed', 'off-road']
+const TIME_SLOTS = ['morning', 'afternoon', 'evening', 'anytime']
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
 export const pickupRoutes = new Hono<{ Bindings: Bindings }>()
 
 // Apply auth middleware
@@ -110,6 +114,47 @@ pickupRoutes.get('/counts', async (c) => {
   }
 })
 
+// Everything scheduled between two dates, for the dashboard calendar grid.
+// Ordered so a day cell renders its pickups in time-slot-ish order. Like
+// '/counts', this must stay above '/:id'.
+pickupRoutes.get('/calendar', async (c) => {
+  try {
+    const start = c.req.query('start')
+    const end = c.req.query('end')
+    if (!start || !end || !DATE_RE.test(start) || !DATE_RE.test(end)) {
+      return c.json({ error: 'start and end must be YYYY-MM-DD' }, 400)
+    }
+
+    const userId = c.get('userId')
+    const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(userId).first()
+    const isDriver = (me?.role as string) === 'driver'
+
+    let sql = `SELECT pr.id, pr.status, pr.preferred_date, pr.preferred_time_slot, pr.estimated_tire_count,
+                      pr.tire_type, pr.notes, pr.assigned_employee_id,
+                      c.company_name, c.contact_name, c.phone, c.city, c.region,
+                      e.first_name || ' ' || e.last_name as assigned_employee_name
+               FROM pickup_requests pr
+               LEFT JOIN customers c ON pr.customer_id = c.id
+               LEFT JOIN employees e ON pr.assigned_employee_id = e.id
+               WHERE pr.preferred_date >= ? AND pr.preferred_date <= ?`
+    const params: any[] = [start, end]
+
+    if (isDriver) {
+      sql += ' AND pr.assigned_employee_id = ?'
+      params.push(userId)
+    }
+
+    sql += ` ORDER BY pr.preferred_date,
+             CASE pr.preferred_time_slot WHEN 'morning' THEN 1 WHEN 'afternoon' THEN 2 WHEN 'evening' THEN 3 ELSE 4 END,
+             pr.id`
+
+    const { results } = await c.env.DB.prepare(sql).bind(...params).all()
+    return c.json({ pickups: results })
+  } catch (err: any) {
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 // Get single pickup
 pickupRoutes.get('/:id', async (c) => {
   const id = c.req.param('id')
@@ -167,6 +212,61 @@ async function logScheduleSms(db: D1Database, pickupId: string, phone: string, n
      VALUES ('sms_schedule', ?, ?, ?, ?, 'sent')`
   ).bind(phone, name, message, pickupId).run()
 }
+
+// Book a pickup on a customer's behalf (the dashboard calendar's "Schedule
+// pickup" form). Passing employee_id assigns a driver and schedules it outright;
+// without one the request lands as 'pending' like a customer-submitted booking.
+pickupRoutes.post('/', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({} as any))
+    const { customer_id, estimated_tire_count, tire_type, preferred_date, preferred_time_slot, notes, employee_id, notify_customer } = body
+
+    if (!customer_id) return c.json({ error: 'Customer is required' }, 400)
+
+    const customer = await c.env.DB.prepare('SELECT id FROM customers WHERE id = ? AND is_active = 1').bind(customer_id).first()
+    if (!customer) return c.json({ error: 'Customer not found' }, 404)
+
+    const tires = parseInt(estimated_tire_count, 10)
+    if (!Number.isFinite(tires) || tires < 1) {
+      return c.json({ error: 'Estimated tire count must be a positive number' }, 400)
+    }
+    if (typeof tire_type !== 'string' || !TIRE_TYPES.includes(tire_type)) {
+      return c.json({ error: `Tire type must be one of: ${TIRE_TYPES.join(', ')}` }, 400)
+    }
+    if (!preferred_date || typeof preferred_date !== 'string' || !DATE_RE.test(preferred_date)) {
+      return c.json({ error: 'preferred_date must be YYYY-MM-DD' }, 400)
+    }
+    const slot = preferred_time_slot || 'anytime'
+    if (typeof slot !== 'string' || !TIME_SLOTS.includes(slot)) {
+      return c.json({ error: `preferred_time_slot must be one of: ${TIME_SLOTS.join(', ')}` }, 400)
+    }
+    if (notes !== undefined && notes !== null) {
+      if (typeof notes !== 'string') return c.json({ error: 'notes must be a string' }, 400)
+      if (notes.length > 2000) return c.json({ error: 'notes too long (max 2000 chars)' }, 400)
+    }
+
+    let driverId: number | null = null
+    if (employee_id) {
+      const driver = await c.env.DB.prepare('SELECT id FROM employees WHERE id = ? AND is_active = 1').bind(employee_id).first()
+      if (!driver) return c.json({ error: 'Driver not found' }, 404)
+      driverId = driver.id as number
+    }
+
+    const result = await c.env.DB.prepare(
+      `INSERT INTO pickup_requests
+         (customer_id, estimated_tire_count, tire_type, preferred_date, preferred_time_slot, notes,
+          assigned_employee_id, status, notify_customer)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      customer_id, tires, tire_type, preferred_date, slot, notes || null,
+      driverId, driverId ? 'scheduled' : 'pending', notify_customer ? 1 : 0
+    ).run()
+
+    return c.json({ success: true, id: result.meta.last_row_id })
+  } catch (err: any) {
+    console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
 
 // Update pickup status
 pickupRoutes.post('/:id/status', async (c) => {

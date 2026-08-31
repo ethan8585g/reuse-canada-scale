@@ -4,13 +4,6 @@ import { YARD_LAT, YARD_LNG } from '../utils/yard'
 
 export function renderEmployeeDashboard(): string {
   return layout('Employee Dashboard', employeePageWrapper('dashboard', 'Operations Dashboard', `
-    <!-- Quick Actions Bar (admin/manager only — toggled in script below) -->
-    <div id="quick-actions" class="flex items-center justify-end mb-4" style="display:none;">
-      <button onclick="openCreateAccountChooser()" class="bg-rc-green hover:bg-rc-green-light text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-lg flex items-center gap-2">
-        <i class="fas fa-user-plus"></i> Create Account
-      </button>
-    </div>
-
     <!-- Create Account Chooser Modal -->
     <div id="create-account-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none;">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
@@ -105,7 +98,13 @@ export function renderEmployeeDashboard(): string {
         <h2 class="font-semibold text-gray-900 text-[15px] flex items-center gap-2">
           <i class="fas fa-chart-bar text-rc-green"></i> Today's Performance
         </h2>
-        <span class="text-xs text-gray-400" id="perf-date"></span>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-gray-400" id="perf-date"></span>
+          <button onclick="openCalendar()" class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 text-xs font-semibold hover:bg-gray-50 hover:text-gray-900 btn-press transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-rc-green focus-visible:ring-offset-1" title="Open the full pickup calendar">
+            <i class="fas fa-calendar-days mr-1.5"></i>Calendar
+            <i class="fas fa-up-right-and-down-left-from-center ml-1.5 text-[10px] text-gray-400"></i>
+          </button>
+        </div>
       </div>
       <div class="grid grid-cols-4 gap-4 mb-4">
         <div class="text-center">
@@ -186,6 +185,115 @@ export function renderEmployeeDashboard(): string {
       </div>
     </div>
 
+    <!-- Pickup Calendar (expanded from the Today's Performance card) -->
+    <div id="calendar-modal" class="fixed inset-0 bg-black/50 z-50 items-center justify-center p-4" style="display:none;">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col modal-enter">
+        <!-- Header: month navigation -->
+        <div class="p-5 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <button onclick="shiftCalendarMonth(-1)" class="w-9 h-9 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900 btn-press transition-all" title="Previous month">
+              <i class="fas fa-chevron-left"></i>
+            </button>
+            <h3 class="text-lg font-bold text-gray-800 min-w-[190px] text-center" id="calendar-title">Calendar</h3>
+            <button onclick="shiftCalendarMonth(1)" class="w-9 h-9 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900 btn-press transition-all" title="Next month">
+              <i class="fas fa-chevron-right"></i>
+            </button>
+            <button onclick="goToCalendarToday()" class="ml-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 text-sm font-semibold hover:bg-gray-50 hover:text-gray-900 btn-press transition-all">Today</button>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="hidden sm:flex items-center gap-3 text-[11px] text-gray-500">
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>Pending</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>Confirmed</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>Scheduled</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-orange-500"></span>In Progress</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>Done</span>
+            </span>
+            <button onclick="closeCalendar()" class="text-gray-400 hover:text-gray-600 px-2" title="Close"><i class="fas fa-times text-xl"></i></button>
+          </div>
+        </div>
+
+        <!-- Body: month grid + selected-day panel -->
+        <div class="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div class="lg:col-span-2">
+            <div class="grid grid-cols-7 gap-1 mb-1">
+              <div class="text-center text-[11px] font-bold text-gray-400 py-1">SUN</div>
+              <div class="text-center text-[11px] font-bold text-gray-400 py-1">MON</div>
+              <div class="text-center text-[11px] font-bold text-gray-400 py-1">TUE</div>
+              <div class="text-center text-[11px] font-bold text-gray-400 py-1">WED</div>
+              <div class="text-center text-[11px] font-bold text-gray-400 py-1">THU</div>
+              <div class="text-center text-[11px] font-bold text-gray-400 py-1">FRI</div>
+              <div class="text-center text-[11px] font-bold text-gray-400 py-1">SAT</div>
+            </div>
+            <div class="grid grid-cols-7 gap-1" id="calendar-grid"></div>
+          </div>
+
+          <div class="lg:col-span-1">
+            <div class="bg-gray-50 rounded-xl p-4 h-full">
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="font-bold text-gray-800 text-sm" id="calendar-day-title">Pick a day</h4>
+                <button onclick="openScheduleForm()" id="calendar-add-btn" style="display:none;" class="px-3 py-1.5 rounded-lg bg-rc-green hover:bg-rc-green-light text-white text-xs font-bold btn-press transition-all">
+                  <i class="fas fa-plus mr-1"></i>Schedule
+                </button>
+              </div>
+              <div id="calendar-day-list"></div>
+
+              <!-- Inline booking form for the selected day -->
+              <div id="schedule-form" style="display:none;" class="mt-4 pt-4 border-t border-gray-200">
+                <h5 class="font-bold text-gray-800 text-sm mb-3"><i class="fas fa-plus-circle mr-1 text-rc-green"></i>New pickup</h5>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">Customer</label>
+                <select id="sched-customer" class="w-full mb-3 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green outline-none bg-white">
+                  <option value="">Select customer...</option>
+                </select>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                  <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Est. tires</label>
+                    <input type="number" id="sched-tires" min="1" value="20" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green outline-none bg-white">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Type</label>
+                    <select id="sched-type" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green outline-none bg-white">
+                      <option value="mixed">Mixed</option>
+                      <option value="passenger">Passenger</option>
+                      <option value="light_truck">Light truck</option>
+                      <option value="medium_truck">Medium truck</option>
+                      <option value="heavy_truck">Heavy truck</option>
+                      <option value="truck">Truck</option>
+                      <option value="otr">OTR</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                  <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Time</label>
+                    <select id="sched-slot" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green outline-none bg-white">
+                      <option value="anytime">Anytime</option>
+                      <option value="morning">Morning</option>
+                      <option value="afternoon">Afternoon</option>
+                      <option value="evening">Evening</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Driver</label>
+                    <select id="sched-driver" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green outline-none bg-white">
+                      <option value="">Unassigned</option>
+                    </select>
+                  </div>
+                </div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
+                <input type="text" id="sched-notes" placeholder="Optional" class="w-full mb-3 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-rc-green outline-none bg-white">
+                <div class="flex gap-2">
+                  <button onclick="submitScheduledPickup()" id="sched-submit" class="flex-1 bg-rc-green hover:bg-rc-green-light text-white font-bold py-2.5 rounded-lg text-sm btn-press transition-all">
+                    <i class="fas fa-check mr-1"></i>Book pickup
+                  </button>
+                  <button onclick="closeScheduleForm()" class="px-4 py-2.5 bg-white border border-gray-200 text-gray-600 font-semibold rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script>
       let dashboardMap = null;
       let dashboardMapLoaded = false;
@@ -200,7 +308,10 @@ export function renderEmployeeDashboard(): string {
           const s = JSON.parse(localStorage.getItem('rc_session') || '{}');
           const role = s.role || '';
           if (role === 'admin' || role === 'manager') {
-            document.getElementById('quick-actions').style.display = 'flex';
+            var slot = document.getElementById('page-header-actions');
+            if (slot) slot.innerHTML =
+              '<button onclick="openCreateAccountChooser()" class="bg-rc-green hover:opacity-90 text-white font-semibold text-sm py-2 px-4 rounded-lg transition-all shadow-sm flex items-center gap-2 whitespace-nowrap">' +
+              '<i class="fas fa-user-plus"></i> Create Account</button>';
           }
           if (role !== 'admin') {
             const staffLink = document.getElementById('create-account-staff-link');
@@ -535,6 +646,244 @@ export function renderEmployeeDashboard(): string {
         if (typeof axios !== 'undefined') { loadDashboard(); }
         else { setTimeout(initDashboard, 500); }
       })();
+
+      /* ── Pickup calendar ─────────────────────────────────────────────────
+         Expanded from the Today's Performance card. Reads a whole month from
+         /api/pickups/calendar, groups it by preferred_date, and books new
+         pickups through POST /api/pickups. */
+      let calMonth = null;              // Date pinned to the 1st of the shown month
+      let calPickups = {};              // 'YYYY-MM-DD' -> [pickup, ...]
+      let calSelectedDay = null;        // 'YYYY-MM-DD'
+      let calCustomersLoaded = false;
+
+      const calStatusDot = {
+        pending: 'bg-amber-400', confirmed: 'bg-blue-500', scheduled: 'bg-indigo-500',
+        in_progress: 'bg-orange-500', completed: 'bg-green-500', cancelled: 'bg-red-400'
+      };
+      const calStatusChip = {
+        pending: 'bg-amber-50 text-amber-800 border-amber-200',
+        confirmed: 'bg-blue-50 text-blue-800 border-blue-200',
+        scheduled: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+        in_progress: 'bg-orange-50 text-orange-800 border-orange-200',
+        completed: 'bg-green-50 text-green-800 border-green-200',
+        cancelled: 'bg-red-50 text-red-700 border-red-200'
+      };
+
+      function calDateKey(d) {
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return d.getFullYear() + '-' + m + '-' + day;
+      }
+
+      function openCalendar() {
+        const today = new Date();
+        calMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        calSelectedDay = calDateKey(today);
+        document.getElementById('calendar-modal').style.display = 'flex';
+        loadCalendarMonth();
+      }
+
+      function closeCalendar() {
+        document.getElementById('calendar-modal').style.display = 'none';
+        closeScheduleForm();
+      }
+
+      function shiftCalendarMonth(delta) {
+        calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + delta, 1);
+        closeScheduleForm();
+        loadCalendarMonth();
+      }
+
+      function goToCalendarToday() {
+        const today = new Date();
+        calMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        calSelectedDay = calDateKey(today);
+        closeScheduleForm();
+        loadCalendarMonth();
+      }
+
+      async function loadCalendarMonth() {
+        const first = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1);
+        const last = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0);
+        // Pad to whole weeks so the leading/trailing cells show their pickups too.
+        const start = new Date(first); start.setDate(first.getDate() - first.getDay());
+        const end = new Date(last); end.setDate(last.getDate() + (6 - last.getDay()));
+
+        document.getElementById('calendar-title').textContent =
+          calMonth.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+
+        try {
+          const res = await axios.get('/api/pickups/calendar?start=' + calDateKey(start) + '&end=' + calDateKey(end));
+          calPickups = {};
+          (res.data.pickups || []).forEach(p => {
+            if (!p.preferred_date) return;
+            (calPickups[p.preferred_date] = calPickups[p.preferred_date] || []).push(p);
+          });
+        } catch (err) {
+          console.error('Failed to load calendar:', err);
+          calPickups = {};
+        }
+
+        renderCalendarGrid(start, end);
+        renderCalendarDay();
+      }
+
+      function renderCalendarGrid(start, end) {
+        const todayKey = calDateKey(new Date());
+        const cells = [];
+        const cursor = new Date(start);
+
+        while (cursor <= end) {
+          const key = calDateKey(cursor);
+          const inMonth = cursor.getMonth() === calMonth.getMonth();
+          const items = calPickups[key] || [];
+          const isToday = key === todayKey;
+          const isSel = key === calSelectedDay;
+
+          const shell = [
+            'text-left p-2 rounded-lg border transition-all min-h-[92px] flex flex-col',
+            inMonth ? 'bg-white' : 'bg-gray-50/60',
+            isSel ? 'border-rc-green ring-2 ring-rc-green/30' : 'border-gray-100 hover:border-gray-300'
+          ].join(' ');
+          const dayNum = isToday
+            ? '<span class="w-6 h-6 rounded-full bg-rc-green text-white text-xs font-bold flex items-center justify-center">' + cursor.getDate() + '</span>'
+            : '<span class="text-xs font-bold ' + (inMonth ? 'text-gray-700' : 'text-gray-300') + '">' + cursor.getDate() + '</span>';
+
+          const chips = items.slice(0, 3).map(p =>
+            '<div class="flex items-center gap-1 text-[10px] leading-tight truncate">' +
+              '<span class="w-1.5 h-1.5 rounded-full flex-shrink-0 ' + (calStatusDot[p.status] || 'bg-gray-300') + '"></span>' +
+              '<span class="truncate text-gray-600">' + escHtml(p.company_name || 'Unknown') + '</span>' +
+            '</div>'
+          ).join('');
+          const more = items.length > 3
+            ? '<div class="text-[10px] text-gray-400 font-semibold mt-0.5">+' + (items.length - 3) + ' more</div>'
+            : '';
+
+          cells.push(
+            '<button onclick="selectCalendarDay(\\'' + key + '\\')" class="' + shell + '">' +
+              '<div class="flex items-center justify-between mb-1">' + dayNum +
+                (items.length ? '<span class="text-[10px] font-bold text-gray-400">' + items.length + '</span>' : '') +
+              '</div>' +
+              '<div class="space-y-0.5 overflow-hidden">' + chips + more + '</div>' +
+            '</button>'
+          );
+          cursor.setDate(cursor.getDate() + 1);
+        }
+
+        document.getElementById('calendar-grid').innerHTML = cells.join('');
+      }
+
+      function selectCalendarDay(key) {
+        calSelectedDay = key;
+        closeScheduleForm();
+        renderCalendarGrid(
+          (function () { const f = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1); const s = new Date(f); s.setDate(f.getDate() - f.getDay()); return s; })(),
+          (function () { const l = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0); const e = new Date(l); e.setDate(l.getDate() + (6 - l.getDay())); return e; })()
+        );
+        renderCalendarDay();
+      }
+
+      function renderCalendarDay() {
+        const title = document.getElementById('calendar-day-title');
+        const list = document.getElementById('calendar-day-list');
+        const addBtn = document.getElementById('calendar-add-btn');
+
+        if (!calSelectedDay) {
+          title.textContent = 'Pick a day';
+          list.innerHTML = '<p class="text-xs text-gray-400">Select a day to see and book pickups.</p>';
+          addBtn.style.display = 'none';
+          return;
+        }
+
+        const d = new Date(calSelectedDay + 'T12:00:00');
+        title.textContent = d.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
+        addBtn.style.display = '';
+
+        const items = calPickups[calSelectedDay] || [];
+        if (items.length === 0) {
+          list.innerHTML = '<p class="text-xs text-gray-400 py-3">Nothing booked for this day yet.</p>';
+          return;
+        }
+
+        list.innerHTML = items.map(p =>
+          '<a href="/employee/pickups" class="block bg-white rounded-lg border border-gray-100 p-3 mb-2 hover:border-gray-300 transition-all">' +
+            '<div class="flex items-start justify-between gap-2">' +
+              '<div class="min-w-0">' +
+                '<div class="font-semibold text-sm text-gray-800 truncate">' + escHtml(p.company_name || 'Unknown') + '</div>' +
+                '<div class="text-[11px] text-gray-500">' + escHtml(p.city || '') + ' · ' + escHtml(String(p.estimated_tire_count || '-')) + ' tires · ' + escHtml((p.preferred_time_slot || 'anytime')) + '</div>' +
+                (p.assigned_employee_name ? '<div class="text-[11px] text-gray-400 mt-0.5"><i class="fas fa-user mr-1"></i>' + escHtml(p.assigned_employee_name) + '</div>' : '') +
+              '</div>' +
+              '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold border flex-shrink-0 ' + (calStatusChip[p.status] || 'bg-gray-50 text-gray-600 border-gray-200') + '">' +
+                escHtml((p.status || '').replace('_', ' ').toUpperCase()) +
+              '</span>' +
+            '</div>' +
+          '</a>'
+        ).join('');
+      }
+
+      async function openScheduleForm() {
+        document.getElementById('schedule-form').style.display = '';
+        if (calCustomersLoaded) return;
+        try {
+          const [cust, drv] = await Promise.all([
+            axios.get('/api/employee/customers'),
+            axios.get('/api/employee/drivers')
+          ]);
+          document.getElementById('sched-customer').innerHTML = '<option value="">Select customer...</option>' +
+            (cust.data.customers || []).map(c =>
+              '<option value="' + c.id + '">' + escHtml(c.company_name) + (c.city ? ' — ' + escHtml(c.city) : '') + '</option>'
+            ).join('');
+          document.getElementById('sched-driver').innerHTML = '<option value="">Unassigned</option>' +
+            (drv.data.drivers || []).map(d =>
+              '<option value="' + d.id + '">' + escHtml(d.first_name + ' ' + d.last_name) + '</option>'
+            ).join('');
+          calCustomersLoaded = true;
+        } catch (err) {
+          console.error('Failed to load customers/drivers:', err);
+        }
+      }
+
+      function closeScheduleForm() {
+        const form = document.getElementById('schedule-form');
+        if (form) form.style.display = 'none';
+      }
+
+      async function submitScheduledPickup() {
+        const customerId = document.getElementById('sched-customer').value;
+        if (!customerId) { alert('Please pick a customer'); return; }
+        if (!calSelectedDay) { alert('Please pick a day first'); return; }
+
+        const btn = document.getElementById('sched-submit');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Booking...';
+        try {
+          await axios.post('/api/pickups', {
+            customer_id: parseInt(customerId, 10),
+            estimated_tire_count: parseInt(document.getElementById('sched-tires').value, 10),
+            tire_type: document.getElementById('sched-type').value,
+            preferred_date: calSelectedDay,
+            preferred_time_slot: document.getElementById('sched-slot').value,
+            notes: document.getElementById('sched-notes').value || null,
+            employee_id: document.getElementById('sched-driver').value ? parseInt(document.getElementById('sched-driver').value, 10) : null
+          });
+          document.getElementById('sched-notes').value = '';
+          closeScheduleForm();
+          await loadCalendarMonth();
+          if (typeof loadDashboard === 'function') loadDashboard();
+        } catch (err) {
+          alert((err.response && err.response.data && err.response.data.error) || 'Failed to book pickup');
+        }
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-check mr-1"></i>Book pickup';
+      }
+
+      // Esc closes the calendar, matching the other modals on this page.
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const modal = document.getElementById('calendar-modal');
+        if (modal && modal.style.display === 'flex') closeCalendar();
+      });
+
     </script>
   `))
 }

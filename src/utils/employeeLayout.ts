@@ -195,6 +195,8 @@ export function employeePageWrapper(activePage: string, pageTitle: string, conte
       <div class="flex items-center justify-between">
         <h1 class="text-xl font-semibold tracking-tight text-gray-900">${pageTitle}</h1>
         <div class="flex items-center gap-4">
+          <!-- Per-page header actions. Pages fill this in; it stays empty otherwise. -->
+          <div id="page-header-actions" class="flex items-center gap-2"></div>
           <span class="text-sm text-gray-500" id="current-datetime"></span>
           <div class="w-2 h-2 bg-green-400 rounded-full pulse-green" title="Connected"></div>
         </div>
