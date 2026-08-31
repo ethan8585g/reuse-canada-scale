@@ -90,10 +90,19 @@ scaleTicketRoutes.get('/', async (c) => {
     const dateTo = c.req.query('date_to')
     const search = c.req.query('search')
 
-    let sql = `SELECT st.*, c.company_name, e.first_name || ' ' || e.last_name as employee_name
+    let sql = `SELECT st.*, c.company_name, e.first_name || ' ' || e.last_name as employee_name,
+                      dr.first_name || ' ' || dr.last_name as driver_name, dr.phone as driver_phone
                FROM scale_tickets st
                LEFT JOIN customers c ON st.customer_id = c.id
                LEFT JOIN employees e ON st.employee_id = e.id
+               -- Driver = whoever actually drove the truck. Resolved from the
+               -- route the ticket's stop belongs to, else from the pickup
+               -- request's assigned driver. NULL for walk-ins, which have
+               -- neither -- st.employee_id is the scale operator, not a driver.
+               LEFT JOIN route_stops rs ON st.route_stop_id = rs.id
+               LEFT JOIN routes r ON rs.route_id = r.id
+               LEFT JOIN pickup_requests pr ON st.pickup_request_id = pr.id
+               LEFT JOIN employees dr ON dr.id = COALESCE(r.assigned_employee_id, pr.assigned_employee_id)
                WHERE 1=1`
     const params: any[] = []
 
@@ -138,10 +147,15 @@ scaleTicketRoutes.get('/:id', async (c) => {
   try {
     const ticket = await c.env.DB.prepare(
       `SELECT st.*, c.company_name, c.contact_name, c.address, c.city,
-              e.first_name || ' ' || e.last_name as employee_name
+              e.first_name || ' ' || e.last_name as employee_name,
+              dr.first_name || ' ' || dr.last_name as driver_name, dr.phone as driver_phone
        FROM scale_tickets st
        LEFT JOIN customers c ON st.customer_id = c.id
        LEFT JOIN employees e ON st.employee_id = e.id
+       LEFT JOIN route_stops rs ON st.route_stop_id = rs.id
+       LEFT JOIN routes r ON rs.route_id = r.id
+       LEFT JOIN pickup_requests pr ON st.pickup_request_id = pr.id
+       LEFT JOIN employees dr ON dr.id = COALESCE(r.assigned_employee_id, pr.assigned_employee_id)
        WHERE st.id = ?`
     ).bind(id).first()
 

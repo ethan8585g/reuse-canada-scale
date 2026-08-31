@@ -39,6 +39,7 @@ export function renderScaleTickets(): string {
               <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Ticket #</th>
               <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Customer</th>
               <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Operator</th>
+              <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Driver</th>
               <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Status</th>
               <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Weight In</th>
               <th class="px-4 py-3.5 text-left text-xs font-semibold text-gray-500 tracking-wide">Weight Out</th>
@@ -49,7 +50,7 @@ export function renderScaleTickets(): string {
             </tr>
           </thead>
           <tbody id="tickets-tbody">
-            <tr><td colspan="10" class="px-6 py-8 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</td></tr>
+            <tr><td colspan="11" class="px-6 py-8 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -200,7 +201,7 @@ export function renderScaleTickets(): string {
           const tbody = document.getElementById('tickets-tbody');
 
           if (tickets.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="px-6 py-8 text-center text-gray-400">No scale tickets found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="px-6 py-8 text-center text-gray-400">No scale tickets found</td></tr>';
             return;
           }
 
@@ -214,6 +215,7 @@ export function renderScaleTickets(): string {
               <td class="px-4 py-3 text-sm font-mono font-bold text-rc-green">\${escHtml(t.ticket_number)}\${photoIcon}\${receiptIcon}\${manualIcon}</td>
               <td class="px-4 py-3 text-sm text-gray-800">\${escHtml(t.company_name || t.field_store_name || 'N/A')}</td>
               <td class="px-4 py-3 text-sm text-gray-600">\${escHtml(t.employee_name || 'N/A')}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">\${t.driver_name ? escHtml(t.driver_name) + (t.driver_phone ? '<div><a href="tel:' + escAttr(t.driver_phone) + '" class="text-xs text-rc-green hover:underline" onclick="event.stopPropagation()">' + escHtml(t.driver_phone) + '</a></div>' : '') : '<span class="text-gray-300">-</span>'}</td>
               <td class="px-4 py-3">
                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${ticketStatusColors[t.status] || 'bg-gray-100'}" \${voidInfo}>
                   \${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}
@@ -430,6 +432,8 @@ export function renderScaleTickets(): string {
                   <div class="flex justify-between"><span class="text-gray-500">Status</span><span class="px-2 py-0.5 rounded-full text-xs font-semibold \${ticketStatusColors[t.status]}">\${escHtml((t.status || '').replace(/_/g,' ').toUpperCase())}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Customer</span><span class="font-semibold">\${escHtml(t.company_name || 'N/A')}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Operator</span><span>\${escHtml(t.employee_name || 'N/A')}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Driver</span><span>\${escHtml(t.driver_name || 'Not on a route')}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-500">Driver Phone</span><span>\${t.driver_phone ? '<a href="tel:' + escAttr(t.driver_phone) + '" class="text-rc-green font-semibold hover:underline">' + escHtml(t.driver_phone) + '</a>' : 'N/A'}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Material</span><span class="capitalize">\${escHtml((t.tire_type || 'N/A').replace('_',' '))}</span></div>
                   <div class="flex justify-between"><span class="text-gray-500">Created</span><span>\${new Date(t.created_at).toLocaleString('en-CA')}</span></div>
                   \${t.vehicle_tare_used ? '<div class="flex justify-between"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>' : ''}
