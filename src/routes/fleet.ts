@@ -108,7 +108,7 @@ fleetRoutes.get('/vehicles', async (c) => {
 const VEHICLE_FIELDS = [
   'name', 'plate_number', 'vehicle_type', 'model', 'vin', 'icon', 'photo',
   'tare_weight', 'odometer', 'is_hours', 'insurance_expiry', 'registration_expiry',
-  'cvip_expiry', 'service_interval', 'service_last', 'tire_interval', 'tire_last',
+  'cvip_expiry', 'service_interval', 'service_last', 'tire_interval', 'tire_last', 'specs',
 ]
 
 fleetRoutes.post('/vehicles', roleRequired('admin', 'manager'), async (c) => {
@@ -349,5 +349,273 @@ fleetRoutes.get('/costs', async (c) => {
     return c.json({ costs: results })
   } catch (err: any) {
     console.error('fleet costs error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// ── Inspections ──────────────────────────────────────────────────────────
+fleetRoutes.get('/inspections', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT i.*, v.name as vehicle_name,
+              e.first_name || ' ' || e.last_name as driver_name
+       FROM inspections i
+       LEFT JOIN vehicles v ON i.vehicle_id = v.id
+       LEFT JOIN employees e ON i.employee_id = e.id
+       ORDER BY i.submitted_at DESC LIMIT 100`
+    ).all()
+    return c.json({
+      inspections: (results as any[]).map(i => {
+        let items: any[] = []
+        try { items = i.items ? JSON.parse(i.items) : [] } catch (e) { items = [] }
+        return { ...i, items }
+      })
+    })
+  } catch (err: any) {
+    console.error('fleet inspections error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.post('/inspections', async (c) => {
+  try {
+    const b = await c.req.json()
+    if (!b.vehicle_id) return c.json({ error: 'Vehicle is required' }, 400)
+    const items = Array.isArray(b.items) ? b.items : []
+    const failed = items.filter((i: any) => !i.ok)
+    const result = failed.length ? 'defect' : 'pass'
+    const res = await c.env.DB.prepare(
+      `INSERT INTO inspections (vehicle_id, employee_id, submitted_at, result, items, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(b.vehicle_id, c.get('userId'), b.submitted_at || new Date().toISOString(),
+           result, JSON.stringify(items), b.notes || null).run()
+    // A failed pre-trip is worthless if it does not become work. Open the
+    // repair immediately and link it back to the inspection.
+    if (failed.length) {
+      const wo = await c.env.DB.prepare(
+        `INSERT INTO work_orders (vehicle_id, title, work_type, status, notes, created_by)
+         VALUES (?, ?, 'repair', 'open', ?, ?)`
+      ).bind(b.vehicle_id, 'Pre-trip defect: ' + failed.map((f: any) => f.label).join(', '),
+             b.notes || null, c.get('userId')).run()
+      await c.env.DB.prepare('UPDATE inspections SET work_order_id = ? WHERE id = ?')
+        .bind(wo.meta.last_row_id, res.meta.last_row_id).run()
+    }
+    return c.json({ id: res.meta.last_row_id, result })
+  } catch (err: any) {
+    console.error('fleet inspection create error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// ── Attachments ──────────────────────────────────────────────────────────
+// D1 is not a blob store: a row cap keeps one oversized upload from wedging
+// the whole database. Bigger files belong in R2, which this project has not
+// wired up yet.
+const MAX_FILE_BYTES = 700_000
+
+fleetRoutes.get('/files/:vehicleId', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT id, vehicle_id, name, mime, size, created_at FROM vehicle_files WHERE vehicle_id = ? ORDER BY created_at DESC'
+    ).bind(c.req.param('vehicleId')).all()
+    return c.json({ files: results })
+  } catch (err: any) {
+    console.error('fleet files error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.get('/files/:vehicleId/:id', async (c) => {
+  try {
+    const row = await c.env.DB.prepare('SELECT * FROM vehicle_files WHERE id = ? AND vehicle_id = ?')
+      .bind(c.req.param('id'), c.req.param('vehicleId')).first()
+    if (!row) return c.json({ error: 'Not found' }, 404)
+    return c.json({ file: row })
+  } catch (err: any) {
+    console.error('fleet file error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.post('/files', async (c) => {
+  try {
+    const b = await c.req.json()
+    if (!b.vehicle_id || !b.name) return c.json({ error: 'Vehicle and file name are required' }, 400)
+    const size = Number(b.size) || (b.data ? b.data.length : 0)
+    if (size > MAX_FILE_BYTES) {
+      return c.json({ error: 'File is too large (max ~500 KB). Compress it or photograph the page instead.' }, 400)
+    }
+    await c.env.DB.prepare(
+      'INSERT INTO vehicle_files (vehicle_id, employee_id, name, mime, size, data) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(b.vehicle_id, c.get('userId'), String(b.name).slice(0, 200), b.mime || null, size, b.data || null).run()
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('fleet file create error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.delete('/files/:id', async (c) => {
+  try {
+    await c.env.DB.prepare('DELETE FROM vehicle_files WHERE id = ?').bind(c.req.param('id')).run()
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('fleet file delete error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.delete('/notes/:id', async (c) => {
+  try {
+    await c.env.DB.prepare('DELETE FROM vehicle_notes WHERE id = ?').bind(c.req.param('id')).run()
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('fleet note delete error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// ── Parts catalogue ──────────────────────────────────────────────────────
+fleetRoutes.get('/parts', async (c) => {
+  try {
+    const q = (c.req.query('q') || '').trim()
+    let rows
+    if (q) {
+      const like = '%' + q + '%'
+      rows = await c.env.DB.prepare(
+        'SELECT * FROM parts WHERE name LIKE ? OR oem LIKE ? OR cross_ref LIKE ? OR tags LIKE ? ORDER BY name LIMIT 50'
+      ).bind(like, like, like, like).all()
+    } else {
+      rows = await c.env.DB.prepare('SELECT * FROM parts ORDER BY name LIMIT 50').all()
+    }
+    return c.json({
+      parts: (rows.results as any[]).map(p => ({ ...p, cross: (p.cross_ref || '').split(',').filter(Boolean) }))
+    })
+  } catch (err: any) {
+    console.error('fleet parts error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.post('/parts', roleRequired('admin', 'manager'), async (c) => {
+  try {
+    const b = await c.req.json()
+    if (!b.name) return c.json({ error: 'Name is required' }, 400)
+    await c.env.DB.prepare(
+      'INSERT INTO parts (name, oem, cross_ref, fits, price, tags) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(b.name, b.oem || null, b.cross_ref || null, b.fits || null, b.price ?? null, b.tags || null).run()
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('fleet part create error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// ── Compliance reminder channels ─────────────────────────────────────────
+fleetRoutes.put('/compliance/:id', roleRequired('admin', 'manager'), async (c) => {
+  try {
+    const b = await c.req.json()
+    const fields = ['kind', 'provider', 'doc_number', 'expires_on', 'annual_cost', 'notes', 'remind_email', 'remind_sms', 'remind_driver']
+    const cols = fields.filter(f => b[f] !== undefined)
+    if (!cols.length) return c.json({ error: 'Nothing to update' }, 400)
+    await c.env.DB.prepare(
+      `UPDATE compliance_docs SET ${cols.map(f => f + ' = ?').join(', ')} WHERE id = ?`
+    ).bind(...cols.map(f => b[f] ?? null), c.req.param('id')).run()
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('fleet compliance update error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// ── IFTA ─────────────────────────────────────────────────────────────────
+// Rates are the per-litre tax by jurisdiction. They change; they live here so
+// there is one place to correct them rather than a number baked into the page.
+const IFTA_RATES: Record<string, { name: string, rate: number }> = {
+  AB: { name: 'Alberta', rate: 0.13 },
+  BC: { name: 'British Columbia', rate: 0.2267 },
+  SK: { name: 'Saskatchewan', rate: 0.15 },
+  MB: { name: 'Manitoba', rate: 0.14 },
+  ON: { name: 'Ontario', rate: 0.143 },
+}
+
+fleetRoutes.get('/ifta', async (c) => {
+  try {
+    const quarter = c.req.query('quarter') || 'Q3'
+    const year = c.req.query('year') || String(new Date().getFullYear())
+    const span: Record<string, string[]> = {
+      Q1: ['-01-01', '-03-31'], Q2: ['-04-01', '-06-30'],
+      Q3: ['-07-01', '-09-30'], Q4: ['-10-01', '-12-31'],
+    }
+    const [from, to] = span[quarter] || span.Q3
+    const { results } = await c.env.DB.prepare(
+      `SELECT province, SUM(litres) as litres, SUM(distance_km) as km, COUNT(*) as fills
+       FROM fuel_logs
+       WHERE DATE(filled_at) >= ? AND DATE(filled_at) <= ?
+       GROUP BY province`
+    ).bind(year + from, year + to).all()
+
+    const rows = (results as any[])
+      .filter(r => r.province)
+      .map(r => {
+        const meta = IFTA_RATES[r.province] || { name: r.province, rate: 0 }
+        const litres = Number(r.litres) || 0
+        const km = Number(r.km) || 0
+        return {
+          code: r.province, province: meta.name, litres, km,
+          economy: km > 0 ? (litres / km) * 100 : 0,
+          tax: litres * meta.rate,
+        }
+      })
+    const unattributed = (results as any[]).filter(r => !r.province)
+      .reduce((n, r) => n + (Number(r.fills) || 0), 0)
+    return c.json({
+      quarter, year, rows, unattributed,
+      totals: {
+        litres: rows.reduce((a, r) => a + r.litres, 0),
+        km: rows.reduce((a, r) => a + r.km, 0),
+        tax: rows.reduce((a, r) => a + r.tax, 0),
+      },
+      deadline: { Q1: 'Apr 30', Q2: 'Jul 31', Q3: 'Oct 31', Q4: 'Jan 31' }[quarter] || '',
+    })
+  } catch (err: any) {
+    console.error('fleet ifta error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// ── Per-vehicle maintenance report ───────────────────────────────────────
+fleetRoutes.get('/report/:vehicleId', async (c) => {
+  try {
+    const id = c.req.param('vehicleId')
+    const range = c.req.query('range') || 'ytd'
+    const today = todayEdmonton()
+    const days: Record<string, number> = { '30': 30, '90': 90, ytd: 400, life: 99999 }
+    const since = new Date(Date.parse(today + 'T00:00:00Z') - (days[range] ?? 400) * 86400000)
+      .toISOString().slice(0, 10)
+
+    const [vehicle, log, docs, fuel] = await Promise.all([
+      c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ?').bind(id).first(),
+      c.env.DB.prepare(
+        `SELECT * FROM work_orders WHERE vehicle_id = ? AND status = 'completed'
+           AND COALESCE(completed_date, DATE(created_at)) >= ?
+         ORDER BY COALESCE(completed_date, DATE(created_at)) DESC`
+      ).bind(id, since).all(),
+      c.env.DB.prepare('SELECT * FROM compliance_docs WHERE vehicle_id = ? ORDER BY expires_on').bind(id).all(),
+      c.env.DB.prepare(
+        'SELECT SUM(total) as spend, SUM(litres) as litres FROM fuel_logs WHERE vehicle_id = ? AND DATE(filled_at) >= ?'
+      ).bind(id, since).first(),
+    ])
+    if (!vehicle) return c.json({ error: 'Vehicle not found' }, 404)
+
+    const openRepairs = await c.env.DB.prepare(
+      "SELECT COUNT(*) as n FROM work_orders WHERE vehicle_id = ? AND status != 'completed' AND work_type = 'repair'"
+    ).bind(id).first<{ n: number }>()
+
+    let specs: any = null
+    try { specs = (vehicle as any).specs ? JSON.parse((vehicle as any).specs) : null } catch (e) { specs = null }
+
+    return c.json({
+      vehicle: decorate(vehicle, openRepairs?.n || 0, today),
+      specs,
+      log: log.results,
+      compliance: (docs.results as any[]).map(d => ({ ...d, days: daysUntil(d.expires_on, today) })),
+      spend: {
+        service: (log.results as any[]).reduce((a, w) => a + (Number(w.cost) || 0), 0),
+        fuel: Number((fuel as any)?.spend) || 0,
+        litres: Number((fuel as any)?.litres) || 0,
+      },
+      range, since, generated: new Date().toISOString(),
+    })
+  } catch (err: any) {
+    console.error('fleet report error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
