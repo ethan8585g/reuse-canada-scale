@@ -7,27 +7,24 @@
 - **Version**: v3.1
 
 ## Live URLs
-- **GitHub**: https://github.com/ethan8585g/Reuse-Canada-CRM-v3
+- **GitHub**: https://github.com/ethan8585g/reuse-canada-scale
 
 ## Login Credentials
 
-### Customer Portal (default login screen)
-| Username | Password | Company |
-|----------|----------|---------|
-| KALTIRE | TIRES! | Kal Tire - Edmonton South |
-| GOINGTIRE | Tires2024! | Going Tire - Spruce Grove |
+Accounts are **not** listed here. This section used to contain a table of live
+usernames and passwords for production; anyone with read access to the repo had
+admin on www.reusecanadascale.com, and the values stayed in git history.
 
-### Employee Portal (click "Employee Login" toggle at bottom)
-| Email | Password | Role | Portal |
-|-------|----------|------|--------|
-| Ethan@reuse-canada.ca | Tires123! | Admin | Employee Dashboard |
-| admin@reusecanada.ca | admin123 | Admin | Employee Dashboard |
-| mike@reusecanada.ca | driver123 | Driver | **Driver Portal** |
-| sarah@reusecanada.ca | driver123 | Driver | **Driver Portal** |
-| james@reusecanada.ca | yard123 | Yard Operator | Employee Dashboard |
-| dave@reusecanada.ca | driver123 | Driver | **Driver Portal** |
-
-> **Note**: Drivers are automatically redirected to `/driver/portal` on login. Admins/managers/yard operators go to `/employee/dashboard`.
+- Passwords are stored as PBKDF2-SHA256 (`src/utils/passwords.ts`) and cannot be
+  read back. To get into an account you do not have, reset it.
+- Admins create and reset accounts in the app: **Drivers & Staff** for employees,
+  **Customers** for customer logins.
+- To reset a password directly, generate a hash in the same format and
+  `UPDATE ... SET password_hash = ...`; never write a plaintext value into that
+  column, because `verifyPassword()` accepts one as a legacy value and it will
+  sit readable in the database until someone logs in.
+- `seed.sql` is **local development only** and must never be applied to
+  reuse-canada-production.
 
 ## Completed Features
 
@@ -295,7 +292,7 @@ SQUARE_ACCESS_TOKEN=<configured>
 
 ## Deployment
 - **Platform**: Cloudflare Pages (Workers + D1)
-- **GitHub**: https://github.com/ethan8585g/Reuse-Canada-CRM-v3
+- **GitHub**: https://github.com/ethan8585g/reuse-canada-scale
 - **Status**: Running in sandbox (Cloudflare deployment pending API key update)
 - **Last Updated**: 2026-03-24
 
