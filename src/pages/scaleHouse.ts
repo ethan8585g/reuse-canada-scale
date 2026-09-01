@@ -235,6 +235,17 @@ export function renderScaleHouse(): string {
     <button onclick="dismissFraudAlert()" class="text-red-400 hover:text-red-600"><i class="fas fa-times"></i></button>
   </div>
 
+  <!-- ═══════ PRINT FAILURE CARD ═══════ -->
+  <div id="print-failed-card" class="hidden mb-4 bg-red-50 border-2 border-red-300 rounded-xl p-4 flex items-center gap-3">
+    <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-print text-red-500 text-xl"></i></div>
+    <div class="flex-1 min-w-0">
+      <div class="text-sm font-bold text-red-700">Receipt did not print</div>
+      <div id="print-failed-msg" class="text-xs text-red-600 truncate"></div>
+    </div>
+    <button onclick="retryFailedPrint()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg btn-press flex-shrink-0"><i class="fas fa-redo mr-1"></i> Reprint</button>
+    <button onclick="dismissPrintFailure()" class="text-red-400 hover:text-red-600 flex-shrink-0"><i class="fas fa-times"></i></button>
+  </div>
+
   <!-- ═══════ PRINT TRIGGER CARD ═══════ -->
   <div id="print-trigger-card" class="hidden mb-4 bg-gradient-to-r from-orange-500 to-yellow-500 text-white rounded-xl shadow-xl ring-1 ring-orange-400/20 p-5">
     <div class="flex items-center justify-between flex-wrap gap-4">
@@ -441,7 +452,10 @@ export function renderScaleHouse(): string {
             <span class="text-[10px] text-gray-500">Browser print &middot; uses macOS default</span>
           </div>
           <p class="text-[10px] text-gray-500 leading-snug">Set your Epson TM-T88VI (USB) as the default printer in System Settings &rarr; Printers, then auto-print fires the OS print dialog after each weigh-out.</p>
-          <button onclick="printTestReceipt()" class="w-full px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-vial mr-1"></i> Test Print</button>
+          <div class="grid grid-cols-2 gap-1">
+            <button onclick="printTestReceipt()" class="px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-vial mr-1"></i> Test Print</button>
+            <button onclick="reprintLastReceipt()" class="px-2 py-1.5 bg-gray-100 text-gray-700 text-[10px] font-semibold rounded-lg hover:bg-gray-200 border border-gray-200"><i class="fas fa-redo mr-1"></i> Reprint last</button>
+          </div>
           <label class="flex items-center gap-1.5 text-[10px] text-gray-600">
             <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out
           </label>
@@ -1767,13 +1781,62 @@ export function renderScaleHouse(): string {
   async function printReceiptToThermal(receipt) {
     browserPrintReceipt(receipt);
   }
+  // Returns true only if the receipt actually reached the printer.
+  //
+  // This used to swallow every error, which meant a truck could leave the yard
+  // with no paper and nothing anywhere would say why. A receipt that fails to
+  // print is not a cosmetic problem -- it is the customer's copy of a weighed
+  // transaction -- so every failure is now logged and put on screen.
   async function autoPrintReceipt(ticketId) {
-    if (!document.getElementById('auto-print-receipt').checked) return;
+    const cb = document.getElementById('auto-print-receipt');
+    if (cb && !cb.checked) {
+      agentLog('auto-print is switched OFF — no receipt printed');
+      return false;
+    }
     try {
       const res = await axios.get('/api/scale-tickets/' + ticketId + '/receipt');
+      const t0 = Date.now();
       browserPrintReceipt(res.data.receipt);
-      await axios.post('/api/scale-tickets/' + ticketId + '/receipt-printed');
-    } catch(e) { /* never block the completion path on a failed print */ }
+      const ms = Date.now() - t0;
+      lastPrintedTicketId = ticketId;
+      // window.print() blocks until the print dialog is dismissed. Returning
+      // almost instantly means Chrome printed silently (--kiosk-printing);
+      // a long block means a dialog was shown and somebody clicked it. That
+      // single number tells us which mode the station is really running in.
+      agentLog('receipt sent to printer — ' + ms + 'ms (' + (ms < 250 ? 'silent' : 'print dialog was shown') + ')');
+      try { await axios.post('/api/scale-tickets/' + ticketId + '/receipt-printed'); } catch (e) { /* bookkeeping only */ }
+      return true;
+    } catch(e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message || 'unknown error';
+      agentLog('PRINT FAILED: ' + msg);
+      try { logSerial('⚠ Receipt print failed: ' + msg); } catch (ignore) {}
+      showPrintFailure(ticketId, msg);
+      return false;
+    }
+  }
+
+  // Visible, dismissable banner + one-tap reprint. A silent failure is the
+  // one outcome this whole loop cannot afford.
+  function showPrintFailure(ticketId, msg) {
+    const el = document.getElementById('print-failed-card');
+    if (!el) { alert('Receipt did not print: ' + msg); return; }
+    document.getElementById('print-failed-msg').textContent = msg;
+    el.dataset.ticketId = ticketId;
+    el.classList.remove('hidden');
+  }
+  function dismissPrintFailure() { document.getElementById('print-failed-card').classList.add('hidden'); }
+  async function retryFailedPrint() {
+    const el = document.getElementById('print-failed-card');
+    const id = el && el.dataset.ticketId;
+    if (!id) return;
+    dismissPrintFailure();
+    await autoPrintReceipt(id);
+  }
+  // Reprint whatever came off the scale last, without hunting for it in
+  // Ticket History.
+  async function reprintLastReceipt() {
+    if (!lastPrintedTicketId) { alert('Nothing has been printed from this station yet.'); return; }
+    await autoPrintReceipt(lastPrintedTicketId);
   }
   // Sample print to verify the Epson is set up correctly without burning a
   // real ticket number. Mirrors the live receipt layout exactly.
@@ -2051,6 +2114,7 @@ export function renderScaleHouse(): string {
   // The ticket the agent most recently opened, kept only so the sidebar can
   // show what is in the yard. Attribution waits for weigh-out.
   let agentPendingAssign = null;
+  let lastPrintedTicketId = null;
   const AGENT_CLEAR_HOLD_MS = 5000;
   const AGENT_SETTLE_BAND_KG = 20;
 
@@ -2357,7 +2421,12 @@ export function renderScaleHouse(): string {
         });
         agentLog('closed ' + d.ticket.ticket_number + ' net ' + (d.preview ? Number(d.preview.net_weight).toFixed(1) : '?') + ' kg');
         await agentReport(d.decision_id, 'acted', d.ticket.id);
-        autoPrintReceipt(d.ticket.id);
+        // AWAIT the print, and do it before anything else touches the DOM.
+        // This was fire-and-forget, so window.print() fired from a
+        // continuation while loadTicketDetail() was mid-render and -- in
+        // on_close mode -- after the assign modal had already opened on top
+        // of it. Printing now finishes before the screen changes underneath.
+        await autoPrintReceipt(d.ticket.id);
         loadTicketDetail(d.ticket.id);
         loadOpenTickets(); loadCompletedToday(); loadStats();
         agentPendingAssign = null;
