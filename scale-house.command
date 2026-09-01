@@ -1,55 +1,89 @@
 #!/bin/bash
 # ============================================================
-# Reuse Canada — Scale House kiosk launcher
+# Reuse Canada — Scale House launcher (silent receipt printing)
 # ============================================================
-# Double-click this file on the scale-house Mac.
+# Double-click this file. It restarts Chrome with --kiosk-printing so
+# window.print() goes STRAIGHT to the default printer with no dialog.
 #
 # WHY THIS EXISTS
-# The Epson TM-T88VI is a USB printer owned by macOS CUPS. A browser cannot
-# talk to it directly, so receipts are printed with window.print() -- which
-# normally opens the macOS print dialog and waits for someone to press Enter.
-# That is fine for a human operator but breaks a closed-loop agent.
+# The receipt is printed by the browser. In ordinary Chrome, window.print()
+# always opens the macOS print preview and waits for a click -- no JavaScript
+# can suppress that. --kiosk-printing is the only switch that removes it, and
+# it can only be set when Chrome COLD STARTS.
 #
-# Chrome's --kiosk-printing flag makes window.print() go straight to the
-# system DEFAULT printer with no dialog at all. That is the only way to get
-# genuinely hands-off receipts out of a USB thermal printer on macOS.
+# TWO TRAPS THIS SCRIPT HANDLES FOR YOU
+#   1. Chrome ignores startup flags if it is already running -- a new window
+#      just joins the existing process. So it must be fully quit first.
+#   2. It runs on your NORMAL profile on purpose. A separate profile would
+#      cost you your CRM login and, more painfully, your Web Bluetooth
+#      pairing with the scale -- those permissions are per-profile.
 #
 # BEFORE FIRST USE
-#   System Settings -> Printers & Scanners -> set the Epson TM-T88VI
-#   as the Default printer. Kiosk printing always uses the default.
+#   System Settings -> Printers & Scanners -> set the receipt printer as
+#   Default. Kiosk printing always uses the system default printer.
 #
-# NOTES
-#   * A separate --user-data-dir keeps this away from your everyday Chrome
-#     profile, so your normal browsing, extensions and logins are untouched.
-#     It also means you log into the CRM once in this profile and it sticks.
-#   * Quit with Cmd-Q. Kiosk mode hides the usual window chrome.
+# VERIFY IT WORKED
+#   Press "Test Print" in the sidebar, then read the Scale Agent log:
+#     "receipt sent to printer — 40ms (silent)"          <- working
+#     "receipt sent to printer — 6200ms (print dialog…)" <- not working
+#
+# Pass --fullscreen for a dedicated kiosk station.
 
-set -euo pipefail
+set -uo pipefail
 
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 URL="https://www.reusecanadascale.com/employee/scale-house?kiosk=1"
-PROFILE="$HOME/.reuse-scale-chrome"
 
 if [ ! -x "$CHROME" ]; then
   echo "Google Chrome was not found at:"
   echo "  $CHROME"
   echo
-  echo "Install Chrome, or edit the CHROME= line in this file to point at it."
-  echo "Kiosk printing is a Chrome feature -- Safari has no equivalent."
+  echo "Kiosk printing is a Chrome feature. Safari has no equivalent, and the"
+  echo "scale needs Web Bluetooth, which Safari also lacks."
   read -r -p "Press Return to close."
   exit 1
 fi
 
-mkdir -p "$PROFILE"
+EXTRA=""
+if [ "${1:-}" = "--fullscreen" ]; then EXTRA="--kiosk"; fi
 
-echo "Starting the scale house in kiosk mode."
-echo "Receipts will print straight to the macOS default printer."
-echo "Quit with Cmd-Q."
+if pgrep -x "Google Chrome" > /dev/null; then
+  echo "Chrome is already running."
+  echo
+  echo "Startup flags only apply to a COLD start -- relaunching now would just"
+  echo "open a window inside the running process and silently ignore"
+  echo "--kiosk-printing. Chrome has to be fully quit first."
+  echo
+  read -r -p "Quit Chrome and reopen the scale house? [y/N] " ans
+  case "$ans" in
+    [Yy]*)
+      osascript -e 'quit app "Google Chrome"' >/dev/null 2>&1
+      for _ in $(seq 1 20); do
+        pgrep -x "Google Chrome" >/dev/null || break
+        sleep 0.5
+      done
+      if pgrep -x "Google Chrome" >/dev/null; then
+        echo
+        echo "Chrome did not quit -- something may be holding it (an unsaved tab?)."
+        echo "Quit it by hand with Cmd-Q, then run this again."
+        read -r -p "Press Return to close."
+        exit 1
+      fi
+      sleep 1
+      ;;
+    *)
+      echo "Cancelled. Nothing changed."
+      exit 0
+      ;;
+  esac
+fi
 
-exec "$CHROME" \
-  --kiosk \
-  --kiosk-printing \
-  --user-data-dir="$PROFILE" \
-  --no-first-run \
-  --no-default-browser-check \
-  "$URL"
+echo "Starting the scale house with silent printing."
+echo "Receipts go straight to the macOS default printer, no dialog."
+echo
+echo "Note: this applies to ALL Chrome windows until you next restart Chrome"
+echo "normally. Anything you print from any tab will skip the dialog."
+
+# No --user-data-dir on purpose: the normal profile keeps the CRM login and
+# the Web Bluetooth pairing with the scale.
+exec "$CHROME" --kiosk-printing $EXTRA "$URL" >/dev/null 2>&1 &
