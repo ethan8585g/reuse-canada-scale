@@ -257,6 +257,35 @@ export function renderScaleHouse(): string {
     </div>
   </div>
 
+  <!-- ═══════ SCALE AGENT CANCEL BANNER ═══════ -->
+  <!-- Inline display:none rather than Tailwind "hidden": on the CDN build the
+       hidden and flex utilities collide and source order makes flex win. -->
+  <div id="agent-banner" style="display:none;" class="fixed inset-0 z-[70] items-center justify-center bg-gray-900/80 backdrop-blur-sm p-4">
+    <div class="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden">
+      <div id="agent-banner-head" class="px-6 py-4 flex items-center gap-3 bg-rc-green text-white">
+        <div class="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-xl"></i></div>
+        <div class="flex-1 min-w-0">
+          <div class="text-[11px] font-semibold uppercase tracking-wider opacity-80">Scale Agent</div>
+          <div id="agent-banner-title" class="text-lg font-bold truncate">Closing ticket</div>
+        </div>
+        <div id="agent-banner-count" class="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center text-2xl font-bold font-mono flex-shrink-0">5</div>
+      </div>
+      <div class="p-6 space-y-1">
+        <div id="agent-banner-ticket" class="font-mono text-xl font-bold text-rc-green"></div>
+        <div id="agent-banner-customer" class="text-sm text-gray-500 mb-3"></div>
+        <div id="agent-banner-rows" class="space-y-1.5"></div>
+        <div id="agent-banner-reason" class="text-xs text-gray-400 leading-snug border-t border-gray-100 pt-3 mt-3"></div>
+      </div>
+      <div id="agent-banner-actions" class="px-6 pb-3 flex gap-3">
+        <button onclick="agentCancel()" class="flex-1 px-5 py-4 bg-red-500 text-white text-lg font-bold rounded-xl hover:bg-red-600 btn-press transition-all">
+          <i class="fas fa-hand-paper mr-2"></i> CANCEL
+        </button>
+        <button onclick="agentActNow()" title="Do it now" class="px-5 py-4 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 btn-press"><i class="fas fa-forward"></i></button>
+      </div>
+      <div id="agent-banner-foot" class="px-6 pb-5 text-center text-[11px] text-gray-400">Do nothing and this completes automatically</div>
+    </div>
+  </div>
+
   <!-- ═══════ MAIN LAYOUT ═══════ -->
   <div class="grid lg:grid-cols-3 gap-6">
 
@@ -365,6 +394,27 @@ export function renderScaleHouse(): string {
           <button onclick="settleDay()" id="btn-settle" class="w-full px-3 py-2 bg-rc-green text-white text-xs font-bold rounded-lg hover:bg-rc-green-light btn-press transition-all disabled:opacity-30" disabled>
             <i class="fas fa-check-double mr-1"></i> Settle Today
           </button>
+        </div>
+      </div>
+
+      <!-- Scale Agent -->
+      <div class="bg-white rounded-xl shadow-card border border-gray-100">
+        <div class="p-3 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-robot text-rc-green"></i> Scale Agent</h3>
+          <span id="agent-mode-badge" class="px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-100 text-gray-500">OFF</span>
+        </div>
+        <div class="p-3 space-y-2">
+          <div class="flex items-center gap-1.5">
+            <div id="agent-state-dot" class="w-2 h-2 rounded-full bg-gray-300"></div>
+            <span id="agent-state-text" class="text-[10px] text-gray-500">Idle</span>
+          </div>
+          <p class="text-[10px] text-gray-500 leading-snug">Wakes over <span id="agent-wake-label">30</span> kg, decides new load vs. weigh-out, closes the ticket and prints. Anything it is unsure of goes to you.</p>
+          <div class="grid grid-cols-3 gap-1">
+            <button onclick="setAgentMode('off')" id="agent-btn-off" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Off</button>
+            <button onclick="setAgentMode('dry_run')" id="agent-btn-dry_run" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Dry run</button>
+            <button onclick="setAgentMode('live')" id="agent-btn-live" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Live</button>
+          </div>
+          <div id="agent-log" class="text-[9px] font-mono text-gray-400 leading-relaxed max-h-28 overflow-y-auto"></div>
         </div>
       </div>
 
@@ -1465,6 +1515,7 @@ export function renderScaleHouse(): string {
     checkAutoCapture();
     updateCaptureButton();
     publishToWebBridge();
+    agentOnWeight(currentLiveWeight);
     if (isPrint && isWeightStable && currentLiveWeight > 100) {
       logSerial('>>> PRINT TRIGGER: ' + currentLiveWeight + ' kg');
       onPrintTrigger(currentLiveWeight);
@@ -1571,11 +1622,19 @@ export function renderScaleHouse(): string {
     }, 2000);
   }
 
-  function onPrintTrigger(weight) {
+  function onPrintTrigger(weight, fromAgent) {
     // Single debounce point. Every caller — serial protocol parser,
     // captureWeight() click, manualWeightCapture(), simulateWeight() — funnels
     // through here, so spamming Space or hitting "Capture" while a print frame
     // arrives can't create duplicate tickets. Also refuses stale data.
+    //
+    // When the agent is LIVE it owns this event, so a hardware print frame
+    // must not also raise the manual card underneath the agent banner. The
+    // agent passes fromAgent=true when it deliberately hands control back
+    // (defer, cancel, or a failed act), which always shows the card.
+    if (!fromAgent && agentSettings && agentSettings.mode === 'live' && agentState !== 'idle') {
+      return;
+    }
     if (!isLive()) {
       try { logSerial('⚠ Refused print-trigger: live data is stale'); } catch(e) {}
       return;
@@ -1929,6 +1988,323 @@ export function renderScaleHouse(): string {
     finally { hideLoading(); }
   }
   function cancelMerge() { pendingMergeTicketId = null; pendingMergeTicket = null; closeModal('merge-confirm-modal'); }
+
+  // ══════════════════════════════════════════
+  // SCALE AGENT — closed-loop ticketing
+  // ══════════════════════════════════════════
+  // Driven off acceptWeight(), the single funnel every reading passes through
+  // no matter the transport (Bluetooth / USB serial / localhost bridge / sim).
+  // Being frame-driven rather than timer-driven means a throttled background
+  // tab cannot stall it.
+  //
+  //   IDLE --(w > wake)--> OCCUPIED --(stable & over floor)--> DECIDING
+  //     ^                                                          |
+  //     +--(deck clears, held)-- COOLDOWN <-- ACTING <-- AWAITING --+
+  //
+  // Re-arming REQUIRES the deck to actually clear. That is what stops one
+  // truck producing a stream of tickets.
+  let agentSettings = null;
+  let agentState = 'idle';
+  let agentSettleSince = 0, agentSettleWeight = 0, agentClearSince = 0;
+  let agentBannerTimer = null, agentPending = null;
+  const AGENT_CLEAR_HOLD_MS = 5000;
+  const AGENT_SETTLE_BAND_KG = 20;
+
+  function agentLog(msg) {
+    const el = document.getElementById('agent-log');
+    if (!el) return;
+    const line = document.createElement('div');
+    line.textContent = new Date().toLocaleTimeString('en-CA', { hour12: false }) + '  ' + msg;
+    el.insertBefore(line, el.firstChild);
+    while (el.childNodes.length > 40) el.removeChild(el.lastChild);
+  }
+
+  function agentSetState(next) {
+    agentState = next;
+    const dot = document.getElementById('agent-state-dot');
+    const txt = document.getElementById('agent-state-text');
+    if (!dot || !txt) return;
+    const map = {
+      idle:     ['bg-gray-300',   'Waiting for a truck'],
+      occupied: ['bg-amber-400',  'Truck on the scale'],
+      deciding: ['bg-blue-400',   'Deciding'],
+      awaiting: ['bg-orange-500', 'Cancel window open'],
+      acting:   ['bg-blue-500',   'Writing the ticket'],
+      cooldown: ['bg-gray-400',   'Waiting for the deck to clear']
+    };
+    const m = map[next] || map.idle;
+    dot.className = 'w-2 h-2 rounded-full ' + m[0];
+    txt.textContent = m[1];
+  }
+
+  function applyAgentSettingsToUI() {
+    const mode = agentSettings ? agentSettings.mode : 'off';
+    const wake = document.getElementById('agent-wake-label');
+    if (wake && agentSettings) wake.textContent = Number(agentSettings.wake_threshold_kg).toFixed(0);
+    const badge = document.getElementById('agent-mode-badge');
+    if (badge) {
+      const labels = { off: 'OFF', dry_run: 'DRY RUN', live: 'LIVE' };
+      const classes = {
+        off: 'bg-gray-100 text-gray-500',
+        dry_run: 'bg-amber-100 text-amber-700',
+        live: 'bg-green-100 text-green-700'
+      };
+      badge.textContent = labels[mode] || 'OFF';
+      badge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold ' + (classes[mode] || classes.off);
+    }
+    ['off', 'dry_run', 'live'].forEach(function (m) {
+      const b = document.getElementById('agent-btn-' + m);
+      if (!b) return;
+      b.className = 'px-1 py-1.5 text-[10px] font-semibold rounded-lg border ' +
+        (m === mode ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50');
+    });
+  }
+
+  async function loadAgentSettings() {
+    try {
+      const res = await axios.get('/api/scale-agent/settings');
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      agentSetState('idle');
+    } catch (e) {
+      agentSettings = null;
+      agentLog('settings unavailable, agent stays off');
+    }
+  }
+
+  async function setAgentMode(mode) {
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { mode: mode });
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      agentLog('mode set to ' + mode);
+      if (mode === 'off') { agentHideBanner(); agentPending = null; }
+      agentSetState('idle');
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      alert('Could not change the agent mode: ' + msg);
+    }
+  }
+
+  // ─── the loop ───
+  function agentOnWeight(w) {
+    if (!agentSettings || agentSettings.mode === 'off') return;
+    // deciding / awaiting / acting are inert: the agent already owns this event.
+    if (agentState === 'deciding' || agentState === 'awaiting' || agentState === 'acting') return;
+    if (!isLive()) return;
+
+    const wake = Number(agentSettings.wake_threshold_kg) || 30;
+    const settleMs = (Number(agentSettings.settle_seconds) || 3) * 1000;
+    const now = Date.now();
+
+    if (agentState === 'cooldown') {
+      if (w < wake) {
+        if (!agentClearSince) agentClearSince = now;
+        if (now - agentClearSince >= AGENT_CLEAR_HOLD_MS) { agentClearSince = 0; agentSetState('idle'); }
+      } else {
+        agentClearSince = 0;
+      }
+      return;
+    }
+
+    if (agentState === 'idle') {
+      if (w > wake) { agentSetState('occupied'); agentSettleSince = now; agentSettleWeight = w; }
+      return;
+    }
+
+    // occupied: wait for the reading to hold still, then decide
+    if (w < wake) { agentSetState('idle'); agentSettleSince = 0; return; }
+    if (Math.abs(w - agentSettleWeight) > AGENT_SETTLE_BAND_KG) {
+      agentSettleSince = now; agentSettleWeight = w; return;
+    }
+    if (isWeightStable && (now - agentSettleSince) >= settleMs) agentDecide(w);
+  }
+
+  async function agentDecide(weight) {
+    agentSetState('deciding');
+    let photo = null;
+    try { photo = autoCapturePhoto(); } catch (e) { photo = null; }
+    try {
+      const res = await axios.post('/api/scale-agent/decide', { weight: weight });
+      const d = res.data;
+      if (d.settings) { agentSettings = d.settings; applyAgentSettingsToUI(); }
+
+      if (d.action === 'defer') {
+        agentLog('defer (' + d.rule + ')');
+        agentSetState('cooldown');
+        // Under the vehicle floor is a person, a bird or debris, not a truck.
+        // Anything else goes to the operator on the existing orange card,
+        // which is exactly the behaviour before the agent existed.
+        if (d.rule !== 'below_vehicle_floor' && d.rule !== 'agent_off') onPrintTrigger(weight, true);
+        return;
+      }
+
+      if (d.mode === 'dry_run') {
+        agentLog('DRY RUN: would ' + d.action + (d.ticket ? ' ' + d.ticket.ticket_number : '') + ' at ' + weight.toFixed(1) + ' kg');
+        agentSetState('cooldown');
+        agentShowDryRun(d, weight);
+        return;
+      }
+
+      agentPending = { decision: d, weight: weight, photo: photo };
+      agentShowBanner(d, weight);
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      agentLog('decide failed: ' + msg);
+      agentSetState('cooldown');
+    }
+  }
+
+  // ─── banner ───
+  function agentKg(v) {
+    const n = Number(v);
+    if (!isFinite(n)) return '—';
+    return n.toLocaleString('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' kg';
+  }
+  function agentRow(label, value, strong) {
+    return '<div class="flex items-center justify-between ' +
+      (strong ? 'text-base font-bold text-gray-900' : 'text-sm text-gray-600') +
+      '"><span>' + label + '</span><span class="font-mono">' + value + '</span></div>';
+  }
+
+  function agentRenderBanner(d, weight, mode) {
+    const dry = (mode === 'dry_run');
+    const closing = (d.action === 'close');
+    document.getElementById('agent-banner-head').className =
+      'px-6 py-4 flex items-center gap-3 text-white ' +
+      (dry ? 'bg-gray-500' : (closing ? 'bg-rc-green' : 'bg-blue-600'));
+    document.getElementById('agent-banner-title').textContent =
+      closing ? (dry ? 'Would close this ticket' : 'Closing ticket')
+              : (dry ? 'Would open a new ticket' : 'Opening a new ticket');
+
+    const rows = document.getElementById('agent-banner-rows');
+    if (closing && d.ticket) {
+      const p = d.preview;
+      document.getElementById('agent-banner-ticket').textContent = d.ticket.ticket_number;
+      document.getElementById('agent-banner-customer').textContent = d.ticket.company_name || 'Unassigned walk-in';
+      rows.innerHTML =
+        agentRow('Gross (in)', agentKg(p ? p.weight_in : d.ticket.weight_in), false) +
+        agentRow('Tare (out)', agentKg(weight), false) +
+        agentRow('Net', agentKg(p ? p.net_weight : (d.ticket.weight_in - weight)), true) +
+        (p ? agentRow('Total', '$' + Number(p.grand_total).toFixed(2) + ' CAD', true) : '');
+    } else {
+      document.getElementById('agent-banner-ticket').textContent = 'New load';
+      document.getElementById('agent-banner-customer').textContent = 'Attach the customer once the truck has tipped';
+      rows.innerHTML = agentRow('Gross (in)', agentKg(weight), true);
+    }
+    document.getElementById('agent-banner-reason').textContent = d.reason || '';
+  }
+
+  function agentShowBanner(d, weight) {
+    agentSetState('awaiting');
+    agentRenderBanner(d, weight, 'live');
+    document.getElementById('agent-banner-actions').style.display = 'flex';
+    document.getElementById('agent-banner-foot').textContent = 'Do nothing and this completes automatically';
+    const countEl = document.getElementById('agent-banner-count');
+    countEl.style.display = 'flex';
+    document.getElementById('agent-banner').style.display = 'flex';
+
+    let left = Number(agentSettings && agentSettings.cancel_seconds);
+    if (!isFinite(left) || left < 0) left = 5;
+    if (left === 0) { agentAct(); return; }
+    countEl.textContent = String(left);
+    if (agentBannerTimer) { clearInterval(agentBannerTimer); clearTimeout(agentBannerTimer); }
+    agentBannerTimer = setInterval(function () {
+      left -= 1;
+      countEl.textContent = String(Math.max(left, 0));
+      if (left <= 0) { clearInterval(agentBannerTimer); agentBannerTimer = null; agentAct(); }
+    }, 1000);
+  }
+
+  function agentShowDryRun(d, weight) {
+    agentRenderBanner(d, weight, 'dry_run');
+    document.getElementById('agent-banner-actions').style.display = 'none';
+    document.getElementById('agent-banner-count').style.display = 'none';
+    document.getElementById('agent-banner-foot').textContent = 'Dry run — nothing was written and nothing printed';
+    document.getElementById('agent-banner').style.display = 'flex';
+    if (agentBannerTimer) { clearInterval(agentBannerTimer); clearTimeout(agentBannerTimer); }
+    agentBannerTimer = setTimeout(agentHideBanner, 9000);
+  }
+
+  function agentHideBanner() {
+    if (agentBannerTimer) { clearInterval(agentBannerTimer); clearTimeout(agentBannerTimer); agentBannerTimer = null; }
+    const el = document.getElementById('agent-banner');
+    if (el) el.style.display = 'none';
+    const acts = document.getElementById('agent-banner-actions');
+    if (acts) acts.style.display = 'flex';
+    const cnt = document.getElementById('agent-banner-count');
+    if (cnt) cnt.style.display = 'flex';
+  }
+
+  // ─── acting ───
+  // Deliberately reuses the existing /print-trigger and /:id/merge-out routes:
+  // the pricing, GST, audit log and detectAnomalies() are inherited rather
+  // than reimplemented, so an agent ticket is byte-for-byte an operator ticket.
+  async function agentAct() {
+    agentHideBanner();
+    const p = agentPending; agentPending = null;
+    if (!p) { agentSetState('cooldown'); return; }
+    const d = p.decision;
+    agentSetState('acting');
+    try {
+      if (d.action === 'new') {
+        const res = await axios.post('/api/scale-tickets/print-trigger', {
+          weight: p.weight,
+          photo: p.photo || null,
+          material: (agentSettings && agentSettings.material) || 'mixed',
+          source: 'agent'
+        });
+        agentLog('opened ' + res.data.ticket_number + ' at ' + p.weight.toFixed(1) + ' kg');
+        await agentReport(d.decision_id, 'acted', res.data.id);
+        loadOpenTickets(); loadStats();
+        openAssignModal(res.data.id, res.data.ticket_number, p.weight);
+      } else {
+        await axios.post('/api/scale-tickets/' + d.ticket.id + '/merge-out', {
+          weight: p.weight, photo: p.photo || null
+        });
+        agentLog('closed ' + d.ticket.ticket_number + ' net ' + (d.preview ? Number(d.preview.net_weight).toFixed(1) : '?') + ' kg');
+        await agentReport(d.decision_id, 'acted', d.ticket.id);
+        autoPrintReceipt(d.ticket.id);
+        loadTicketDetail(d.ticket.id);
+        loadOpenTickets(); loadCompletedToday(); loadStats();
+      }
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      agentLog('ACT FAILED: ' + msg);
+      await agentReport(d.decision_id, 'failed', null);
+      // Never swallow this. A failed auto-close means a truck is about to
+      // leave the yard with no ticket, so put it in front of the operator.
+      alert('Scale agent could not finish the ticket: ' + msg);
+      onPrintTrigger(p.weight, true);
+    } finally {
+      agentSetState('cooldown');
+    }
+  }
+
+  async function agentCancel() {
+    const p = agentPending; agentPending = null;
+    agentHideBanner();
+    agentSetState('cooldown');
+    if (!p) return;
+    agentLog('CANCELLED by operator');
+    await agentReport(p.decision.decision_id, 'cancelled', null);
+    // Hand straight back to the manual card so the operator finishes it their way.
+    onPrintTrigger(p.weight, true);
+  }
+
+  function agentActNow() {
+    if (agentBannerTimer) { clearInterval(agentBannerTimer); clearTimeout(agentBannerTimer); agentBannerTimer = null; }
+    agentAct();
+  }
+
+  async function agentReport(decisionId, outcome, ticketId) {
+    if (!decisionId) return;
+    try {
+      await axios.post('/api/scale-agent/decisions/' + decisionId + '/outcome', {
+        outcome: outcome, ticket_id: ticketId || null
+      });
+    } catch (e) { /* the audit row is not worth failing a ticket over */ }
+  }
 
   // ══════════════════════════════════════════
   // LOAD DATA
@@ -2519,6 +2895,7 @@ export function renderScaleHouse(): string {
     if (typeof axios !== 'undefined') {
       loadOpenTickets(); loadCompletedToday(); loadPricing(); loadStats(); loadSettlement();
       enumerateCameras(); startAutoRefresh();
+      loadAgentSettings();
       bootstrapScale();
       startStaleWatchdog();
       // Reveal price-management button only to roles permitted by the backend

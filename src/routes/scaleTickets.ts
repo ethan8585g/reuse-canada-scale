@@ -334,7 +334,7 @@ scaleTicketRoutes.post('/field', async (c) => {
 // Quick-create ticket from scale PRINT trigger (weight-in only, no customer yet)
 scaleTicketRoutes.post('/print-trigger', async (c) => {
   try {
-    const { weight, photo } = await c.req.json()
+    const { weight, photo, material, source } = await c.req.json()
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
     if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
 
@@ -342,13 +342,30 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
     const walkInId = await getWalkInCustomerId(c.env.DB)
     const now = new Date().toISOString()
 
+    // Material is optional and defaults to the historical 'mixed'. The scale
+    // agent passes its configured tire material so the automated path never
+    // has to ask; the manual capture path sends nothing and is unaffected.
+    // Validated against the pricing table so a bad value can't produce a
+    // ticket that later prices at the 0.14 fallback without anyone noticing.
+    let tireType = 'mixed'
+    if (typeof material === 'string' && material.trim()) {
+      const known = await c.env.DB.prepare(
+        'SELECT material_type FROM pricing WHERE material_type = ? AND is_active = 1'
+      ).bind(material.trim()).first()
+      if (!known) return c.json({ error: `Unknown or inactive material: ${material}` }, 400)
+      tireType = material.trim()
+    }
+
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
       sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, status)
-            VALUES (?, ?, ?, 'mixed', ?, ?, ?, ?, 'weighed_in')`,
-      params: [tn, walkInId, employeeId, weight, now, photo || null, photo ? now : null],
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
+      params: [tn, walkInId, employeeId, tireType, weight, now, photo || null, photo ? now : null],
     }))
 
-    await auditLog(c.env.DB, ticketId, 'weighed_in', employeeId, { weight, has_photo: !!photo })
+    await auditLog(c.env.DB, ticketId, 'weighed_in', employeeId, {
+      weight, has_photo: !!photo, material: tireType,
+      source: source === 'agent' ? 'agent' : 'operator',
+    })
 
     return c.json({
       success: true,

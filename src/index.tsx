@@ -5,6 +5,7 @@ import { customerRoutes } from './routes/customer'
 import { employeeRoutes } from './routes/employee'
 import { scaleTicketRoutes } from './routes/scaleTickets'
 import { scaleBridgeRoutes } from './routes/scaleBridge'
+import { scaleAgentRoutes } from './routes/scaleAgent'
 import { pickupRoutes } from './routes/pickups'
 import { routeRoutes } from './routes/routing'
 import { squareRoutes } from './routes/square'
@@ -50,6 +51,7 @@ app.route('/api/customer', customerRoutes)
 app.route('/api/employee', employeeRoutes)
 app.route('/api/scale-tickets', scaleTicketRoutes)
 app.route('/api/scale-bridge', scaleBridgeRoutes)
+app.route('/api/scale-agent', scaleAgentRoutes)
 app.route('/api/pickups', pickupRoutes)
 app.route('/api/routes', routeRoutes)
 app.route('/api/square', squareRoutes)
