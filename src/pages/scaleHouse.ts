@@ -408,7 +408,11 @@ export function renderScaleHouse(): string {
             <div id="agent-state-dot" class="w-2 h-2 rounded-full bg-gray-300"></div>
             <span id="agent-state-text" class="text-[10px] text-gray-500">Idle</span>
           </div>
-          <p class="text-[10px] text-gray-500 leading-snug">Wakes over <span id="agent-wake-label">30</span> kg, decides new load vs. weigh-out, closes the ticket and prints. Anything it is unsure of goes to you.</p>
+          <p class="text-[10px] text-gray-500 leading-snug">Wakes over <span id="agent-wake-label">100</span> kg, decides new load vs. weigh-out, closes the ticket and prints. Negatives are ignored. Anything it is unsure of goes to you.</p>
+          <label class="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer">
+            <input type="checkbox" id="agent-single-truck" onchange="setAgentSingleTruck(this.checked)" class="rounded mt-0.5">
+            <span>One truck at a time <span class="text-gray-400">— no camera needed; an unexpected second truck goes to you</span></span>
+          </label>
           <div class="grid grid-cols-3 gap-1">
             <button onclick="setAgentMode('off')" id="agent-btn-off" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Off</button>
             <button onclick="setAgentMode('dry_run')" id="agent-btn-dry_run" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Dry run</button>
@@ -2052,6 +2056,8 @@ export function renderScaleHouse(): string {
       badge.textContent = labels[mode] || 'OFF';
       badge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold ' + (classes[mode] || classes.off);
     }
+    const st = document.getElementById('agent-single-truck');
+    if (st && agentSettings) st.checked = !!Number(agentSettings.single_truck_mode);
     ['off', 'dry_run', 'live'].forEach(function (m) {
       const b = document.getElementById('agent-btn-' + m);
       if (!b) return;
@@ -2086,6 +2092,19 @@ export function renderScaleHouse(): string {
     }
   }
 
+  async function setAgentSingleTruck(on) {
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { single_truck_mode: on ? 1 : 0 });
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      agentLog('one-truck-at-a-time ' + (on ? 'on' : 'off'));
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      alert('Could not change that setting: ' + msg);
+      applyAgentSettingsToUI();
+    }
+  }
+
   // ─── the loop ───
   function agentOnWeight(w) {
     if (!agentSettings || agentSettings.mode === 'off') return;
@@ -2093,9 +2112,15 @@ export function renderScaleHouse(): string {
     if (agentState === 'deciding' || agentState === 'awaiting' || agentState === 'acting') return;
     if (!isLive()) return;
 
-    const wake = Number(agentSettings.wake_threshold_kg) || 30;
+    const wake = Number(agentSettings.wake_threshold_kg) || 100;
     const settleMs = (Number(agentSettings.settle_seconds) || 3) * 1000;
     const now = Date.now();
+
+    // The indicator drifts BELOW ZERO in wind. A negative or zero reading is
+    // never a truck, so it must never wake the agent or reach a ticket. It
+    // does mean the deck is empty, so it still counts toward re-arming --
+    // handled by falling through with an effective weight of 0.
+    if (!(w > 0)) w = 0;
 
     if (agentState === 'cooldown') {
       if (w < wake) {

@@ -26,13 +26,15 @@ scaleAgentRoutes.use('*', authMiddleware, employeeOnly)
 
 const DEFAULTS = {
   mode: 'dry_run',
-  wake_threshold_kg: 30,
-  vehicle_floor_kg: 500,
+  wake_threshold_kg: 100,
+  vehicle_floor_kg: 100,
   settle_seconds: 3,
   cancel_seconds: 5,
   min_net_kg: 10,
   max_net_kg: 30000,
   material: 'mixed',
+  single_truck_mode: 1,
+  max_open_age_hours: 12,
   vision_enabled: 0,
   vision_model: 'claude-sonnet-5',
 }
@@ -59,6 +61,7 @@ interface OpenTicket {
   customer_id: number | null
   company_name: string | null
   photo_in_present: boolean
+  age_hours: number
 }
 
 export interface Decision {
@@ -90,7 +93,19 @@ export interface Decision {
 export function decide(weight: number, open: OpenTicket[], s: any): Decision {
   const minNet = Number(s.min_net_kg ?? DEFAULTS.min_net_kg)
   const maxNet = Number(s.max_net_kg ?? DEFAULTS.max_net_kg)
+  const singleTruck = Number(s.single_truck_mode ?? DEFAULTS.single_truck_mode) ? true : false
+  const maxAge = Number(s.max_open_age_hours ?? DEFAULTS.max_open_age_hours)
   const none: OpenTicket[] = []
+
+  // The indicator drifts below zero in wind. A negative or zero reading is
+  // never a truck, and must never open or close anything.
+  if (!Number.isFinite(weight) || weight <= 0) {
+    return {
+      action: 'defer', ticket: null, confidence: 0, rule: 'non_positive_weight',
+      reason: `Ignoring a ${Number.isFinite(weight) ? weight.toFixed(1) : 'non-numeric'} kg reading. The scale drifts below zero in wind and a negative is never a truck.`,
+      candidates: none,
+    }
+  }
 
   if (open.length === 0) {
     return {
@@ -103,6 +118,18 @@ export function decide(weight: number, open: OpenTicket[], s: any): Decision {
   const possible = open.filter(t => Number.isFinite(t.weight_in) && (t.weight_in - weight) > 0)
 
   if (possible.length === 0) {
+    // Heavier than every open weigh-in. With more than one truck in play that
+    // is simply a second truck arriving. But while the yard runs one truck at
+    // a time it cannot be -- opening a second ticket here would quietly break
+    // the one-open-ticket invariant the whole no-camera scheme depends on, and
+    // the next truck to leave would then match two candidates and stall.
+    if (singleTruck) {
+      return {
+        action: 'defer', ticket: null, confidence: 0, rule: 'single_truck_unexpected_arrival',
+        reason: `${open[0].ticket_number} is still open and ${weight.toFixed(1)} kg is heavier than its weigh-in, so this is not that truck leaving. With one truck at a time that should not happen — sending it to the operator rather than opening a second ticket.`,
+        candidates: open,
+      }
+    }
     return {
       action: 'new', ticket: null, confidence: 0.95, rule: 'heavier_than_all_open',
       reason: `At ${weight.toFixed(1)} kg this is heavier than every open weigh-in, so it cannot be any of them weighing out.`,
@@ -115,8 +142,31 @@ export function decide(weight: number, open: OpenTicket[], s: any): Decision {
     return net >= minNet && net <= maxNet
   })
 
-  if (plausible.length === 1) {
-    const t = plausible[0]
+  if (plausible.length === 0) {
+    return {
+      action: 'defer', ticket: null, confidence: 0, rule: 'implausible_net',
+      reason: `This could be weighing out, but every candidate gives a load outside ${minNet}-${maxNet} kg. Sending it to the operator.`,
+      candidates: possible,
+    }
+  }
+
+  // Staleness is the sharpest edge of the no-camera design. A truck that
+  // weighs in and never weighs out -- drove off without recrossing the scale,
+  // or an operator slip -- leaves a ticket open forever. Every later truck is
+  // lighter than it, so without this guard the agent would close a stranger's
+  // ticket and bill the wrong customer.
+  const fresh = plausible.filter(t => !Number.isFinite(t.age_hours) || t.age_hours <= maxAge)
+  if (fresh.length === 0) {
+    const oldest = plausible[0]
+    return {
+      action: 'defer', ticket: null, confidence: 0, rule: 'stale_open_ticket',
+      reason: `${oldest.ticket_number} has been open ${oldest.age_hours.toFixed(1)} h, past the ${maxAge} h limit. It is probably an abandoned ticket rather than this truck, so it will not be closed automatically.`,
+      candidates: plausible,
+    }
+  }
+
+  if (fresh.length === 1) {
+    const t = fresh[0]
     const net = t.weight_in - weight
     const onlyOne = open.length === 1
     return {
@@ -126,22 +176,14 @@ export function decide(weight: number, open: OpenTicket[], s: any): Decision {
       reason: onlyOne
         ? `${t.ticket_number} is the only open ticket and ${weight.toFixed(1)} kg out of ${t.weight_in.toFixed(1)} kg in gives a ${net.toFixed(1)} kg load.`
         : `Of ${open.length} open tickets only ${t.ticket_number} gives a sensible load (${net.toFixed(1)} kg).`,
-      candidates: plausible,
-    }
-  }
-
-  if (plausible.length === 0) {
-    return {
-      action: 'defer', ticket: null, confidence: 0, rule: 'implausible_net',
-      reason: `This could be weighing out, but every candidate gives a load outside ${minNet}-${maxNet} kg. Sending it to the operator.`,
-      candidates: possible,
+      candidates: fresh,
     }
   }
 
   return {
     action: 'defer', ticket: null, confidence: 0, rule: 'ambiguous_multiple_candidates',
-    reason: `${plausible.length} open tickets could each be this truck weighing out. Needs the camera or the operator to tell them apart.`,
-    candidates: plausible,
+    reason: `${fresh.length} open tickets could each be this truck weighing out. Needs the camera or the operator to tell them apart.`,
+    candidates: fresh,
   }
 }
 
@@ -182,6 +224,8 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
       min_net_kg: num(body.min_net_kg, cur.min_net_kg, 0, 10000),
       max_net_kg: num(body.max_net_kg, cur.max_net_kg, 100, 200000),
       material: typeof body.material === 'string' && body.material ? body.material.slice(0, 40) : cur.material,
+      single_truck_mode: body.single_truck_mode === undefined ? cur.single_truck_mode : (body.single_truck_mode ? 1 : 0),
+      max_open_age_hours: num(body.max_open_age_hours, cur.max_open_age_hours, 0.25, 720),
       vision_enabled: body.vision_enabled === undefined ? cur.vision_enabled : (body.vision_enabled ? 1 : 0),
       vision_model: typeof body.vision_model === 'string' && body.vision_model ? body.vision_model.slice(0, 60) : cur.vision_model,
     }
@@ -189,21 +233,25 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
     if (next.min_net_kg >= next.max_net_kg) {
       return c.json({ error: 'min_net_kg must be below max_net_kg' }, 400)
     }
-    // The vehicle floor is what stops a person walking across the deck from
-    // opening a ticket. A floor at or below the wake threshold would defeat it.
-    if (next.vehicle_floor_kg <= next.wake_threshold_kg) {
-      return c.json({ error: 'vehicle_floor_kg must be above wake_threshold_kg' }, 400)
+    // The floor may equal the wake threshold -- that is the normal setup, one
+    // number for "this is a truck". It may be raised above it if small stable
+    // loads on the deck ever start producing tickets, but never dropped below,
+    // which would let the agent act on a reading it never woke for.
+    if (next.vehicle_floor_kg < next.wake_threshold_kg) {
+      return c.json({ error: 'vehicle_floor_kg cannot be below wake_threshold_kg' }, 400)
     }
 
     await c.env.DB.prepare(
       `UPDATE scale_agent_settings SET
          mode = ?, wake_threshold_kg = ?, vehicle_floor_kg = ?, settle_seconds = ?,
          cancel_seconds = ?, min_net_kg = ?, max_net_kg = ?, material = ?,
+         single_truck_mode = ?, max_open_age_hours = ?,
          vision_enabled = ?, vision_model = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = 1`
     ).bind(
       next.mode, next.wake_threshold_kg, next.vehicle_floor_kg, next.settle_seconds,
       next.cancel_seconds, next.min_net_kg, next.max_net_kg, next.material,
+      next.single_truck_mode, next.max_open_age_hours,
       next.vision_enabled, next.vision_model
     ).run()
 
@@ -220,13 +268,20 @@ scaleAgentRoutes.post('/decide', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({})) as any
     const weight = Number(body?.weight)
-    if (!Number.isFinite(weight) || weight <= 0) {
-      return c.json({ error: 'weight must be a positive number' }, 400)
-    }
 
     const s = await getSettings(c.env.DB)
     if (s.mode === 'off') {
       return c.json({ mode: 'off', action: 'defer', rule: 'agent_off', reason: 'Agent is switched off.' })
+    }
+
+    // A wind-drift negative is expected traffic on this scale, not a client
+    // error, so answer with a decision the loop can log rather than a 400.
+    if (!Number.isFinite(weight) || weight <= 0) {
+      return c.json({
+        mode: s.mode, action: 'defer', rule: 'non_positive_weight',
+        reason: 'Negative or zero readings are never a truck and are ignored.',
+        settings: s,
+      })
     }
 
     // Below the vehicle floor this is a person, a bird, debris or weather --
@@ -242,7 +297,11 @@ scaleAgentRoutes.post('/decide', async (c) => {
     const { results } = await c.env.DB.prepare(
       `SELECT st.id, st.ticket_number, st.weight_in, st.weight_in_at, st.tire_type,
               st.customer_id, c.company_name,
-              CASE WHEN st.photo_in IS NULL OR st.photo_in = '' THEN 0 ELSE 1 END AS has_photo_in
+              CASE WHEN st.photo_in IS NULL OR st.photo_in = '' THEN 0 ELSE 1 END AS has_photo_in,
+              -- Computed in SQLite rather than JS: D1 returns datetimes as
+              -- 'YYYY-MM-DD HH:MM:SS' with no zone, which JS Date parses
+              -- inconsistently across engines.
+              CAST((julianday('now') - julianday(COALESCE(st.weight_in_at, st.created_at))) * 24 AS REAL) AS age_hours
        FROM scale_tickets st
        LEFT JOIN customers c ON st.customer_id = c.id
        WHERE st.status IN (${OPEN_STATUSES.map(() => '?').join(',')})
@@ -260,6 +319,7 @@ scaleAgentRoutes.post('/decide', async (c) => {
       customer_id: r.customer_id,
       company_name: r.company_name,
       photo_in_present: !!r.has_photo_in,
+      age_hours: Number(r.age_hours),
     }))
 
     const d = decide(weight, open, s)
