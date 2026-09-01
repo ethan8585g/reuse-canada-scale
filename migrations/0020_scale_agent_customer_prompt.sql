@@ -1,0 +1,14 @@
+-- ============================================
+-- 0020: WHEN (AND WHETHER) TO ASK FOR THE CUSTOMER
+-- ============================================
+-- The assign form used to pop the moment the agent OPENED a ticket, which is
+-- the worst possible time: the driver is still on the scale about to move off
+-- and the operator is watching the truck, not the screen. It belongs at the
+-- END of the visit -- the truck has tipped, it is weighing out, and the
+-- operator is standing there with the paperwork.
+--
+--   on_close : ask for customer / driver once the ticket is closed (default)
+--   off      : never ask. Open, close, print. The ticket stays on the
+--              walk-in sentinel and can be attributed later from
+--              Ticket History.
+ALTER TABLE scale_agent_settings ADD COLUMN customer_prompt TEXT NOT NULL DEFAULT 'on_close';

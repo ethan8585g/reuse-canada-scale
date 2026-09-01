@@ -656,7 +656,39 @@ scaleTicketRoutes.post('/:id/assign', async (c) => {
       prev_vehicle_id: prev?.vehicle_id,
     })
 
-    return c.json({ success: true })
+    // Assignment normally happens while a ticket is still open, so pricing is
+    // decided later at weigh-out. The scale agent can assign AFTER the ticket
+    // is completed, and then the money was already computed from the material
+    // the ticket had at the time -- changing it here would leave the price,
+    // GST and total describing a material the ticket no longer has. Re-price.
+    let repriced: any = null
+    const after = await c.env.DB.prepare(
+      'SELECT status, tire_type, net_weight FROM scale_tickets WHERE id = ?'
+    ).bind(id).first()
+    if (after && after.status === 'completed' &&
+        after.tire_type !== prev?.tire_type &&
+        Number.isFinite(Number(after.net_weight))) {
+      const pricing = await c.env.DB.prepare(
+        'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
+      ).bind(after.tire_type).first()
+      const ppk = pricing ? Number(pricing.price_per_kg) : 0.14
+      const subtotal = cents(Number(after.net_weight) * ppk)
+      const tax = cents(subtotal * GST_RATE)
+      const grandTotal = cents(subtotal + tax)
+      await c.env.DB.prepare(
+        `UPDATE scale_tickets SET price_per_kg = ?, total_amount = ?, tax_rate = ?,
+                                  tax_amount = ?, grand_total = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      ).bind(ppk, subtotal, GST_RATE, tax, grandTotal, id).run()
+      await auditLog(c.env.DB, parseInt(id), 'repriced', employeeId, {
+        reason: 'material changed after completion',
+        from: prev?.tire_type, to: after.tire_type,
+        price_per_kg: ppk, grand_total: grandTotal,
+      })
+      repriced = { price_per_kg: ppk, subtotal, tax_amount: tax, grand_total: grandTotal }
+    }
+
+    return c.json({ success: true, repriced })
   } catch (err: any) {
     console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }

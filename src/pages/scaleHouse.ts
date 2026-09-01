@@ -413,6 +413,14 @@ export function renderScaleHouse(): string {
             <input type="checkbox" id="agent-single-truck" onchange="setAgentSingleTruck(this.checked)" class="rounded mt-0.5">
             <span>One truck at a time <span class="text-gray-400">— no camera needed; an unexpected second truck goes to you</span></span>
           </label>
+          <div class="pt-1 border-t border-gray-100">
+            <div class="text-[10px] font-semibold text-gray-600 mb-1">After a ticket closes</div>
+            <div class="grid grid-cols-2 gap-1">
+              <button onclick="setAgentPrompt('on_close')" id="agent-prompt-on_close" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Ask customer</button>
+              <button onclick="setAgentPrompt('off')" id="agent-prompt-off" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Hands off</button>
+            </div>
+            <p id="agent-prompt-hint" class="text-[9px] text-gray-400 leading-snug mt-1"></p>
+          </div>
           <div class="grid grid-cols-3 gap-1">
             <button onclick="setAgentMode('off')" id="agent-btn-off" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Off</button>
             <button onclick="setAgentMode('dry_run')" id="agent-btn-dry_run" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Dry run</button>
@@ -569,11 +577,16 @@ export function renderScaleHouse(): string {
   <div id="assign-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;">
     <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-lg">
       <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-        <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-user-tag mr-2 text-blue-600"></i>Assign Customer</h3>
+        <h3 id="assign-modal-title" class="text-lg font-bold text-gray-800"><i class="fas fa-user-tag mr-2 text-blue-600"></i>Assign Customer</h3>
         <button onclick="closeAssignModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
       </div>
       <div class="p-6">
-        <div class="bg-blue-50 rounded-xl p-3 mb-4"><div class="text-sm text-blue-700">Ticket: <span class="font-bold font-mono" id="assign-ticket-num">—</span> &middot; Weight In: <span class="font-bold font-mono" id="assign-weight-in">—</span> kg</div></div>
+        <div id="assign-open-summary" class="bg-blue-50 rounded-xl p-3 mb-4"><div class="text-sm text-blue-700">Ticket: <span class="font-bold font-mono" id="assign-ticket-num">—</span> &middot; Weight In: <span class="font-bold font-mono" id="assign-weight-in">—</span> kg</div></div>
+        <div id="assign-closed-summary" style="display:none;" class="bg-green-50 border border-green-200 rounded-xl p-3 mb-4">
+          <div class="flex items-center gap-2 text-green-700 text-sm font-semibold"><i class="fas fa-check-circle"></i> Ticket closed and printed</div>
+          <div class="text-sm text-green-700 mt-1">Net <span class="font-bold font-mono" id="assign-closed-net">—</span> kg &middot; <span class="font-bold font-mono" id="assign-closed-total">—</span></div>
+          <div class="text-[11px] text-green-600/80 mt-1">Attribute it now, or skip and do it later from Ticket History.</div>
+        </div>
         <div class="space-y-4">
           <div>
             <div class="flex items-center justify-between mb-1">
@@ -600,7 +613,7 @@ export function renderScaleHouse(): string {
             <div><label class="block text-sm font-semibold text-gray-700 mb-1">Driver Name</label><input id="assign-driver-name" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none" placeholder="Who drove the truck"></div>
             <div><label class="block text-sm font-semibold text-gray-700 mb-1">Driver Phone</label><input id="assign-driver-phone" type="tel" class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:border-blue-500 outline-none" placeholder="780-555-0100"></div>
           </div>
-          <div>
+          <div id="assign-tare-block">
             <label class="block text-sm font-semibold text-gray-700 mb-1">Vehicle Tare</label>
             <button type="button" id="btn-use-live-tare" onclick="useLiveTareInAssignModal()" class="w-full px-4 py-3 border-2 border-green-200 bg-green-50 hover:bg-green-100 rounded-lg outline-none text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed">
               <div class="flex items-center justify-between gap-3">
@@ -616,8 +629,8 @@ export function renderScaleHouse(): string {
         </div>
         <input type="hidden" id="assign-ticket-id">
         <div class="mt-6 flex flex-col gap-2">
-          <button onclick="submitAssignment()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-check mr-1"></i> Done</button>
-          <button onclick="markUnknownLiveTicket()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-user-plus mr-1"></i> New Customer (Live Ticket)</button>
+          <button onclick="submitAssignment()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-check mr-1"></i> <span id="assign-done-label">Done</span></button>
+          <button id="assign-unknown-btn" onclick="markUnknownLiveTicket()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-user-plus mr-1"></i> New Customer (Live Ticket)</button>
         </div>
       </div>
     </div>
@@ -1797,12 +1810,33 @@ export function renderScaleHouse(): string {
     finally { hideLoading(); }
   }
 
-  function openAssignModal(ticketId, ticketNum, weightIn) {
+  // closedSummary, when given, means the ticket is already COMPLETED and we are
+  // only collecting who it belonged to. The weight controls must be hidden in
+  // that case: merge-out on a completed ticket 409s, so leaving the "use live
+  // scale weight" button visible would offer the operator a guaranteed error.
+  function openAssignModal(ticketId, ticketNum, weightIn, closedSummary) {
+    const closed = !!closedSummary;
     document.getElementById('assign-ticket-id').value = ticketId;
     document.getElementById('assign-ticket-num').textContent = ticketNum;
     document.getElementById('assign-weight-in').textContent = parseFloat(weightIn).toLocaleString('en-CA', {minimumFractionDigits:1});
+
+    document.getElementById('assign-modal-title').innerHTML = closed
+      ? '<i class="fas fa-user-tag mr-2 text-rc-green"></i>Who was this load for?'
+      : '<i class="fas fa-user-tag mr-2 text-blue-600"></i>Assign Customer';
+    document.getElementById('assign-tare-block').style.display = closed ? 'none' : 'block';
+    document.getElementById('assign-unknown-btn').style.display = closed ? 'none' : 'block';
+    document.getElementById('assign-closed-summary').style.display = closed ? 'block' : 'none';
+    document.getElementById('assign-open-summary').style.display = closed ? 'none' : 'block';
+    document.getElementById('assign-done-label').textContent = closed ? 'Save' : 'Done';
+    if (closed) {
+      document.getElementById('assign-closed-net').textContent =
+        Number(closedSummary.net).toLocaleString('en-CA', {minimumFractionDigits:1, maximumFractionDigits:1});
+      document.getElementById('assign-closed-total').textContent =
+        '$' + Number(closedSummary.total || 0).toFixed(2);
+    }
+
     loadCustomerDropdown('assign-customer');
-    refreshAssignLiveTare();
+    if (!closed) refreshAssignLiveTare();
     resetNewCustomerForm();
     // Clear the driver fields: these are per-truck, and carrying the previous
     // truck's driver into the next ticket would silently record the wrong person.
@@ -1893,7 +1927,10 @@ export function renderScaleHouse(): string {
         driver_name: document.getElementById('assign-driver-name').value.trim() || null,
         driver_phone: document.getElementById('assign-driver-phone').value.trim() || null,
       });
-      closeAssignModal(); loadOpenTickets();
+      closeAssignModal();
+      // The ticket may already be closed (agent assigns after weigh-out), so
+      // refresh the completed lists as well as the open ones.
+      loadOpenTickets(); loadCompletedToday(); loadStats();
     } catch(err) { alert(err.response?.data?.error || 'Failed'); }
     finally { hideLoading(); }
   }
@@ -2011,6 +2048,9 @@ export function renderScaleHouse(): string {
   let agentState = 'idle';
   let agentSettleSince = 0, agentSettleWeight = 0, agentClearSince = 0;
   let agentBannerTimer = null, agentPending = null;
+  // The ticket the agent most recently opened, kept only so the sidebar can
+  // show what is in the yard. Attribution waits for weigh-out.
+  let agentPendingAssign = null;
   const AGENT_CLEAR_HOLD_MS = 5000;
   const AGENT_SETTLE_BAND_KG = 20;
 
@@ -2058,6 +2098,17 @@ export function renderScaleHouse(): string {
     }
     const st = document.getElementById('agent-single-truck');
     if (st && agentSettings) st.checked = !!Number(agentSettings.single_truck_mode);
+    const prompt = (agentSettings && agentSettings.customer_prompt) || 'on_close';
+    ['on_close', 'off'].forEach(function (m) {
+      const b = document.getElementById('agent-prompt-' + m);
+      if (!b) return;
+      b.className = 'px-1 py-1.5 text-[10px] font-semibold rounded-lg border ' +
+        (m === prompt ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50');
+    });
+    const hint = document.getElementById('agent-prompt-hint');
+    if (hint) hint.textContent = prompt === 'off'
+      ? 'Opens, closes and prints with no screen at all. Tickets stay unattributed until you assign them in Ticket History.'
+      : 'Asks who the load was for once the truck has weighed out and printed.';
     ['off', 'dry_run', 'live'].forEach(function (m) {
       const b = document.getElementById('agent-btn-' + m);
       if (!b) return;
@@ -2089,6 +2140,19 @@ export function renderScaleHouse(): string {
     } catch (e) {
       const msg = (e.response && e.response.data && e.response.data.error) || e.message;
       alert('Could not change the agent mode: ' + msg);
+    }
+  }
+
+  async function setAgentPrompt(mode) {
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { customer_prompt: mode });
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      agentLog('after close: ' + (mode === 'off' ? 'hands off' : 'ask for customer'));
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      alert('Could not change that setting: ' + msg);
+      applyAgentSettingsToUI();
     }
   }
 
@@ -2282,7 +2346,11 @@ export function renderScaleHouse(): string {
         agentLog('opened ' + res.data.ticket_number + ' at ' + p.weight.toFixed(1) + ' kg');
         await agentReport(d.decision_id, 'acted', res.data.id);
         loadOpenTickets(); loadStats();
-        openAssignModal(res.data.id, res.data.ticket_number, p.weight);
+        // Deliberately NO customer prompt here. The driver is still on the
+        // scale about to pull off and the operator is watching the truck, not
+        // the screen. Attribution happens at weigh-out instead, when the visit
+        // is over and there is time -- see the close branch below.
+        agentPendingAssign = { id: res.data.id, number: res.data.ticket_number, weight: p.weight };
       } else {
         await axios.post('/api/scale-tickets/' + d.ticket.id + '/merge-out', {
           weight: p.weight, photo: p.photo || null
@@ -2292,6 +2360,15 @@ export function renderScaleHouse(): string {
         autoPrintReceipt(d.ticket.id);
         loadTicketDetail(d.ticket.id);
         loadOpenTickets(); loadCompletedToday(); loadStats();
+        agentPendingAssign = null;
+        // Ask who the load belonged to now that the visit is over -- unless
+        // the yard runs fully unattended, in which case the ticket stays on
+        // the walk-in sentinel and is attributed later from Ticket History.
+        if (!agentSettings || agentSettings.customer_prompt !== 'off') {
+          const net = d.preview ? Number(d.preview.net_weight) : ((d.ticket.weight_in || 0) - p.weight);
+          const total = d.preview ? Number(d.preview.grand_total) : 0;
+          openAssignModal(d.ticket.id, d.ticket.ticket_number, d.ticket.weight_in, { net: net, total: total });
+        }
       }
     } catch (e) {
       const msg = (e.response && e.response.data && e.response.data.error) || e.message;

@@ -35,6 +35,7 @@ const DEFAULTS = {
   material: 'mixed',
   single_truck_mode: 1,
   max_open_age_hours: 12,
+  customer_prompt: 'on_close',
   vision_enabled: 0,
   vision_model: 'claude-sonnet-5',
 }
@@ -226,6 +227,7 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
       material: typeof body.material === 'string' && body.material ? body.material.slice(0, 40) : cur.material,
       single_truck_mode: body.single_truck_mode === undefined ? cur.single_truck_mode : (body.single_truck_mode ? 1 : 0),
       max_open_age_hours: num(body.max_open_age_hours, cur.max_open_age_hours, 0.25, 720),
+      customer_prompt: ['on_close', 'off'].includes(body.customer_prompt) ? body.customer_prompt : cur.customer_prompt,
       vision_enabled: body.vision_enabled === undefined ? cur.vision_enabled : (body.vision_enabled ? 1 : 0),
       vision_model: typeof body.vision_model === 'string' && body.vision_model ? body.vision_model.slice(0, 60) : cur.vision_model,
     }
@@ -245,13 +247,13 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
       `UPDATE scale_agent_settings SET
          mode = ?, wake_threshold_kg = ?, vehicle_floor_kg = ?, settle_seconds = ?,
          cancel_seconds = ?, min_net_kg = ?, max_net_kg = ?, material = ?,
-         single_truck_mode = ?, max_open_age_hours = ?,
+         single_truck_mode = ?, max_open_age_hours = ?, customer_prompt = ?,
          vision_enabled = ?, vision_model = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = 1`
     ).bind(
       next.mode, next.wake_threshold_kg, next.vehicle_floor_kg, next.settle_seconds,
       next.cancel_seconds, next.min_net_kg, next.max_net_kg, next.material,
-      next.single_truck_mode, next.max_open_age_hours,
+      next.single_truck_mode, next.max_open_age_hours, next.customer_prompt,
       next.vision_enabled, next.vision_model
     ).run()
 
