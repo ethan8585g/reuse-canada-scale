@@ -620,6 +620,8 @@ export function renderEmployeeDashboard(): string {
           if (t.photo_out) photos += '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out</div><img src="' + escAttr(t.photo_out) + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)"></div>';
           if (photos) html += '<div class="grid grid-cols-2 gap-3 mt-4">' + photos + '</div>';
 
+          html += ticketShareBar(t.id);
+
           if (audit.length) {
             html += '<div class="mt-6 pt-4 border-t border-gray-100"><div class="text-xs font-bold text-gray-500 uppercase mb-2">Audit Trail</div><div class="space-y-1">' +
               audit.map(function(a) {

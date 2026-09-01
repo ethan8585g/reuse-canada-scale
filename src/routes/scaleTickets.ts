@@ -148,6 +148,56 @@ scaleTicketRoutes.get('/', async (c) => {
 })
 
 // Get single ticket detail (includes audit log)
+// Mint (or reuse) a shareable read-only link for a ticket. One live token per
+// ticket, so re-sharing the same ticket always hands out the same URL instead of
+// littering the table. The link needs no login by design - it gets texted or
+// emailed to the customer - so the token is the only thing guarding it.
+scaleTicketRoutes.post('/:id/share', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const ticket = await c.env.DB.prepare('SELECT id FROM scale_tickets WHERE id = ?').bind(id).first()
+    if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
+
+    const existing = await c.env.DB.prepare(
+      'SELECT token FROM ticket_shares WHERE scale_ticket_id = ? AND revoked_at IS NULL ORDER BY id DESC LIMIT 1'
+    ).bind(id).first() as any
+
+    let token = existing?.token as string | undefined
+    if (!token) {
+      const bytes = new Uint8Array(24)
+      crypto.getRandomValues(bytes)
+      token = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      await c.env.DB.prepare(
+        'INSERT INTO ticket_shares (scale_ticket_id, token, created_by) VALUES (?, ?, ?)'
+      ).bind(id, token, c.get('userId')).run()
+    }
+
+    const origin = new URL(c.req.url).origin
+    return c.json({ token, url: `${origin}/t/${token}` })
+  } catch (err: any) {
+    console.error('scale-tickets error:', err)
+    // Until migration 0015 is applied the table simply isn't there; say so
+    // instead of a bare 500, so whoever clicks knows what to fix.
+    if (String(err?.message || '').includes('no such table')) {
+      return c.json({ error: 'Sharing is not set up yet - apply migration 0015_ticket_shares to the production database.' }, 503)
+    }
+    return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// Kill a share link without touching the ticket.
+scaleTicketRoutes.post('/:id/unshare', async (c) => {
+  const id = c.req.param('id')
+  try {
+    await c.env.DB.prepare(
+      "UPDATE ticket_shares SET revoked_at = datetime('now') WHERE scale_ticket_id = ? AND revoked_at IS NULL"
+    ).bind(id).run()
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('scale-tickets error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 scaleTicketRoutes.get('/:id', async (c) => {
   const id = c.req.param('id')
   try {

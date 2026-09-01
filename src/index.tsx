@@ -11,11 +11,13 @@ import { squareRoutes } from './routes/square'
 import { pricingRoutes } from './routes/pricing'
 import { invoiceRoutes } from './routes/invoices'
 import { junkRemovalRoutes } from './routes/junkRemoval'
+import { fleetRoutes } from './routes/fleet'
 import { renderLogin } from './pages/login'
 import { renderCustomerDashboard } from './pages/customerDashboard'
 import { renderEmployeeDashboard } from './pages/employeeDashboard'
 import { renderScaleHouse } from './pages/scaleHouse'
 import { renderScaleTickets } from './pages/scaleTickets'
+import { renderPublicTicket } from './pages/publicTicket'
 import { renderPickupManagement } from './pages/pickupManagement'
 import { renderRouting } from './pages/routing'
 import { renderFieldForm } from './pages/fieldForm'
@@ -23,6 +25,7 @@ import { renderCustomerManagement } from './pages/customerManagement'
 import { renderDriverManagement } from './pages/driverManagement'
 import { renderDriverPortal } from './pages/driverPortal'
 import { renderJunkRemovalQuoting } from './pages/junkRemovalQuoting'
+import { renderFleet } from './pages/fleet'
 import { renderInvoices } from './pages/invoices'
 import { renderInvoiceBuilder } from './pages/invoiceBuilder'
 import { renderInvoicePrint } from './pages/invoicePrint'
@@ -53,6 +56,7 @@ app.route('/api/square', squareRoutes)
 app.route('/api/pricing', pricingRoutes)
 app.route('/api/invoices', invoiceRoutes)
 app.route('/api/junk-removal', junkRemovalRoutes)
+app.route('/api/fleet', fleetRoutes)
 
 // ── Config endpoint (serves safe public keys) ──
 app.get('/api/config/maps-key', (c) => {
@@ -76,6 +80,36 @@ app.use('*', async (c, next) => {
 // ── Page Routes ────────────────────────────
 
 // Landing / Login
+// Public read-only ticket behind a share link. No session: the unguessable
+// token IS the credential, which is what makes the link sendable to a customer.
+// A revoked share 404s like a bad token - no hint that it once existed.
+app.get('/t/:token', async (c) => {
+  const token = c.req.param('token')
+  if (!/^[a-f0-9]{48}$/.test(token)) return c.text('Not found', 404)
+  try {
+    const ticket = await c.env.DB.prepare(
+      `SELECT st.ticket_number, st.status, st.created_at, st.tire_type,
+              st.weight_in, st.weight_out, st.net_weight, st.grand_total,
+              c.company_name,
+              COALESCE(NULLIF(st.driver_name, ''), dr.first_name || ' ' || dr.last_name) as driver_display_name
+       FROM ticket_shares ts
+       JOIN scale_tickets st ON st.id = ts.scale_ticket_id
+       LEFT JOIN customers c ON st.customer_id = c.id
+       LEFT JOIN route_stops rs ON st.route_stop_id = rs.id
+       LEFT JOIN routes r ON rs.route_id = r.id
+       LEFT JOIN pickup_requests pr ON st.pickup_request_id = pr.id
+       LEFT JOIN employees dr ON dr.id = COALESCE(r.assigned_employee_id, pr.assigned_employee_id)
+       WHERE ts.token = ? AND ts.revoked_at IS NULL`
+    ).bind(token).first()
+
+    if (!ticket) return c.text('This link is no longer valid.', 404)
+    return c.html(renderPublicTicket(ticket as any))
+  } catch (err) {
+    console.error('share link error:', err)
+    return c.text('Server error', 500)
+  }
+})
+
 app.get('/', (c) => c.html(renderLogin()))
 app.get('/login', (c) => c.html(renderLogin()))
 
@@ -90,6 +124,7 @@ app.get('/employee/scale-tickets', (c) => c.html(renderScaleTickets()))
 app.get('/employee/scale-tickets/new', (c) => c.html(renderScaleTickets()))
 app.get('/employee/pickups', (c) => c.html(renderPickupManagement()))
 app.get('/employee/routing', (c) => c.html(renderRouting()))
+app.get('/employee/fleet', (c) => c.html(renderFleet()))
 app.get('/employee/customers', (c) => c.html(renderCustomerManagement()))
 app.get('/employee/drivers', (c) => c.html(renderDriverManagement()))
 app.get('/employee/junk-removal', (c) => c.html(renderJunkRemovalQuoting()))

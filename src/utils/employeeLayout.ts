@@ -9,6 +9,7 @@ export function employeeSidebar(activePage: string): string {
     { id: 'routing', icon: 'fas fa-route', label: 'Routing', href: '/employee/routing', roles: ['admin','manager'] },
     { id: 'customers', icon: 'fas fa-users', label: 'Customers', href: '/employee/customers', roles: ['admin','manager'] },
     { id: 'drivers', icon: 'fas fa-id-badge', label: 'Drivers & Staff', href: '/employee/drivers', roles: ['admin','manager'] },
+    { id: 'fleet', icon: 'fas fa-screwdriver-wrench', label: 'My Garage', href: '/employee/fleet', roles: ['admin','manager','yard_operator'] },
     { id: 'invoices', icon: 'fas fa-file-invoice-dollar', label: 'Invoices', href: '/employee/invoices', roles: ['admin','manager'] },
     { id: 'junk-removal', icon: 'fas fa-dumpster', label: 'Junk Removal Quoting', href: '/employee/junk-removal', roles: ['admin','manager','yard_operator'] },
   ];
@@ -259,6 +260,166 @@ export function employeeSidebar(activePage: string): string {
       var m = document.getElementById('driver-status-modal');
       if (m && m.style.display === 'flex') closeDriverStatus();
     });
+
+    // ── Share / export a scale ticket ─────────────────────────────────────
+    // Lives in the layout because both Ticket History and the dashboard's
+    // Recent Scale Tickets modal offer the same four actions.
+    var ticketShareUrls = {};   // ticket id -> share url, so one ticket keeps one link
+
+    function ticketShareBar(id) {
+      return '<div class="mt-6 pt-4 border-t border-gray-100">' +
+          '<div class="text-xs font-bold text-gray-500 uppercase mb-2">Send this ticket</div>' +
+          '<div class="flex flex-wrap gap-2">' +
+            '<button onclick="shareTicketEmail(' + id + ')" class="px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 btn-press transition-all"><i class="fas fa-envelope mr-1.5 text-red-500"></i>Email</button>' +
+            '<button onclick="shareTicketSms(' + id + ')" class="px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 btn-press transition-all"><i class="fas fa-comment-sms mr-1.5 text-green-600"></i>Text</button>' +
+            '<button onclick="downloadTicketPdf(' + id + ')" id="ticket-pdf-btn" class="px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 btn-press transition-all"><i class="fas fa-file-pdf mr-1.5 text-rose-600"></i>PDF</button>' +
+            '<button onclick="shareTicketCopyLink(' + id + ')" id="ticket-link-btn" class="px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 btn-press transition-all"><i class="fas fa-link mr-1.5 text-blue-600"></i>Copy link</button>' +
+          '</div>' +
+          '<p class="text-[11px] text-gray-400 mt-2">The link opens a read-only copy of this ticket — no sign-in needed.</p>' +
+        '</div>';
+    }
+
+    function fetchTicket(id) {
+      return axios.get('/api/scale-tickets/' + id).then(function (r) { return r.data.ticket; });
+    }
+
+    function getTicketShareUrl(id) {
+      if (ticketShareUrls[id]) return Promise.resolve(ticketShareUrls[id]);
+      return axios.post('/api/scale-tickets/' + id + '/share').then(function (r) {
+        ticketShareUrls[id] = r.data.url;
+        return r.data.url;
+      });
+    }
+
+    function ticketSummaryLines(t) {
+      var lines = [
+        'Reuse Canada — Scale Ticket ' + t.ticket_number,
+        'Customer: ' + (t.company_name || 'Walk-In'),
+        'Material: ' + String(t.tire_type || '-').replace(/_/g, ' ')
+      ];
+      if (t.net_weight !== null && t.net_weight !== undefined) lines.push('Net weight: ' + Number(t.net_weight).toFixed(1) + ' kg');
+      if (t.grand_total !== null && t.grand_total !== undefined) lines.push('Total: $' + Number(t.grand_total).toFixed(2));
+      return lines;
+    }
+
+    function shareTicketEmail(id) {
+      Promise.all([fetchTicket(id), getTicketShareUrl(id)]).then(function (r) {
+        var t = r[0], url = r[1];
+        var subject = 'Reuse Canada scale ticket ' + t.ticket_number;
+        var body = ticketSummaryLines(t).join('\\n') + '\\n\\nView the full ticket:\\n' + url + '\\n';
+        window.open('https://mail.google.com/mail/?view=cm&fs=1&su=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body), '_blank');
+      }).catch(function (e) { alert(shareErr(e, 'Could not build the email')); });
+    }
+
+    function shareTicketSms(id) {
+      Promise.all([fetchTicket(id), getTicketShareUrl(id)]).then(function (r) {
+        var t = r[0], url = r[1];
+        var body = ticketSummaryLines(t).join('\\n') + '\\n' + url;
+        window.location.href = 'sms:?&body=' + encodeURIComponent(body);
+      }).catch(function (e) { alert(shareErr(e, 'Could not build the text message')); });
+    }
+
+    function shareTicketCopyLink(id) {
+      var btn = document.getElementById('ticket-link-btn');
+      getTicketShareUrl(id).then(function (url) {
+        var done = function () {
+          if (!btn) return;
+          var original = btn.innerHTML;
+          btn.innerHTML = '<i class="fas fa-check mr-1.5 text-green-600"></i>Link copied';
+          setTimeout(function () { btn.innerHTML = original; }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(done, function () { window.prompt('Copy this link:', url); });
+        } else {
+          window.prompt('Copy this link:', url);
+        }
+      }).catch(function (e) { alert(shareErr(e, 'Could not create a link')); });
+    }
+
+    function shareErr(e, fallback) {
+      return (e && e.response && e.response.data && e.response.data.error) || fallback;
+    }
+
+    // jsPDF is only pulled in the first time someone actually asks for a PDF.
+    function loadJsPdf() {
+      if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
+      return new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
+        s.onload = resolve;
+        s.onerror = function () { reject(new Error('Could not load the PDF library')); };
+        document.head.appendChild(s);
+      });
+    }
+
+    function downloadTicketPdf(id) {
+      var btn = document.getElementById('ticket-pdf-btn');
+      var original = btn ? btn.innerHTML : '';
+      if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i>Building...';
+
+      Promise.all([fetchTicket(id), loadJsPdf()]).then(function (r) {
+        var t = r[0];
+        var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+        var L = 20, y = 24;
+
+        doc.setFillColor(27, 94, 32);
+        doc.rect(0, 0, 210, 34, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(10); doc.text('REUSE CANADA  ·  SCALE TICKET', L, 14);
+        doc.setFontSize(20); doc.setFont(undefined, 'bold');
+        doc.text(String(t.ticket_number || ''), L, 25);
+
+        doc.setTextColor(31, 41, 55); doc.setFont(undefined, 'normal');
+        y = 48;
+
+        var line = function (label, value, bold) {
+          doc.setFontSize(11);
+          doc.setTextColor(107, 114, 128); doc.text(label, L, y);
+          doc.setTextColor(31, 41, 55); doc.setFont(undefined, bold ? 'bold' : 'normal');
+          doc.text(String(value), 190, y, { align: 'right' });
+          doc.setFont(undefined, 'normal');
+          doc.setDrawColor(238, 240, 238); doc.line(L, y + 2.5, 190, y + 2.5);
+          y += 10;
+        };
+
+        var created = t.created_at ? new Date(String(t.created_at).replace(' ', 'T') + 'Z') : null;
+        line('Date', created && !isNaN(created.getTime()) ? created.toLocaleDateString('en-CA') : '-');
+        line('Customer', t.company_name || 'Walk-In');
+        line('Material', String(t.tire_type || '-').replace(/_/g, ' '));
+        line('Driver', t.driver_display_name || 'Not recorded');
+        var statusText = typeof getTicketStatusText === 'function' ? getTicketStatusText(t.status)
+          : (typeof ticketStatusText === 'function' ? ticketStatusText(t.status)
+          : String(t.status || '').replace(/_/g, ' ').toUpperCase());
+        line('Status', statusText);
+
+        y += 4;
+        doc.setFontSize(9); doc.setTextColor(107, 114, 128);
+        doc.text('WEIGHTS', L, y); y += 7;
+
+        line('Weight in (gross)', t.weight_in !== null && t.weight_in !== undefined ? Number(t.weight_in).toFixed(1) + ' kg' : '-');
+        line('Weight out (tare)', t.weight_out !== null && t.weight_out !== undefined ? Number(t.weight_out).toFixed(1) + ' kg' : '-');
+        line('Net weight', t.net_weight !== null && t.net_weight !== undefined ? Number(t.net_weight).toFixed(1) + ' kg' : '-', true);
+
+        if (t.grand_total !== null && t.grand_total !== undefined) {
+          y += 4;
+          doc.setFillColor(240, 247, 240); doc.rect(L, y - 5, 170, 14, 'F');
+          doc.setFontSize(12); doc.setTextColor(55, 65, 81); doc.setFont(undefined, 'bold');
+          doc.text('Total', L + 4, y + 3);
+          doc.setTextColor(27, 94, 32); doc.setFontSize(14);
+          doc.text('$' + Number(t.grand_total).toFixed(2), 186, y + 3, { align: 'right' });
+          doc.setFont(undefined, 'normal');
+        }
+
+        doc.setFontSize(8); doc.setTextColor(156, 163, 175);
+        doc.text('Generated ' + new Date().toLocaleString('en-CA') + ' · reusecanadascale.com', L, 285);
+
+        doc.save('scale-ticket-' + (t.ticket_number || id) + '.pdf');
+      }).catch(function (e) {
+        alert(shareErr(e, e && e.message ? e.message : 'Could not build the PDF'));
+      }).then(function () {
+        if (btn) btn.innerHTML = original;
+      });
+    }
 
     // Load immediately and poll every 30 seconds
     setTimeout(loadDriverStatus, 1000);

@@ -960,6 +960,8 @@ export function renderScaleTickets(): string {
               }).join('') + '</div></div>';
           }
 
+          const shareBar = ticketShareBar(t.id);
+
           let voidInfo = '';
           if (t.status === 'voided' && t.void_reason) {
             voidInfo = '<div class="mt-4 bg-red-50 rounded-xl p-3"><div class="text-xs text-red-600 font-semibold">VOID REASON</div><div class="text-sm text-red-700">' + t.void_reason + '</div></div>';
@@ -1006,7 +1008,7 @@ export function renderScaleTickets(): string {
             </div>
             \` : ''}
             \${t.notes ? \`<div class="mt-4 p-3 bg-gray-50 rounded-lg text-sm text-gray-600"><i class="fas fa-sticky-note mr-1"></i> \${escHtml(t.notes)}</div>\` : ''}
-          \` + photosHtml + voidInfo + auditHtml;
+          \` + photosHtml + voidInfo + shareBar + auditHtml;
           document.getElementById('detail-modal').style.display = 'flex';
         } catch (err) {
           // Log the real error: a bare alert gave no way to tell a 401 from a
