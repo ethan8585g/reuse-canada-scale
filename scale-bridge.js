@@ -17,9 +17,11 @@
 //   POST /reconfigure   → { baud, parity, dataBits, stopBits, port }
 //   GET  /              → friendly status page
 
-const fs = require('fs');
-const http = require('http');
-const { execSync } = require('child_process');
+// ESM imports: package.json sets "type": "module", so this file is loaded as an
+// ES module and require() is not available here.
+import fs from 'node:fs';
+import http from 'node:http';
+import { execSync } from 'node:child_process';
 
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '5555', 10);
 let cfg = {
