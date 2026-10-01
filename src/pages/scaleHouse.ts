@@ -1737,11 +1737,20 @@ export function renderScaleHouse(): string {
               ? '<i class="fas fa-check mr-1"></i>Above the ' + min + '% threshold — the agent would act on this.'
               : '<i class="fas fa-triangle-exclamation mr-1"></i>Below the ' + min + '% threshold, so the agent would ignore it and fall back to weight. Aim closer or lower.'));
       } else if (d.reason === 'no_api_key') {
-        say('bg-red-50 text-red-700', 'No API key is set on this site, so plates cannot be read.');
+        say('bg-red-50 text-red-700', 'No API key is set on this site, so the camera cannot be read.');
+      } else if (d.vehicle) {
+        // No plate, but a usable description. On this camera that is the normal
+        // outcome and it is NOT a failure: body and colour are what let the
+        // agent tell two open tickets apart. Saying so stops the operator
+        // chasing a plate read the lens cannot physically deliver.
+        say('bg-blue-50 text-blue-800',
+          '<i class="fas fa-eye mr-1"></i>No plate, but the camera sees a '
+          + '<span class="font-semibold">' + escHtml(d.vehicle) + '</span>' + took + '.'
+          + '<br><span class="opacity-70">That is enough to tell this truck apart from a different-looking one, and to stop the agent closing the wrong ticket. A plate would be better — tilt down so the cab fills more of the frame.</span>');
       } else {
         say('bg-amber-50 text-amber-800',
-          '<i class="fas fa-eye-slash mr-1"></i>No plate found in this frame' + took + '.'
-          + '<br><span class="opacity-70">Correct if no vehicle is on the scale. If one is, the plate is too small, too angled or cut off — tilt down so the cab fills more of the frame.</span>');
+          '<i class="fas fa-eye-slash mr-1"></i>Nothing readable in this frame' + took + '.'
+          + '<br><span class="opacity-70">Correct if no vehicle is on the scale. If one is, it is too dark, too angled or cut off — tilt down so the vehicle fills more of the frame.</span>');
       }
     } catch (e) {
       say('bg-red-50 text-red-700', 'Plate read failed: ' + escHtml((e.response && e.response.data && e.response.data.error) || e.message));
@@ -3151,9 +3160,14 @@ export function renderScaleHouse(): string {
   // "no plate", and the agent then decides on weight exactly as it did before.
   // Nothing here is allowed to stall the loop, because a truck is sitting on
   // the scale while it runs.
-  async function agentReadPlate(photo) {
+  async function agentReadVehicle(photo) {
     if (!photo) return null;
-    if (agentSettings && Number(agentSettings.plate_matching) === 0) return null;
+    // Either half of the read is worth the call on its own: plates identify a
+    // truck outright, appearance tells two open tickets apart when the plate is
+    // too small to resolve -- which on this camera is most of the time.
+    var wantPlate = !agentSettings || Number(agentSettings.plate_matching) !== 0;
+    var wantLook = !agentSettings || Number(agentSettings.appearance_matching) !== 0;
+    if (!wantPlate && !wantLook) return null;
     const started = Date.now();
     try {
       // Measured on the real yard camera: ~3-5s warm, 8s+ on a cold worker.
@@ -3163,14 +3177,17 @@ export function renderScaleHouse(): string {
       const d = res.data || {};
       const ms = Date.now() - started;
       if (!d.ok) {
-        agentLog('plate: ' + (d.error || d.reason || 'not read') + ' (' + ms + 'ms)');
+        agentLog('camera: ' + (d.error || d.reason || 'nothing readable') + ' (' + ms + 'ms)');
         return null;
       }
-      agentLog('plate ' + d.plate + ' @ ' + Math.round((d.confidence || 0) * 100) + '% (' + ms + 'ms)');
+      var bits = [];
+      if (d.plate) bits.push('plate ' + d.plate + ' @ ' + Math.round((d.confidence || 0) * 100) + '%');
+      if (d.vehicle) bits.push(d.vehicle);
+      agentLog('camera: ' + (bits.join(' · ') || 'nothing readable') + ' (' + ms + 'ms)');
       return d;
     } catch (e) {
       // A timeout here is normal on a slow link and must not cost a ticket.
-      agentLog('plate read failed: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      agentLog('camera read failed: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
       return null;
     }
   }
@@ -3179,12 +3196,13 @@ export function renderScaleHouse(): string {
     agentSetState('deciding');
     let photo = null;
     try { photo = autoCapturePhoto('agent'); } catch (e) { photo = null; }
-    const plateRead = await agentReadPlate(photo);
+    const plateRead = await agentReadVehicle(photo);
     try {
       const res = await axios.post('/api/scale-agent/decide', {
         weight: weight,
         plate: (plateRead && plateRead.plate) || '',
-        plate_confidence: (plateRead && plateRead.confidence) || 0
+        plate_confidence: (plateRead && plateRead.confidence) || 0,
+        appearance: (plateRead && plateRead.appearance) || null
       });
       const d = res.data;
       if (d.settings) { agentSettings = d.settings; applyAgentSettingsToUI(); }
@@ -3327,10 +3345,12 @@ export function renderScaleHouse(): string {
           material: (agentSettings && agentSettings.material) || 'mixed',
           source: 'agent',
           plate: (p.plate && p.plate.plate) || '',
-          plate_confidence: (p.plate && p.plate.confidence) || 0
+          plate_confidence: (p.plate && p.plate.confidence) || 0,
+          appearance: (p.plate && p.plate.appearance) || null
         });
         agentLog('opened ' + res.data.ticket_number + ' at ' + p.weight.toFixed(1) + ' kg'
-                 + (p.plate && p.plate.plate ? ' for plate ' + p.plate.plate : ''));
+                 + (p.plate && p.plate.plate ? ' for plate ' + p.plate.plate
+                    : (p.plate && p.plate.vehicle ? ' for a ' + p.plate.vehicle : '')));
         await agentReport(d.decision_id, 'acted', res.data.id);
         loadOpenTickets(); loadStats();
         // Deliberately NO customer prompt here. The driver is still on the
@@ -3342,7 +3362,8 @@ export function renderScaleHouse(): string {
         await axios.post('/api/scale-tickets/' + d.ticket.id + '/merge-out', {
           weight: p.weight, photo: p.photo || null,
           plate: (p.plate && p.plate.plate) || '',
-          plate_confidence: (p.plate && p.plate.confidence) || 0
+          plate_confidence: (p.plate && p.plate.confidence) || 0,
+          appearance: (p.plate && p.plate.appearance) || null
         });
         agentLog('closed ' + d.ticket.ticket_number + ' net ' + (d.preview ? Number(d.preview.net_weight).toFixed(1) : '?') + ' kg');
         await agentReport(d.decision_id, 'acted', d.ticket.id);
@@ -3986,6 +4007,62 @@ export function renderScaleHouse(): string {
   }
   function startAutoRefresh() { if (autoRefreshTimer) clearInterval(autoRefreshTimer); autoRefreshTimer = setInterval(() => { loadOpenTickets(); loadStats(); }, 15000); }
 
+  // ── Background verification sweep ──
+  //
+  // The second pass over closed tickets: both photos exist by then, so they can
+  // be compared against each other, which is the only way to answer "did the
+  // same truck that arrived actually leave". The live agent can never do this
+  // -- when it decides, one of the two photos does not exist yet.
+  //
+  // This is PULLED from the station rather than pushed by a scheduler because
+  // Cloudflare PAGES projects cannot have Cron Triggers; that is a Workers
+  // feature and this is a Pages project. The scale house browser is open all
+  // shift anyway, which makes it a perfectly good clock -- and it stops by
+  // itself when the yard goes home, which a real cron would not.
+  let verifySweepTimer = null;
+  let verifySweepBusy = false;
+
+  async function runVerifySweep(manual) {
+    if (verifySweepBusy) return null;
+    // Nothing is waiting on this, and a truck on the scale is. Never let a
+    // sweep run while the agent is mid-decision -- it would queue behind it on
+    // the same connection pool and delay a plate read that a driver is sat
+    // waiting for.
+    if (!manual && agentState !== 'idle') return null;
+    verifySweepBusy = true;
+    try {
+      const res = await axios.post('/api/scale-agent/verify-sweep', { limit: manual ? 10 : 3 }, { timeout: 120000 });
+      const d = res.data || {};
+      if (d.checked > 0) {
+        agentLog('verified ' + d.checked + ' closed ticket' + (d.checked === 1 ? '' : 's')
+                 + (d.flagged ? ' — ' + d.flagged + ' FLAGGED' : ' — all consistent'));
+        (d.results || []).forEach(function (r) {
+          if (r.status === 'mismatch') agentLog('⚠ ' + (r.ticket_number || r.ticket_id) + ': ' + r.note);
+          else if (r.plate_learned) agentLog('learned plate ' + r.plate_learned + ' for ' + (r.ticket_number || r.ticket_id) + ' from both photos');
+        });
+        loadCompletedToday();
+      } else if (manual) {
+        agentLog('verify: nothing waiting to be checked');
+      }
+      return d;
+    } catch (e) {
+      // Background work must never raise anything at the operator.
+      if (manual) agentLog('verify failed: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      return null;
+    } finally {
+      verifySweepBusy = false;
+    }
+  }
+
+  function startVerifySweep() {
+    if (verifySweepTimer) clearInterval(verifySweepTimer);
+    // Ten minutes: tickets close a handful of times an hour at most, and this
+    // costs two images per ticket, so there is nothing to gain from running it
+    // hot. The first run is delayed so it cannot compete with page load.
+    verifySweepTimer = setInterval(function () { runVerifySweep(false); }, 600000);
+    setTimeout(function () { runVerifySweep(false); }, 90000);
+  }
+
   // ── Init ──
   (function init() {
     if (typeof axios !== 'undefined') {
@@ -3993,6 +4070,7 @@ export function renderScaleHouse(): string {
       loadBridgePrinters();
       initCamera(); startAutoRefresh();
       loadAgentSettings();
+      startVerifySweep();
       bootstrapScale();
       startStaleWatchdog();
       // Reveal price-management button only to roles permitted by the backend

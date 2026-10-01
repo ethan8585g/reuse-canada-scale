@@ -4,10 +4,19 @@ import { photoOversize } from '../utils/photo'
 import { GST_RATE, cents } from '../utils/money'
 import { todayEdmonton } from '../utils/date'
 import { hashPassword } from '../utils/passwords'
+import { normalizeAppearance } from './scaleAgent'
 
 type Bindings = { DB: D1Database }
 
 export const scaleTicketRoutes = new Hono<{ Bindings: Bindings }>()
+
+// What the camera saw, validated through the SAME function the matcher uses.
+// A writer and a matcher that disagree about what a valid appearance looks like
+// would silently stop matching, so there is deliberately only one definition.
+function appearanceJson(raw: unknown): string | null {
+  const a = normalizeAppearance(raw)
+  return a ? JSON.stringify(a) : null
+}
 
 // Apply auth middleware
 scaleTicketRoutes.use('*', authMiddleware, employeeOnly)
@@ -334,12 +343,16 @@ scaleTicketRoutes.post('/field', async (c) => {
 // Quick-create ticket from scale PRINT trigger (weight-in only, no customer yet)
 scaleTicketRoutes.post('/print-trigger', async (c) => {
   try {
-    const { weight, photo, material, source, plate, plate_confidence } = await c.req.json()
+    const { weight, photo, material, source, plate, plate_confidence, appearance } = await c.req.json()
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
     // Plate as read off the weigh-in frame. Stored on vehicle_plate — the same
     // column the manual New Ticket form writes — so plate matching works for
     // operator-typed plates too, not only camera reads.
     const normPlate = String(plate || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+    // Coarse attributes the camera CAN read when the plate is too small to
+    // resolve — body style, colour, painted lettering. This is what lets the
+    // agent tell two open tickets apart on a yard whose plates do not read.
+    const lookIn = appearanceJson(appearance)
     if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
 
     const employeeId = c.get('userId')
@@ -361,10 +374,11 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
     }
 
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
-      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, vehicle_plate, plate_in_confidence, plate_source, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, vehicle_plate, plate_in_confidence, plate_source, appearance_in, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
       params: [tn, walkInId, employeeId, tireType, weight, now, photo || null, photo ? now : null,
-               normPlate || null, normPlate ? (Number(plate_confidence) || null) : null, normPlate ? 'vision' : null],
+               normPlate || null, normPlate ? (Number(plate_confidence) || null) : null, normPlate ? 'vision' : null,
+               lookIn],
     }))
 
     await auditLog(c.env.DB, ticketId, 'weighed_in', employeeId, {
@@ -475,7 +489,7 @@ scaleTicketRoutes.post('/:id/weight', async (c) => {
 scaleTicketRoutes.post('/:id/merge-out', async (c) => {
   const id = c.req.param('id')
   try {
-    const { weight, photo, plate, plate_confidence } = await c.req.json()
+    const { weight, photo, plate, plate_confidence, appearance } = await c.req.json()
     const employeeId = c.get('userId')
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
     if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
@@ -483,6 +497,7 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
     // to, this is what the camera actually read on the way out. Storing both
     // means a mismatch is visible after the fact instead of overwritten.
     const outPlate = String(plate || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+    const lookOut = appearanceJson(appearance)
 
     const ticket = await c.env.DB.prepare(
       'SELECT * FROM scale_tickets WHERE id = ?'
@@ -515,12 +530,13 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
         photo_out = ?, photo_out_at = ?,
         plate_out = ?, plate_out_confidence = ?,
         vehicle_plate = COALESCE(vehicle_plate, ?),
+        appearance_out = ?,
         price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
         completed_by = ?, status = 'completed', updated_at = datetime('now')
        WHERE id = ?`
     ).bind(weight, now, netWeight, photo || null, photo ? now : null,
            outPlate || null, outPlate ? (Number(plate_confidence) || null) : null,
-           outPlate || null,
+           outPlate || null, lookOut,
            pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, id).run()
 
     await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {

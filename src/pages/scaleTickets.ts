@@ -290,7 +290,12 @@ export function renderScaleTickets(): string {
           escHtml(ticketStatusText(t.status)) + '</span>';
       }
       function ticketIcons(t) {
-        return (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '') +
+        // A ticket the second-pass check flagged has to be findable from the
+        // list. Buried in the detail modal it would only ever be seen by
+        // somebody who already suspected something.
+        return (t.verify_status === 'mismatch' ? '<i class="fas fa-triangle-exclamation text-red-500 text-[10px] ml-1" title="Weigh-in and weigh-out photos do not agree — needs review"></i>' : '') +
+               (t.verify_status === 'ok' ? '<i class="fas fa-circle-check text-green-500 text-[10px] ml-1" title="Photos verified: same vehicle in and out"></i>' : '') +
+               (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '') +
                (t.receipt_printed ? '<i class="fas fa-print text-blue-400 text-[10px] ml-1" title="Receipt printed"></i>' : '') +
                (t.manual_entry ? '<i class="fas fa-keyboard text-orange-400 text-[10px] ml-1" title="Manual entry"></i>' : '');
       }
@@ -936,6 +941,25 @@ export function renderScaleTickets(): string {
         }
       }
 
+      // Run the second-pass check on one ticket on demand. The sweep on the
+      // scale-house station does this on its own every ten minutes; this is for
+      // the moment somebody is looking at a ticket and wants an answer now.
+      async function verifyTicket(id) {
+        const btn = event && event.target;
+        if (btn) { btn.textContent = 'Checking…'; btn.disabled = true; }
+        try {
+          const res = await axios.post('/api/scale-agent/verify', { ticket_id: id });
+          const d = res.data || {};
+          if (d.ok === false && d.error) { alert(d.error); if (btn) { btn.textContent = 'Check now'; btn.disabled = false; } return; }
+          // Re-open the ticket so the verdict renders through the normal path
+          // rather than being patched into the DOM in a second place.
+          viewTicket(id);
+        } catch (e) {
+          alert('Verification failed: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+          if (btn) { btn.textContent = 'Check now'; btn.disabled = false; }
+        }
+      }
+
       async function viewTicket(id) {
         try {
           const res = await axios.get('/api/scale-tickets/' + id);
@@ -954,14 +978,45 @@ export function renderScaleTickets(): string {
           const plateMismatch = t.plate_out && t.vehicle_plate &&
             String(t.plate_out).toUpperCase() !== String(t.vehicle_plate).toUpperCase();
 
+          // What the camera could see about the vehicle even when the plate was
+          // too small to read. This is what the agent actually matched on at
+          // this yard, so it belongs next to the photo it came from.
+          const lookTag = function (raw) {
+            if (!raw) return '';
+            let a = raw;
+            if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return ''; } }
+            if (!a) return '';
+            const bits = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+            const text = a.markings ? (bits ? bits + ' · ' + a.markings : a.markings) : bits;
+            if (!text) return '';
+            return '<span class="ml-2 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px]">' + escHtml(text) + '</span>';
+          };
+
           let photosHtml = '';
           if (t.photo_in || t.photo_out) {
             photosHtml = '<div class="grid grid-cols-2 gap-3 mt-4">' +
-              (t.photo_in ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-In Photo' + plateTag(t.vehicle_plate, t.plate_in_confidence) + '</div><img src="' + t.photo_in + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
-              (t.photo_out ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out Photo' + plateTag(t.plate_out, t.plate_out_confidence) + '</div><img src="' + t.photo_out + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
+              (t.photo_in ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-In Photo' + plateTag(t.vehicle_plate, t.plate_in_confidence) + lookTag(t.appearance_in) + '</div><img src="' + t.photo_in + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
+              (t.photo_out ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out Photo' + plateTag(t.plate_out, t.plate_out_confidence) + lookTag(t.appearance_out) + '</div><img src="' + t.photo_out + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
             '</div>';
           } else if (t.vehicle_plate) {
             photosHtml = '<div class="mt-4 text-xs text-gray-500">Plate' + plateTag(t.vehicle_plate, t.plate_in_confidence) + '</div>';
+          }
+
+          // The second-pass verdict: a separate check that compared the two
+          // photos against each other after the ticket closed. Shown even when
+          // it is clean, because "this was checked" is itself the useful part.
+          if (t.verify_status) {
+            const vs = {
+              ok: ['bg-green-50 border-green-200 text-green-800', 'fa-circle-check', 'Verified'],
+              mismatch: ['bg-red-50 border-red-200 text-red-800', 'fa-triangle-exclamation', 'Needs review'],
+              unverifiable: ['bg-gray-50 border-gray-200 text-gray-600', 'fa-circle-question', 'Could not verify']
+            }[t.verify_status] || ['bg-gray-50 border-gray-200 text-gray-600', 'fa-circle-question', t.verify_status];
+            photosHtml += '<div class="mt-2 px-3 py-2 rounded-lg border text-[11px] ' + vs[0] + '">'
+              + '<i class="fas ' + vs[1] + ' mr-1"></i><span class="font-semibold">' + vs[2] + '</span> — '
+              + escHtml(t.verify_note || '') + '</div>';
+          } else if (t.photo_in && t.photo_out) {
+            photosHtml += '<div class="mt-2 text-[11px] text-gray-400"><i class="fas fa-hourglass-half mr-1"></i>Not yet double-checked. '
+              + '<button onclick="verifyTicket(' + t.id + ')" class="underline hover:text-gray-600">Check now</button></div>';
           }
           if (plateMismatch) {
             photosHtml += '<div class="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800">'
