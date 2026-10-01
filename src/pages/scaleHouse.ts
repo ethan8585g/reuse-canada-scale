@@ -3095,7 +3095,10 @@ export function renderScaleHouse(): string {
     if (agentSettings && Number(agentSettings.plate_matching) === 0) return null;
     const started = Date.now();
     try {
-      const res = await axios.post('/api/scale-agent/vision', { photo: photo }, { timeout: 8000 });
+      // Measured on the real yard camera: ~3-5s warm, 8s+ on a cold worker.
+      // An 8s timeout threw away exactly the reads that took longest, so the
+      // first truck after a quiet spell was the one that lost its plate.
+      const res = await axios.post('/api/scale-agent/vision', { photo: photo }, { timeout: 15000 });
       const d = res.data || {};
       const ms = Date.now() - started;
       if (!d.ok) {
