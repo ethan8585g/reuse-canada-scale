@@ -15,15 +15,40 @@
 //   GET  /scale         → text/event-stream, raw bytes base64-encoded
 //   GET  /ports         → list of available serial-style devices
 //   POST /reconfigure   → { baud, parity, dataBits, stopBits, port }
+//   GET  /printers      → CUPS printers this Mac can reach, and the default
+//   POST /print         → { receipt, printer? } prints an 80mm receipt, silently
+//   GET  /camera/agentdvr → list cameras from a local Agent DVR install
+//   GET  /camera/probe  → ?url=  test a LAN camera URL, report what it is
+//   GET  /camera/snapshot → ?url=  one still frame, CORS-clean
+//   GET  /camera/mjpeg  → ?url=  piped multipart stream
 //   GET  /              → friendly status page
 
 // ESM imports: package.json sets "type": "module", so this file is loaded as an
 // ES module and require() is not available here.
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import http from 'node:http';
-import { execSync } from 'node:child_process';
+import https from 'node:https';
+import { execSync, execFileSync } from 'node:child_process';
+
+// libuv runs every async fs and DNS call on a 4-thread pool by default, and a
+// read already handed to a thread cannot be cancelled. The serial reader below
+// opens the indicator as a file stream, so on a station whose adapter is
+// unplugged or asleep each reopen leaves one thread blocked forever; after four
+// of those the pool is gone and every later fs/DNS call — including the camera
+// proxy's — queues indefinitely while /status still answers, because that path
+// touches neither. Raising the pool does not fix the leak (see the note on
+// startReading) but it buys a very large margin. Must be set before libuv
+// initialises the pool, i.e. before the first async fs or DNS call.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '64';
 
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '5555', 10);
+// Receipt printer. PRINTER can name a CUPS queue (see `lpstat -p`); when it is
+// unset the browser passes one per request, and failing that we use the system
+// default. RECEIPT_COLS is 48 for 80mm paper at Font A, 32 for 58mm.
+const PRINTER_NAME = process.env.PRINTER || null;
+const RECEIPT_COLS = parseInt(process.env.RECEIPT_COLS || '48', 10);
 let cfg = {
   port:     process.env.PORT_PATH || null,
   baud:     parseInt(process.env.BAUD || '9600', 10),
@@ -40,6 +65,124 @@ let stream = null;
 let openPort = null;
 let totalBytes = 0;
 let lastByteAt = 0;
+
+// ── Receipt printing ────────────────────────────────────────────────────────
+// The Epson is a USB device owned by CUPS, so a browser cannot address it: the
+// best window.print() can do is hand the job to whatever printer the OS calls
+// default, and only silently if Chrome happened to be cold-started with
+// --kiosk-printing. Here we are a local process, so we can call `lp` directly:
+// no dialog ever, any browser, and the queue is named explicitly rather than
+// being "whatever is default" (which on this Mac is an office inkjet).
+
+function defaultPrinter() {
+  try {
+    const out = execSync('lpstat -d 2>/dev/null', { encoding: 'utf8' });
+    const m = out.match(/:\s*(\S+)/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
+function listPrinters() {
+  let printers = [];
+  try {
+    const out = execSync('lpstat -p 2>/dev/null', { encoding: 'utf8' });
+    printers = out.split('\n')
+      .map(l => (l.match(/^printer\s+(\S+)/) || [])[1])
+      .filter(Boolean);
+  } catch { /* no CUPS, or no queues */ }
+  const dflt = defaultPrinter();
+  // Surface the likely receipt printer so the UI can preselect it instead of
+  // making the operator recognise a mangled CUPS queue name.
+  const receiptGuess = printers.find(p => /epson|tm.?t88|thermal|receipt|pos/i.test(p)) || null;
+  return { printers, default: dflt, receiptGuess, configured: PRINTER_NAME };
+}
+
+function padLine(left, right, cols) {
+  const l = String(left ?? '');
+  const r = String(right ?? '');
+  const gap = Math.max(1, cols - l.length - r.length);
+  return l + ' '.repeat(gap) + r;
+}
+
+function centre(text, cols) {
+  const t = String(text ?? '');
+  if (t.length >= cols) return t.slice(0, cols);
+  return ' '.repeat(Math.floor((cols - t.length) / 2)) + t;
+}
+
+function money(v) {
+  return v === null || v === undefined || v === '' ? null : '$' + Number(v).toFixed(2);
+}
+
+function kg(v) {
+  return v === null || v === undefined || v === '' ? null : Number(v).toFixed(1) + ' kg';
+}
+
+// Build the ESC/POS byte stream for one receipt.
+function receiptBytes(r, cols) {
+  const ESC = '\x1B', GS = '\x1D';
+  const init = ESC + '@';
+  const left = ESC + 'a' + '\x00';
+  const mid = ESC + 'a' + '\x01';
+  const boldOn = ESC + 'E' + '\x01';
+  const boldOff = ESC + 'E' + '\x00';
+  const big = GS + '!' + '\x11';     // double width + height
+  const normal = GS + '!' + '\x00';
+  const cut = GS + 'V' + '\x42' + '\x00';   // partial cut, feeds first
+  const rule = '-'.repeat(cols);
+
+  let out = init + mid;
+  out += boldOn + big + (r.company || 'REUSE CANADA') + '\n' + normal + boldOff;
+  if (r.tagline) out += r.tagline + '\n';
+  if (r.location) out += r.location + '\n';
+  out += '\n' + boldOn + 'SCALE TICKET' + boldOff + '\n';
+  out += (r.ticket_number || '') + '\n';
+
+  const when = r.date ? new Date(String(r.date).replace(' ', 'T') + 'Z') : null;
+  if (when && !isNaN(when.getTime())) out += when.toLocaleString('en-CA') + '\n';
+
+  out += left + '\n' + rule + '\n';
+  out += padLine('Customer', (r.customer || 'Walk-In').slice(0, cols - 10), cols) + '\n';
+  if (r.material) out += padLine('Material', String(r.material).replace(/_/g, ' '), cols) + '\n';
+  out += rule + '\n';
+
+  if (kg(r.weight_in)) out += padLine('Weight in', kg(r.weight_in), cols) + '\n';
+  if (kg(r.weight_out)) out += padLine('Weight out', kg(r.weight_out), cols) + '\n';
+  if (kg(r.net_weight)) {
+    out += boldOn + padLine('NET WEIGHT', kg(r.net_weight), cols) + boldOff + '\n';
+  }
+  out += rule + '\n';
+
+  if (r.price_per_kg) out += padLine('Rate', '$' + Number(r.price_per_kg).toFixed(4) + '/kg', cols) + '\n';
+  if (money(r.subtotal)) out += padLine('Subtotal', money(r.subtotal), cols) + '\n';
+  if (money(r.tax_amount)) {
+    const pct = r.tax_rate ? ' (' + (Number(r.tax_rate) * 100).toFixed(0) + '%)' : '';
+    out += padLine('Tax' + pct, money(r.tax_amount), cols) + '\n';
+  }
+  if (money(r.grand_total)) {
+    out += '\n' + boldOn + big + padLine('TOTAL', money(r.grand_total), Math.floor(cols / 2)) + normal + boldOff + '\n';
+  }
+  if (r.payment_method) out += '\n' + padLine('Paid by', r.payment_method, cols) + '\n';
+
+  out += '\n' + mid + 'Thank you for choosing Reuse Canada\n';
+  out += centre('reusecanadascale.com', cols) + '\n';
+  out += '\n\n\n' + cut;
+  return Buffer.from(out, 'binary');
+}
+
+// `lp` reads the job from a file rather than stdin so a failure surfaces as a
+// non-zero exit with a real message, not a broken pipe.
+function printReceipt(receipt, printer) {
+  const bytes = receiptBytes(receipt, RECEIPT_COLS);
+  const tmp = path.join(os.tmpdir(), 'rc-receipt-' + Date.now() + '.bin');
+  fs.writeFileSync(tmp, bytes);
+  try {
+    const out = execFileSync('lp', ['-d', printer, '-o', 'raw', tmp], { encoding: 'utf8' });
+    return out.trim();
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+  }
+}
 
 function listPorts() {
   try {
@@ -87,6 +230,12 @@ function closeStream() {
   openPort = null;
 }
 
+// Known leak, deliberately not changed here: fs.createReadStream on a serial
+// device that never delivers leaves its outstanding read parked on a libuv
+// thread, and closeStream() cannot call it back. Every reconnect below costs
+// one more thread. The real fix is to stop reopening a device that has never
+// produced a byte (or to talk to the port without fs), which is a change to the
+// scale path and wants its own testing.
 function startReading() {
   closeStream();
   const path = chooseDefaultPort();
@@ -158,6 +307,12 @@ function sendCors(res, originHeader) {
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Bridge-Token');
+  // Private Network Access: a page served from the public internet (the CRM is
+  // https://www.reusecanadascale.com) that fetches a loopback address gets a
+  // CORS preflight carrying Access-Control-Request-Private-Network, and Chrome
+  // drops the request unless the answer opts in. Without this the camera frames
+  // and the scale feed fail with nothing in the console but a CORS error.
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
 }
 
 function readBody(req) {
@@ -168,6 +323,87 @@ function readBody(req) {
       try { resolve(JSON.parse(s || '{}')); } catch { resolve({}); }
     });
   });
+}
+
+// ── Camera proxy ────────────────────────────────────────────────────────────
+// Yard cameras speak plain http on the LAN; the CRM is served over https. A
+// browser blocks that combination as mixed content, and even where it doesn't,
+// drawing a cross-origin frame onto a canvas taints it so toDataURL() throws —
+// which would silently kill every weigh-in photo. Both problems disappear if
+// the frames come from here instead: http://localhost is a secure context, and
+// we answer with the page's own allow-listed origin.
+//
+// Only private-network targets are reachable. Without that check this would be
+// an open proxy for any allow-listed page. LAN literals and *.local names
+// cannot be pointed outside the yard, and neither can be DNS-rebound the way a
+// free-form hostname could.
+//
+// Loopback IS allowed, because the recorder usually runs on this very Mac:
+// Agent DVR answers on 127.0.0.1:8090, and pointing the panel at the Mac's LAN
+// address instead would break the camera every time DHCP hands out a new lease.
+// The one loopback target that is refused is this bridge's own port, so the
+// proxy cannot be aimed at itself.
+const PRIVATE_IPV4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+const CAMERA_EXTRA_HOSTS = (process.env.CAMERA_ALLOWED_HOSTS || '')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+function cameraTarget(raw, user, pass) {
+  let u;
+  try { u = new URL(String(raw || '')); }
+  catch { throw new Error('Camera URL is not a valid URL'); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error('Camera URL must be http:// or https:// — a browser cannot play RTSP. Most IP cameras also expose a JPEG snapshot or MJPEG path.');
+  }
+  const host = u.hostname.toLowerCase();
+  const loopback = host === 'localhost' || host === '::1' || /^127\./.test(host);
+  const allowed = PRIVATE_IPV4.test(host) || host.endsWith('.local') || loopback || CAMERA_EXTRA_HOSTS.includes(host);
+  if (!allowed) {
+    throw new Error('Camera host must be this machine, the LAN (10.x, 172.16-31.x, 192.168.x), or a .local name. Set CAMERA_ALLOWED_HOSTS to add others.');
+  }
+  if (loopback && String(u.port || (u.protocol === 'https:' ? 443 : 80)) === String(HTTP_PORT)) {
+    throw new Error('That address is the scale-bridge itself. Point it at the camera or recorder — Agent DVR is normally port 8090.');
+  }
+  if (user) { u.username = user; u.password = pass || ''; }
+  return u;
+}
+
+// Fetch once from the camera and hand the caller the live response. Credentials
+// ride in an Authorization header rather than the URL because some firmware
+// ignores userinfo in the request line.
+function cameraRequest(u, onResponse, onError) {
+  const mod = u.protocol === 'https:' ? https : http;
+  const headers = { 'User-Agent': 'reuse-canada-scale-bridge/1' };
+  if (u.username) {
+    const raw = decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password || '');
+    headers.Authorization = 'Basic ' + Buffer.from(raw).toString('base64');
+  }
+  const opts = {
+    protocol: u.protocol, hostname: u.hostname, port: u.port,
+    path: u.pathname + u.search, headers,
+    // A fresh connection every time. With the default pooling agent, the
+    // socket carrying an MJPEG stream goes back into the pool mid-frame when
+    // the viewer stops watching, and every later request to that camera reuses
+    // it and hangs until the 8s timeout. Camera traffic is a handful of
+    // LAN-local requests a second; connection reuse buys nothing here.
+    agent: false,
+    // Yard cameras ship self-signed certs; refusing them would make https
+    // cameras unusable while adding nothing (the link never leaves the LAN).
+    rejectUnauthorized: false,
+  };
+  const req = mod.request(opts, onResponse);
+  req.setTimeout(8000, () => { req.destroy(new Error('Camera did not respond within 8s')); });
+  req.on('error', onError);
+  req.end();
+  return req;
+}
+
+// A 401 is the single most common reason a swap-in fails, so say exactly what
+// the camera asked for instead of a bare status code.
+function authHint(res) {
+  const wa = String(res.headers['www-authenticate'] || '');
+  if (/digest/i.test(wa)) return 'Camera requires Digest auth, which this proxy does not speak. Enable Basic auth on the camera (Hikvision: Security → Authentication → WEB = digest/basic; Dahua: Enable "Compatible with older editions").';
+  if (/basic/i.test(wa)) return 'Camera rejected the username/password.';
+  return 'Camera refused the request (HTTP ' + res.statusCode + ').';
 }
 
 const server = http.createServer(async (req, res) => {
@@ -185,6 +421,207 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
 
   const url = new URL(req.url, 'http://localhost');
+
+  // Ask a local Agent DVR which cameras it has, so the operator picks a camera
+  // by name instead of hand-assembling /grab.jpg?oid=N&size=WxH. Agent DVR runs
+  // on this machine by default and answers getObjects without auth on loopback.
+  if (url.pathname === '/camera/agentdvr') {
+    const host = url.searchParams.get('host') || '127.0.0.1';
+    const port = parseInt(url.searchParams.get('port') || '8090', 10) || 8090;
+    let target;
+    try {
+      target = cameraTarget('http://' + host + ':' + port + '/command.cgi?cmd=getObjects');
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: err.message }));
+    }
+    let body = '';
+    const upstream = cameraRequest(target, (cr) => {
+      if (cr.statusCode !== 200) {
+        cr.resume();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'Agent DVR answered HTTP ' + cr.statusCode }));
+      }
+      cr.setEncoding('utf8');
+      cr.on('data', (c) => { body += c; });
+      cr.on('end', () => {
+        try {
+          const d = JSON.parse(body);
+          // typeID 2 is a camera; 1 is a microphone, which has no picture.
+          const cams = (d.objectList || [])
+            .filter((o) => o && o.typeID === 2)
+            .map((o) => ({ id: o.id, name: o.name || ('Camera ' + o.id) }));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, host, port, cameras: cams }));
+        } catch (err) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'That port answered, but not with Agent DVR data.' }));
+        }
+      });
+    }, (err) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'No Agent DVR on ' + host + ':' + port + ' (' + err.message + ')' }));
+    });
+    res.on('close', () => { if (!res.writableEnded) upstream.destroy(); });
+    return;
+  }
+
+  // Camera proxy. See cameraTarget() for why these exist and what they refuse.
+  if (url.pathname.startsWith('/camera/')) {
+    let target;
+    try {
+      target = cameraTarget(url.searchParams.get('url'), url.searchParams.get('user'), url.searchParams.get('pass'));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+
+    // Probe answers "is this URL actually a camera?" in a form the settings
+    // panel can show: status, content type, and whether it looks like a still
+    // or a stream — so the operator knows which mode to pick.
+    if (url.pathname === '/camera/probe') {
+      let bytes = 0;
+      const upstream = cameraRequest(target, (cr) => {
+        const ct = String(cr.headers['content-type'] || '');
+        if (cr.statusCode === 401 || cr.statusCode === 403) {
+          cr.destroy();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, status: cr.statusCode, error: authHint(cr) }));
+        }
+        cr.on('data', (c) => {
+          bytes += c.length;
+          // Enough to identify the payload; we are not downloading a stream.
+          if (bytes > 65536) { cr.destroy(); finish(); }
+        });
+        cr.on('end', finish);
+        let done = false;
+        function finish() {
+          if (done) return; done = true;
+          const isStream = /multipart/i.test(ct);
+          const isStill = /image\/(jpeg|jpg|png)/i.test(ct);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: cr.statusCode === 200 && (isStream || isStill),
+            status: cr.statusCode,
+            contentType: ct || null,
+            kind: isStream ? 'mjpeg' : isStill ? 'snapshot' : 'unknown',
+            bytes,
+            error: cr.statusCode !== 200 ? 'Camera answered HTTP ' + cr.statusCode
+                 : (!isStream && !isStill) ? 'Answered ' + (ct || 'no content-type') + ' — that is a web page, not an image. Use the camera\'s snapshot or MJPEG path.'
+                 : null,
+          }));
+        }
+      }, (err) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      });
+      // res, not req: on a bodyless GET the request stream is already complete,
+      // so req 'close' fires before we have answered and would cancel the very
+      // fetch we are waiting on — every frame arrived as ERR_ABORTED. The
+      // response closing is what actually means the browser went away.
+      res.on('close', () => { if (!res.writableEnded) upstream.destroy(); });
+      return;
+    }
+
+    // One still frame. The page polls this for snapshot-mode preview and reads
+    // it straight onto the capture canvas.
+    if (url.pathname === '/camera/snapshot') {
+      const chunks = [];
+      let size = 0;
+      const upstream = cameraRequest(target, (cr) => {
+        if (cr.statusCode !== 200) {
+          const msg = (cr.statusCode === 401 || cr.statusCode === 403) ? authHint(cr) : 'Camera answered HTTP ' + cr.statusCode;
+          cr.resume();
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: msg }));
+        }
+        cr.on('data', (c) => {
+          size += c.length;
+          // A snapshot URL that is really a stream would otherwise buffer
+          // forever; 12 MB is far past any single JPEG this will ever see.
+          if (size > 12 * 1024 * 1024) { cr.destroy(); try { res.destroy(); } catch {} return; }
+          chunks.push(c);
+        });
+        cr.on('end', () => {
+          res.writeHead(200, {
+            'Content-Type': cr.headers['content-type'] || 'image/jpeg',
+            'Cache-Control': 'no-store',
+          });
+          res.end(Buffer.concat(chunks));
+        });
+        cr.on('error', () => { try { res.destroy(); } catch {} });
+      }, (err) => {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+      // res, not req: on a bodyless GET the request stream is already complete,
+      // so req 'close' fires before we have answered and would cancel the very
+      // fetch we are waiting on — every frame arrived as ERR_ABORTED. The
+      // response closing is what actually means the browser went away.
+      res.on('close', () => { if (!res.writableEnded) upstream.destroy(); });
+      return;
+    }
+
+    // Continuous multipart stream, piped through untouched so an <img> can
+    // render it directly.
+    if (url.pathname === '/camera/mjpeg') {
+      const upstream = cameraRequest(target, (cr) => {
+        if (cr.statusCode !== 200) {
+          const msg = (cr.statusCode === 401 || cr.statusCode === 403) ? authHint(cr) : 'Camera answered HTTP ' + cr.statusCode;
+          cr.resume();
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: msg }));
+        }
+        res.writeHead(200, {
+          'Content-Type': cr.headers['content-type'] || 'multipart/x-mixed-replace',
+          'Cache-Control': 'no-store',
+          'X-Accel-Buffering': 'no',
+        });
+        cr.pipe(res);
+        cr.on('error', () => { try { res.end(); } catch {} });
+      }, (err) => {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+      // An MJPEG connection stays open until the operator navigates away;
+      // without this the camera keeps streaming into a dead socket. Hung off
+      // res rather than req for the same reason as the other two handlers.
+      res.on('close', () => upstream.destroy());
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Unknown camera endpoint' }));
+  }
+
+  if (url.pathname === '/printers') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(listPrinters()));
+    return;
+  }
+
+  // Print a receipt straight to a CUPS queue. This is the whole point of doing
+  // it here rather than in the browser: `lp` never shows a dialog, so it does
+  // not care which browser is open or how Chrome was launched.
+  if (url.pathname === '/print' && req.method === 'POST') {
+    const body = await readBody(req);
+    const printer = body.printer || PRINTER_NAME || defaultPrinter();
+    if (!printer) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'No printer selected, no PRINTER env var, and no system default' }));
+    }
+    try {
+      const job = printReceipt(body.receipt || {}, printer);
+      console.log(`[bridge] printed ${body.receipt?.ticket_number || '(no number)'} -> ${printer}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, printer, job }));
+    } catch (err) {
+      console.error('[bridge] print failed:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
 
   if (url.pathname === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

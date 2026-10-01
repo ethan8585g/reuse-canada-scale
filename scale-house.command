@@ -5,8 +5,13 @@
 # Double-click this file. It restarts Chrome with --kiosk-printing so
 # window.print() goes STRAIGHT to the default printer with no dialog.
 #
-# WHY THIS EXISTS
-# The receipt is printed by the browser. In ordinary Chrome, window.print()
+# WHY THIS EXISTS -- AND WHEN YOU NO LONGER NEED IT
+# This is now the FALLBACK path, not the main one. If scale-bridge.js is
+# running and a receipt printer is picked in the Scale House sidebar, receipts
+# print through `lp` on this Mac: silent in any browser, no flags, no cold
+# start. Use this launcher only when the bridge is not running.
+#
+# Browser printing is what needs the flag: in ordinary Chrome, window.print()
 # always opens the macOS print preview and waits for a click -- no JavaScript
 # can suppress that. --kiosk-printing is the only switch that removes it, and
 # it can only be set when Chrome COLD STARTS.

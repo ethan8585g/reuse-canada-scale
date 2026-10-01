@@ -305,28 +305,136 @@ export function renderScaleHouse(): string {
 
       <!-- Camera + Open Tickets side by side -->
       <div class="grid md:grid-cols-5 gap-4">
-        <!-- Camera (compact) -->
-        <div id="camera-section" class="md:col-span-2 bg-white rounded-xl shadow-card border border-gray-100 p-3">
-          <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-1.5">
-              <i class="fas fa-camera text-rc-green text-sm"></i>
+        <!-- Camera. Source-agnostic on purpose: webcam today, yard camera later
+             (see the CAMERA block in the script for how the swap works). -->
+        <div id="camera-section" class="md:col-span-2 bg-white rounded-xl shadow-card border border-gray-100 p-3 flex flex-col">
+          <div class="flex items-center justify-between mb-2 gap-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <i class="fas fa-video text-rc-green text-sm"></i>
               <span class="text-xs font-semibold text-gray-600">Camera</span>
-              <span id="camera-status" class="px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-red-100 text-red-600">OFF</span>
+              <span id="camera-status" class="px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-gray-100 text-gray-500">OFF</span>
             </div>
-            <div class="flex gap-1">
-              <button onclick="startCamera()" id="btn-start-cam" class="px-2 py-1 bg-rc-green text-white text-[10px] font-semibold rounded"><i class="fas fa-video"></i></button>
-              <button onclick="stopCamera()" id="btn-stop-cam" class="hidden px-2 py-1 bg-red-500 text-white text-[10px] font-semibold rounded"><i class="fas fa-video-slash"></i></button>
-              <button onclick="capturePhoto()" id="btn-capture" class="hidden px-2 py-1 bg-blue-600 text-white text-[10px] font-semibold rounded"><i class="fas fa-camera"></i></button>
+            <div class="flex gap-1 shrink-0">
+              <button onclick="startCamera()" id="btn-start-cam" title="Start camera" class="px-2 py-1 bg-rc-green text-white text-[10px] font-semibold rounded hover:opacity-90 btn-press"><i class="fas fa-play"></i></button>
+              <button onclick="stopCamera()" id="btn-stop-cam" title="Stop camera" class="hidden px-2 py-1 bg-red-500 text-white text-[10px] font-semibold rounded hover:opacity-90 btn-press"><i class="fas fa-stop"></i></button>
+              <button onclick="capturePhoto('manual')" id="btn-capture" title="Capture a still" class="hidden px-2 py-1 bg-blue-600 text-white text-[10px] font-semibold rounded hover:opacity-90 btn-press"><i class="fas fa-camera"></i></button>
+              <button onclick="toggleCameraFullscreen()" id="btn-cam-full" title="Fullscreen" class="px-2 py-1 bg-gray-100 text-gray-500 text-[10px] rounded hover:bg-gray-200"><i class="fas fa-expand"></i></button>
+              <button onclick="toggleCameraSettings()" id="btn-cam-settings" title="Camera settings" class="px-2 py-1 bg-gray-100 text-gray-500 text-[10px] rounded hover:bg-gray-200"><i class="fas fa-cog"></i></button>
             </div>
           </div>
-          <div class="relative">
-            <video id="camera-preview" autoplay playsinline muted class="w-full h-32 bg-gray-900 rounded-lg object-cover"></video>
+
+          <!-- Live view. Both frame elements are always present; only the one
+               matching the configured source is shown, which is what lets the
+               hardware change without the rest of the page noticing. -->
+          <div id="camera-stage" class="relative w-full bg-gray-900 rounded-lg overflow-hidden" style="aspect-ratio: 4 / 3;">
+            <video id="camera-preview" autoplay playsinline muted class="cam-frame hidden"></video>
+            <img id="camera-net" alt="" class="cam-frame hidden" />
+            <canvas id="camera-buffer" class="cam-frame hidden"></canvas>
             <canvas id="camera-canvas" class="hidden"></canvas>
-            <div id="camera-flash" class="hidden absolute inset-0 bg-white rounded-lg opacity-80"></div>
+
+            <div id="camera-idle" class="absolute inset-0 flex flex-col items-center justify-center text-center px-3">
+              <i id="camera-idle-icon" class="fas fa-video-slash text-gray-600 text-2xl mb-1"></i>
+              <p id="camera-idle-text" class="text-[10px] text-gray-400 leading-snug">Camera off</p>
+              <button id="camera-idle-start" onclick="startCamera()" class="mt-2 px-2.5 py-1 bg-rc-green text-white text-[10px] font-semibold rounded hover:opacity-90">Start</button>
+            </div>
+
+            <div id="camera-live-dot" class="hidden absolute top-1.5 left-1.5 flex items-center gap-1 bg-black/60 rounded-full px-1.5 py-0.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+              <span id="camera-src-label" class="text-[9px] font-bold text-white tracking-wider">LIVE</span>
+            </div>
+
+            <!-- What you see here is exactly what a capture burns into the
+                 JPEG, so the operator can trust the stamp before it matters. -->
+            <div id="camera-overlay" class="hidden absolute inset-x-0 bottom-0 bg-black/60 px-2 py-1 flex items-center justify-between text-[10px] font-mono text-white">
+              <span id="camera-overlay-left">-</span>
+              <span id="camera-overlay-right">-</span>
+            </div>
+            <div id="camera-flash" class="hidden absolute inset-0 bg-white"></div>
           </div>
-          <select id="camera-select" class="mt-2 w-full text-[10px] border border-gray-200 rounded px-1 py-1 bg-white"><option value="">Select camera...</option></select>
-          <div id="last-capture" class="hidden mt-2">
-            <img id="last-capture-img" class="w-full h-20 rounded object-cover border border-green-400" />
+
+          <div class="mt-1 flex items-center justify-between gap-2">
+            <span id="camera-health" class="text-[10px] text-gray-400 truncate">Not started</span>
+            <button onclick="capturePhoto('test')" id="btn-cam-test" class="hidden text-[10px] text-gray-400 hover:text-gray-600 shrink-0"><i class="fas fa-vial mr-0.5"></i>Test shot</button>
+          </div>
+
+          <!-- Settings. Station-scoped (localStorage), like the receipt printer:
+               the camera belongs to the scale house, not to whoever logged in. -->
+          <div id="camera-settings" class="hidden mt-2 pt-2 border-t border-gray-100 space-y-2">
+            <div>
+              <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Source</label>
+              <div class="grid grid-cols-2 gap-1">
+                <button onclick="setCameraSource('webcam')" id="cam-src-webcam" class="px-2 py-1.5 text-[10px] font-semibold rounded-lg border-2 border-gray-200 bg-white text-gray-500"><i class="fas fa-laptop mr-1"></i>This computer</button>
+                <button onclick="setCameraSource('network')" id="cam-src-network" class="px-2 py-1.5 text-[10px] font-semibold rounded-lg border-2 border-gray-200 bg-white text-gray-500"><i class="fas fa-wifi mr-1"></i>Yard camera</button>
+              </div>
+            </div>
+
+            <div id="cam-webcam-cfg">
+              <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Device</label>
+              <div class="flex gap-1">
+                <select id="camera-select" onchange="onCameraDeviceChange(this.value)" class="flex-1 min-w-0 text-[10px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green"><option value="">Default camera</option></select>
+                <button onclick="enumerateCameras(true)" title="Re-scan for cameras" class="px-2 py-1.5 bg-gray-100 text-gray-600 text-[10px] rounded-lg hover:bg-gray-200"><i class="fas fa-sync-alt"></i></button>
+              </div>
+            </div>
+
+            <div id="cam-network-cfg" class="hidden space-y-2">
+              <div>
+                <button onclick="findAgentDvr()" id="btn-find-agent" class="w-full px-2 py-1.5 bg-green-50 text-rc-green border border-green-200 text-[10px] font-semibold rounded-lg hover:bg-green-100"><i class="fas fa-magnifying-glass mr-1"></i>Find Agent DVR cameras</button>
+                <div id="agent-cam-list" class="hidden mt-1.5 flex flex-wrap gap-1"></div>
+                <p id="agent-find-msg" class="hidden text-[10px] text-gray-400 leading-snug mt-1"></p>
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Camera address</label>
+                <input id="cam-url" type="url" placeholder="http://127.0.0.1:8090/grab.jpg?oid=1&amp;size=1280x720" class="w-full text-[10px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green font-mono" />
+                <p class="text-[10px] text-gray-400 leading-snug mt-1">A snapshot (.jpg) or MJPEG path. A Reolink speaks RTSP, which no browser can show — run it through Agent DVR and use the button above, or point this at any camera that publishes an HTTP image path.</p>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Feed type</label>
+                  <select id="cam-mode" onchange="camReadSettingsForm()" class="w-full text-[10px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green">
+                    <option value="snapshot">Snapshot (polled)</option>
+                    <option value="mjpeg">MJPEG (stream)</option>
+                  </select>
+                </div>
+                <div id="cam-fps-wrap">
+                  <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Frames / sec</label>
+                  <input id="cam-fps" type="number" min="0.2" max="10" step="0.2" value="2" onchange="camReadSettingsForm()" class="w-full text-[10px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green font-mono" />
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Username</label>
+                  <input id="cam-user" type="text" autocomplete="off" class="w-full text-[10px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green" />
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Password</label>
+                  <input id="cam-pass" type="password" autocomplete="new-password" class="w-full text-[10px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green" />
+                </div>
+              </div>
+              <button onclick="testNetworkCamera()" class="w-full px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-plug mr-1"></i>Test connection</button>
+              <p id="cam-test-result" class="text-[10px] text-gray-400 leading-snug"></p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-x-2 gap-y-1 pt-1 border-t border-gray-100">
+              <label class="flex items-center gap-1.5 text-[10px] text-gray-600 cursor-pointer"><input type="checkbox" id="cam-autostart" onchange="camReadSettingsForm()" class="rounded" /> Start automatically</label>
+              <label class="flex items-center gap-1.5 text-[10px] text-gray-600 cursor-pointer"><input type="checkbox" id="cam-stamp" onchange="camReadSettingsForm()" class="rounded" /> Stamp time + weight</label>
+              <label class="flex items-center gap-1.5 text-[10px] text-gray-600 cursor-pointer"><input type="checkbox" id="cam-mirror" onchange="camReadSettingsForm()" class="rounded" /> Mirror</label>
+              <label class="flex items-center gap-1.5 text-[10px] text-gray-600">Rotate
+                <select id="cam-rotate" onchange="camReadSettingsForm()" class="flex-1 text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white">
+                  <option value="0">0</option><option value="90">90</option><option value="180">180</option><option value="270">270</option>
+                </select>
+              </label>
+            </div>
+            <button onclick="camApplySettings()" class="w-full px-2 py-1.5 bg-rc-green text-white text-[10px] font-bold rounded-lg hover:opacity-90"><i class="fas fa-check mr-1"></i>Apply and restart camera</button>
+          </div>
+
+          <!-- Last few frames this station captured, so the operator can see at
+               a glance that a truck was actually photographed. -->
+          <div id="camera-recent" class="hidden mt-2 pt-2 border-t border-gray-100">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Recent captures</span>
+              <button onclick="clearCameraRecent()" class="text-[10px] text-gray-300 hover:text-gray-500">Clear</button>
+            </div>
+            <div id="camera-recent-strip" class="grid grid-cols-4 gap-1"></div>
           </div>
         </div>
 
@@ -447,11 +555,11 @@ export function renderScaleHouse(): string {
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-print text-gray-600"></i> Receipt Printer</h3>
         </div>
         <div class="p-3 space-y-2">
-          <div class="flex items-center gap-1.5">
-            <div class="w-2 h-2 rounded-full bg-green-400"></div>
-            <span class="text-[10px] text-gray-500">Browser print &middot; uses macOS default</span>
-          </div>
-          <p class="text-[10px] text-gray-500 leading-snug">Set your Epson TM-T88VI (USB) as the default printer in System Settings &rarr; Printers, then auto-print fires the OS print dialog after each weigh-out.</p>
+          <label class="block text-[10px] font-semibold text-gray-600">Receipt printer</label>
+          <select id="receipt-printer" onchange="saveReceiptPrinter(this.value)" class="w-full px-2 py-1.5 text-[10px] border border-gray-200 rounded-lg bg-white outline-none focus:border-rc-green">
+            <option value="">Looking for the bridge&hellip;</option>
+          </select>
+          <p class="text-[10px] text-gray-500 leading-snug" id="receipt-printer-hint">Pick the Epson queue and receipts print silently — no dialog, any browser. Needs the scale-bridge running on this Mac.</p>
           <div class="grid grid-cols-2 gap-1">
             <button onclick="printTestReceipt()" class="px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-vial mr-1"></i> Test Print</button>
             <button onclick="reprintLastReceipt()" class="px-2 py-1.5 bg-gray-100 text-gray-700 text-[10px] font-semibold rounded-lg hover:bg-gray-200 border border-gray-200"><i class="fas fa-redo mr-1"></i> Reprint last</button>
@@ -713,6 +821,9 @@ export function renderScaleHouse(): string {
       #print-area .print-center { text-align: center; }
       #print-area .print-bold { font-weight: bold; }
     }
+    /* Camera frame. Both the <video> and the <img> fill the same stage box so
+       switching source never changes the panel's size. */
+    .cam-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #111827; transform-origin: center center; }
     /* Kiosk mode */
     body.kiosk-mode #sidebar, body.kiosk-mode #sidebar-overlay, body.kiosk-mode .lg\\:hidden.fixed { display: none !important; }
     body.kiosk-mode main { margin-left: 0 !important; padding-top: 0 !important; }
@@ -771,7 +882,12 @@ export function renderScaleHouse(): string {
   }
   let isKioskMode = window.location.search.includes('kiosk');
   let activeModalId = null;
-  let userRole = (JSON.parse(localStorage.getItem('rc_session') || '{}')).role || 'yard_operator';
+  // Not "userRole": employeeLayout's sidebar script declares a top-level
+  // const userRole, and two classic scripts on one page share the global
+  // lexical scope — the duplicate threw a SyntaxError that killed the whole
+  // layout script here (sidebar name, role-based nav filtering, and the
+  // ?kiosk detection this page depends on).
+  let currentUserRole = (JSON.parse(localStorage.getItem('rc_session') || '{}')).role || 'yard_operator';
 
   // Detect Web Serial support up front. Safari + iOS = no support, period.
   const SUPPORTS_WEB_SERIAL = ('serial' in navigator);
@@ -886,7 +1002,7 @@ export function renderScaleHouse(): string {
     lastPrintWeight = currentLiveWeight;
     autoPromptShown = true;
     dismissAutoPrompt();
-    autoCapturePhoto();
+    autoCapturePhoto('weigh-in');
     // Skip the orange "Merge or New?" card — that's for hardware print-frame
     // triggers where merge-with-open-ticket might be wanted. A manual button
     // press goes straight to: create weighed-in ticket → assign customer.
@@ -932,39 +1048,343 @@ export function renderScaleHouse(): string {
   // ══════════════════════════════════════════
   // CAMERA
   // ══════════════════════════════════════════
-  async function enumerateCameras() {
-    try {
-      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-      tempStream.getTracks().forEach(t => t.stop());
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
-      const sel = document.getElementById('camera-select');
-      sel.innerHTML = '<option value="">Select camera...</option>' + videoDevices.map((d,i) => '<option value="' + d.deviceId + '">' + (d.label || 'Camera ' + (i+1)) + '</option>').join('');
-      if (videoDevices.length === 1) sel.value = videoDevices[0].deviceId;
-    } catch(e) {}
+  // The camera is a *source*, not a device. Today the station points a laptop
+  // webcam at the deck; the real yard camera arrives later. Everything else on
+  // this page — weigh-in and weigh-out photos, the agent's evidence frame, the
+  // vision call that is still to come — only ever calls capturePhoto() or
+  // autoCapturePhoto() and gets a JPEG data URL back. Swapping the hardware is
+  // therefore a settings change here and nothing else anywhere.
+  //
+  // A yard camera's frames are proxied through the local scale-bridge
+  // (/camera/snapshot, /camera/mjpeg). That is not a convenience. The CRM is
+  // served over https and yard cameras speak plain http on the LAN, which the
+  // browser blocks as mixed content; and a cross-origin frame taints the
+  // capture canvas, so toDataURL() throws and every photo silently disappears.
+  // Coming through the bridge the frames are same-scheme and CORS-clean. See
+  // scale-bridge.js for what that proxy will and will not fetch.
+  const CAM_CFG_KEY = 'rc_camera_cfg';
+  const CAM_DEFAULTS = { source: 'webcam', deviceId: '', url: '', netMode: 'snapshot', fps: 2, user: '', pass: '', autoStart: true, stamp: true, mirror: false, rotate: 0 };
+  let camCfg = Object.assign({}, CAM_DEFAULTS);
+  let camActive = false;   // a source is running, or retrying its way back
+  let camKind = null;      // webcam | mjpeg | snapshot
+  let camLastFrameAt = 0, camStartedAt = 0, camRetries = 0;
+  let camSnapTimer = null, camTickTimer = null, camRetryTimer = null;
+  let camSnapLoader = null, camBufferReady = false;
+  let camRecent = [];
+
+  function loadCamCfg() {
+    try { return Object.assign({}, CAM_DEFAULTS, JSON.parse(localStorage.getItem(CAM_CFG_KEY) || '{}') || {}); }
+    catch (e) { return Object.assign({}, CAM_DEFAULTS); }
   }
+  // Station-scoped, like the receipt printer: the camera belongs to the scale
+  // house, not to whoever happens to be logged in.
+  function saveCamCfg() { try { localStorage.setItem(CAM_CFG_KEY, JSON.stringify(camCfg)); } catch (e) {} }
+
+  // ─── panel state ───
+  function camSetStatus(state) {
+    const map = {
+      off:      ['OFF',        'bg-gray-100 text-gray-500'],
+      starting: ['CONNECTING', 'bg-yellow-100 text-yellow-700'],
+      live:     ['LIVE',       'bg-green-100 text-green-600'],
+      retrying: ['RETRYING',   'bg-amber-100 text-amber-700'],
+      error:    ['ERROR',      'bg-red-100 text-red-600'],
+    };
+    const m = map[state] || map.off;
+    const pill = document.getElementById('camera-status');
+    pill.textContent = m[0];
+    pill.className = 'px-1.5 py-0.5 text-[10px] font-semibold rounded-full ' + m[1];
+    const live = state === 'live';
+    document.getElementById('btn-start-cam').classList.toggle('hidden', camActive);
+    document.getElementById('btn-stop-cam').classList.toggle('hidden', !camActive);
+    document.getElementById('btn-capture').classList.toggle('hidden', !live);
+    document.getElementById('btn-cam-test').classList.toggle('hidden', !live);
+    document.getElementById('camera-overlay').classList.toggle('hidden', !live);
+    document.getElementById('camera-live-dot').classList.toggle('hidden', !live);
+    document.getElementById('camera-idle').classList.toggle('hidden', live);
+  }
+  function camSetIdle(icon, text, showStart) {
+    document.getElementById('camera-idle-icon').className = 'fas ' + icon + ' text-gray-600 text-2xl mb-1';
+    document.getElementById('camera-idle-text').innerHTML = text;
+    document.getElementById('camera-idle-start').classList.toggle('hidden', !showStart);
+  }
+  function camShowFrame(which) {
+    document.getElementById('camera-preview').classList.toggle('hidden', which !== 'video');
+    document.getElementById('camera-net').classList.toggle('hidden', which !== 'img');
+    document.getElementById('camera-buffer').classList.toggle('hidden', which !== 'buffer');
+  }
+  function camApplyTransform() {
+    const t = (camCfg.mirror ? 'scaleX(-1) ' : '') + (camCfg.rotate ? 'rotate(' + camCfg.rotate + 'deg)' : '');
+    document.getElementById('camera-preview').style.transform = t;
+    document.getElementById('camera-net').style.transform = t;
+    document.getElementById('camera-buffer').style.transform = t;
+  }
+
+  // ─── start / stop ───
   async function startCamera() {
+    camClearRetry();
+    camTeardownSource();
+    camActive = true;
+    camLastFrameAt = 0;
+    camStartedAt = Date.now();
+    camSetStatus('starting');
+    camSetIdle('fa-circle-notch fa-spin', 'Connecting…', false);
+    camApplyTransform();
+    camStartTick();
+    if (camCfg.source === 'network') return startNetworkCamera();
+    return startWebcam();
+  }
+
+  async function startWebcam() {
+    camKind = 'webcam';
     try {
-      const deviceId = document.getElementById('camera-select').value;
-      const constraints = { video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' } };
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('This browser has no camera access');
+      const id = camCfg.deviceId;
+      const constraints = { video: id ? { deviceId: { exact: id } } : { facingMode: 'environment' } };
       cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
-      document.getElementById('camera-preview').srcObject = cameraStream;
-      document.getElementById('camera-status').textContent = 'LIVE';
-      document.getElementById('camera-status').className = 'px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-green-100 text-green-600';
-      document.getElementById('btn-start-cam').classList.add('hidden');
-      document.getElementById('btn-stop-cam').classList.remove('hidden');
-      document.getElementById('btn-capture').classList.remove('hidden');
-    } catch(e) { alert('Camera error: ' + e.message); }
+      const v = document.getElementById('camera-preview');
+      v.srcObject = cameraStream;
+      camShowFrame('video');
+      document.getElementById('camera-src-label').textContent = 'WEBCAM';
+      camOnFrame();
+      camRetries = 0;
+      camSetStatus('live');
+      // Device labels only exist once permission has been granted, so this is
+      // the first moment the picker can be filled in with real names.
+      enumerateCameras(false);
+    } catch (e) {
+      // A denied permission cannot be fixed by retrying — it needs a click on
+      // the browser's own camera icon — so say that and stop, rather than
+      // looping forever against a decision only the operator can reverse.
+      const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+      camFail(denied ? 'Camera blocked by the browser. Click the camera icon in the address bar, allow it, then press Start.'
+                     : 'Camera error: ' + ((e && e.message) || e), !denied);
+    }
+  }
+
+  async function startNetworkCamera() {
+    const u = (camCfg.url || '').trim();
+    if (!u) { document.getElementById('camera-settings').classList.remove('hidden'); camApplyCfgToUI(); camFail('No yard-camera address yet. Enter the camera snapshot or MJPEG path in the settings below, then press Apply.', false); return; }
+    // Every network frame arrives through the bridge, so when it is down there
+    // is nothing to show — and naming which piece is missing saves a lot of
+    // guessing at 6am.
+    if (!(await camBridgeUp())) { camFail('Scale-bridge is not running on this computer, so the yard camera cannot be reached.', true); return; }
+    const img = document.getElementById('camera-net');
+    // crossOrigin is what keeps the capture canvas untainted. Without it the
+    // preview still works and every capture throws — the worst possible
+    // failure mode, because it looks fine on screen.
+    img.crossOrigin = 'anonymous';
+    img.onload = function () { camOnFrame(); if (camActive && camKind) { camRetries = 0; camSetStatus('live'); } };
+    camShowFrame('img');
+    if (camCfg.netMode === 'mjpeg') {
+      camKind = 'mjpeg';
+      document.getElementById('camera-src-label').textContent = 'YARD CAM';
+      // A stream that drops is a real outage; a single failed poll is not, so
+      // only this mode treats onerror as a failure.
+      img.onerror = function () { if (camActive) camFail('Lost the yard camera stream.', true); };
+      img.src = camProxyUrl('/camera/mjpeg');
+    } else {
+      camKind = 'snapshot';
+      document.getElementById('camera-src-label').textContent = 'YARD CAM';
+      // Polled snapshots load off-screen and are published to the buffer only
+      // once decoded. Reloading the visible element instead would blank it
+      // between frames — and, far worse, leave capturePhoto() with nothing to
+      // draw for a good fraction of every second, silently dropping the photo
+      // on whichever weigh-out happened to land in the gap.
+      camSnapLoader = new Image();
+      camSnapLoader.crossOrigin = 'anonymous';
+      camSnapLoader.onload = function () {
+        if (!camActive || camKind !== 'snapshot') return;
+        const buf = document.getElementById('camera-buffer');
+        // Only resize when the camera's resolution actually changes: assigning
+        // canvas.width clears the bitmap, and doing that on every frame leaves
+        // a transparent canvas on screen if anything paints mid-task.
+        if (buf.width !== camSnapLoader.naturalWidth || buf.height !== camSnapLoader.naturalHeight) {
+          buf.width = camSnapLoader.naturalWidth;
+          buf.height = camSnapLoader.naturalHeight;
+        }
+        buf.getContext('2d').drawImage(camSnapLoader, 0, 0);
+        camBufferReady = true;
+        camOnFrame();
+        camRetries = 0;
+        camSetStatus('live');
+        camScheduleNextSnap();
+      };
+      // A single failed poll is not an outage — the watchdog decides that.
+      // Keep polling.
+      camSnapLoader.onerror = function () { camScheduleNextSnap(); };
+      camShowFrame('buffer');
+      camSnapTick();
+    }
+  }
+  // Self-clocking: the next poll is scheduled only once the current one has
+  // settled. A fixed setInterval piles requests up whenever the camera is
+  // slower than the interval — at 2 fps against the proxy's 8s timeout that is
+  // 16 sockets in flight, which exhausts the browser's six-connection limit to
+  // the bridge and stalls the scale feed and printing along with it.
+  function camScheduleNextSnap() {
+    if (!camActive || camKind !== 'snapshot') return;
+    const gap = Math.max(200, Math.round(1000 / Math.min(10, Math.max(0.2, camCfg.fps || 2))));
+    if (camSnapTimer) clearTimeout(camSnapTimer);
+    camSnapTimer = setTimeout(camSnapTick, gap);
+  }
+  function camSnapTick() {
+    if (!camActive || !camSnapLoader) return;
+    // Cache-buster: plenty of firmware answers a snapshot path with a long
+    // max-age, and the preview would freeze on the very first frame.
+    camSnapLoader.src = camProxyUrl('/camera/snapshot') + '&t=' + Date.now();
+  }
+  function camProxyUrl(path) {
+    let q = '?url=' + encodeURIComponent((camCfg.url || '').trim());
+    if (camCfg.user) q += '&user=' + encodeURIComponent(camCfg.user) + '&pass=' + encodeURIComponent(camCfg.pass || '');
+    return BRIDGE_URL + path + q;
+  }
+  async function camBridgeUp() {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(function () { ctrl.abort(); }, 1500);
+      const r = await fetch(BRIDGE_URL + '/status', { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(t);
+      return r.ok;
+    } catch (e) { return false; }
+  }
+
+  // Drops whatever is currently feeding the panel without deciding whether the
+  // camera should be running — startCamera and stopCamera own that.
+  function camTeardownSource() {
+    if (camSnapTimer) { clearTimeout(camSnapTimer); camSnapTimer = null; }
+    camBufferReady = false;
+    if (cameraStream) { try { cameraStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} cameraStream = null; }
+    const v = document.getElementById('camera-preview');
+    try { v.srcObject = null; } catch (e) {}
+    if (camSnapLoader) { camSnapLoader.onload = null; camSnapLoader.onerror = null; camSnapLoader.src = ''; camSnapLoader = null; }
+    const img = document.getElementById('camera-net');
+    img.onload = null; img.onerror = null;
+    // Removing the attribute is what actually closes an open MJPEG socket;
+    // setting src to an empty string re-requests the page in some browsers.
+    img.removeAttribute('src');
+    camShowFrame('none');
+    camKind = null;
   }
   function stopCamera() {
-    if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
-    document.getElementById('camera-preview').srcObject = null;
-    document.getElementById('camera-status').textContent = 'OFF';
-    document.getElementById('camera-status').className = 'px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-red-100 text-red-600';
-    document.getElementById('btn-start-cam').classList.remove('hidden');
-    document.getElementById('btn-stop-cam').classList.add('hidden');
-    document.getElementById('btn-capture').classList.add('hidden');
+    camActive = false;
+    camClearRetry();
+    camStopTick();
+    camTeardownSource();
+    camSetStatus('off');
+    camSetIdle('fa-video-slash', 'Camera off', true);
+    document.getElementById('camera-health').textContent = 'Not started';
   }
+  function camClearRetry() { if (camRetryTimer) { clearTimeout(camRetryTimer); camRetryTimer = null; } }
+
+  function camFail(msg, retry) {
+    camTeardownSource();
+    try { logSerial('[cam] ' + msg); } catch (e) {}
+    if (retry && camActive) {
+      camRetries++;
+      // Backoff, capped at 30s. An unplugged camera should not hammer the
+      // bridge, but a camera that reboots — and they all do — has to come back
+      // by itself: in unattended agent mode nobody is watching this screen.
+      const wait = Math.min(30000, 2000 * Math.pow(2, Math.min(4, camRetries - 1)));
+      camSetStatus('retrying');
+      camSetIdle('fa-triangle-exclamation', msg + '<br><span class="text-gray-500">Retrying in ' + Math.round(wait / 1000) + 's…</span>', false);
+      camRetryTimer = setTimeout(function () { if (camActive) startCamera(); }, wait);
+    } else {
+      camActive = false;
+      camStopTick();
+      camSetStatus('error');
+      camSetIdle('fa-triangle-exclamation', msg, true);
+      document.getElementById('camera-health').textContent = 'Stopped';
+    }
+  }
+
+  // An <img> that never loaded cannot say why, so ask the proxy directly before
+  // giving up: "did not respond within 8s", "rejected the password" and "that
+  // is a web page, not an image" need completely different fixes, and this is
+  // exactly the moment someone is swapping in new hardware.
+  let camDiagnosing = false;
+  async function camFailWithDiagnosis(fallback) {
+    if (camDiagnosing) return;   // the tick keeps running; one question is enough
+    camDiagnosing = true;
+    let msg = fallback;
+    if (camCfg.source === 'network') {
+      try {
+        const ctrl = new AbortController();
+        // Hard ceiling, and not optional: an un-timed fetch here froze the
+        // whole state machine — no retry, no error, the panel simply sat on
+        // CONNECTING for the rest of the shift.
+        const t = setTimeout(function () { ctrl.abort(); }, 10000);
+        const r = await fetch(camProxyUrl('/camera/probe'), { cache: 'no-store', signal: ctrl.signal });
+        clearTimeout(t);
+        const d = await r.json();
+        if (d && d.error) msg = d.error;
+      } catch (e) {}
+    }
+    camDiagnosing = false;
+    if (!camActive) return;   // operator pressed Stop while we were asking
+    camFail(msg, true);
+  }
+
+  // ─── health ───
+  function camStartTick() { camStopTick(); camTickTimer = setInterval(camTick, 1000); camTick(); }
+  function camStopTick() { if (camTickTimer) { clearInterval(camTickTimer); camTickTimer = null; } }
+  function camOnFrame() { camLastFrameAt = Date.now(); }
+  function camFrameSize() {
+    if (camKind === 'webcam') {
+      const v = document.getElementById('camera-preview');
+      return v.videoWidth ? { w: v.videoWidth, h: v.videoHeight } : null;
+    }
+    if (camKind === 'snapshot') {
+      // camBufferReady, not b.width: a canvas nothing has been drawn into
+      // still measures 300x150, and capturing it would attach a blank
+      // rectangle to a ticket as though it were evidence.
+      if (!camBufferReady) return null;
+      const b = document.getElementById('camera-buffer');
+      return b.width ? { w: b.width, h: b.height } : null;
+    }
+    const i = document.getElementById('camera-net');
+    return i.naturalWidth ? { w: i.naturalWidth, h: i.naturalHeight } : null;
+  }
+  function camTick() {
+    document.getElementById('camera-overlay-left').textContent = camStampTime();
+    document.getElementById('camera-overlay-right').textContent = camStampWeight();
+    if (!camActive) return;
+    const now = Date.now();
+    if (camKind === 'webcam') {
+      // In kiosk mode this panel is display:none, which stops frame callbacks
+      // even though the video is still decoding — so webcam liveness is the
+      // track's own state, which is also what actually changes when someone
+      // unplugs it.
+      const track = cameraStream && cameraStream.getVideoTracks ? cameraStream.getVideoTracks()[0] : null;
+      if (!track || track.readyState !== 'live') { camFail('Webcam disconnected.', true); return; }
+      camOnFrame();
+    } else if (camKind && camLastFrameAt && (now - camLastFrameAt) > 12000) {
+      // A dead feed still *looks* fine — the last picture just sits there.
+      // Without this the agent would keep stamping a stale frame onto tickets.
+      camFail('Camera stopped sending frames.', true);
+      return;
+    } else if (camKind && !camLastFrameAt && (now - camStartedAt) > 12000) {
+      // Nothing has ever arrived. Without this the panel sits on CONNECTING
+      // for the rest of the shift and never retries.
+      camFailWithDiagnosis('No picture has come back from that address yet.');
+      return;
+    }
+    const size = camFrameSize();
+    const age = camLastFrameAt ? now - camLastFrameAt : null;
+    const bits = [camKind === 'webcam' ? 'Webcam' : camKind === 'mjpeg' ? 'Yard camera (stream)' : camKind === 'snapshot' ? 'Yard camera (snapshot)' : 'Starting'];
+    if (size) bits.push(size.w + ' x ' + size.h);
+    if (age !== null) bits.push(age < 2500 ? 'live' : Math.round(age / 1000) + 's since last frame');
+    document.getElementById('camera-health').textContent = bits.join(' · ');
+  }
+  function camStampTime() {
+    const d = new Date();
+    const p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function camStampWeight() {
+    return currentLiveWeight > 0 ? currentLiveWeight.toLocaleString('en-CA', { minimumFractionDigits: 1 }) + ' kg' : 'no weight';
+  }
+
+  // ─── capture ───
   // Encode the canvas as JPEG, dropping quality if the result exceeds the
   // server's photo size cap (matches MAX_PHOTO_BASE64_LEN in src/utils/photo.ts).
   // Returns null if even the lowest quality is too big — caller must handle.
@@ -978,22 +1398,263 @@ export function renderScaleHouse(): string {
     return null;
   }
 
-  function capturePhoto() {
-    if (!cameraStream) return null;
-    const video = document.getElementById('camera-preview');
+  // Draws whatever source is live, burns the stamp, and encodes under the size
+  // cap. The signature is unchanged (label is optional), so every existing
+  // caller — print-trigger, merge-out, the agent — is untouched.
+  function capturePhoto(label) {
+    const size = camFrameSize();
+    if (!camActive || !camKind || !size) { try { logSerial('[cam] capture skipped — no live frame'); } catch (e) {} return null; }
+    const src = camKind === 'webcam' ? document.getElementById('camera-preview')
+              : camKind === 'snapshot' ? document.getElementById('camera-buffer')
+              : document.getElementById('camera-net');
     const canvas = document.getElementById('camera-canvas');
-    canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
-    canvas.getContext('2d').drawImage(video, 0, 0);
+    const rot = ((camCfg.rotate || 0) % 360 + 360) % 360;
+    const swap = rot === 90 || rot === 270;
+    canvas.width = swap ? size.h : size.w;
+    canvas.height = swap ? size.w : size.h;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    // Rotate and mirror about the centre so the stored photo matches what the
+    // operator was looking at when they pressed the button.
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    if (rot) ctx.rotate(rot * Math.PI / 180);
+    if (camCfg.mirror) ctx.scale(-1, 1);
+    ctx.drawImage(src, -size.w / 2, -size.h / 2, size.w, size.h);
+    ctx.restore();
+    if (camCfg.stamp) camDrawStamp(ctx, canvas.width, canvas.height, label);
     const flash = document.getElementById('camera-flash');
-    flash.classList.remove('hidden'); setTimeout(() => flash.classList.add('hidden'), 200);
-    const dataUrl = canvasToCappedJpeg(canvas);
-    if (!dataUrl) { logSerial('⚠ Photo too large to upload at any quality'); return null; }
+    flash.classList.remove('hidden');
+    setTimeout(function () { flash.classList.add('hidden'); }, 150);
+    let dataUrl = null;
+    try { dataUrl = canvasToCappedJpeg(canvas); }
+    catch (e) {
+      // A tainted canvas is the classic cross-origin trap, and can only happen
+      // if a frame arrived from somewhere other than the bridge.
+      try { logSerial('[cam] capture failed: ' + ((e && e.message) || e)); } catch (e2) {}
+      return null;
+    }
+    if (!dataUrl) { try { logSerial('[cam] photo too large to upload at any quality'); } catch (e) {} return null; }
     lastCapturedPhoto = dataUrl;
-    document.getElementById('last-capture-img').src = dataUrl;
-    document.getElementById('last-capture').classList.remove('hidden');
+    camPushRecent(dataUrl, label);
     return dataUrl;
   }
-  function autoCapturePhoto() { if (cameraStream) return capturePhoto(); return null; }
+  function autoCapturePhoto(label) { return camActive ? capturePhoto(label || 'auto') : null; }
+
+  // Burned into the pixels, not drawn beside them: a photo that travels with a
+  // ticket has to carry its own time and weight to be worth anything later.
+  function camDrawStamp(ctx, w, h, label) {
+    const bar = Math.max(18, Math.round(h * 0.055));
+    const pad = Math.round(bar * 0.35);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, h - bar, w, bar);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '600 ' + Math.round(bar * 0.6) + 'px Menlo, Consolas, monospace';
+    ctx.textBaseline = 'middle';
+    const y = h - bar / 2;
+    ctx.textAlign = 'left';
+    ctx.fillText(camStampTime() + (label ? '  ' + String(label).toUpperCase() : ''), pad, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(camStampWeight(), w - pad, y);
+    ctx.restore();
+  }
+
+  function camPushRecent(dataUrl, label) {
+    camRecent.unshift({ url: dataUrl, at: Date.now(), label: label || 'capture' });
+    // Four thumbnails is one truck's worth of evidence; holding more just
+    // parks base64 in memory for nobody.
+    if (camRecent.length > 4) camRecent = camRecent.slice(0, 4);
+    renderCameraRecent();
+  }
+  function renderCameraRecent() {
+    const wrap = document.getElementById('camera-recent');
+    const strip = document.getElementById('camera-recent-strip');
+    if (!camRecent.length) { wrap.classList.add('hidden'); strip.innerHTML = ''; return; }
+    wrap.classList.remove('hidden');
+    strip.innerHTML = camRecent.map(function (c, i) {
+      const t = new Date(c.at).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' });
+      return '<button onclick="openCameraCapture(' + i + ')" title="' + escHtml(c.label) + '" class="relative block rounded overflow-hidden border border-gray-200 hover:border-rc-green">' +
+        '<img src="' + c.url + '" class="w-full h-10 object-cover" />' +
+        '<span class="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[8px] leading-tight py-0.5 text-center">' + t + '</span></button>';
+    }).join('');
+  }
+  function openCameraCapture(i) {
+    const c = camRecent[i];
+    if (!c) return;
+    const w = window.open('', '_blank');
+    if (w) w.document.write('<title>Capture</title><body style="margin:0;background:#111"><img src="' + c.url + '" style="max-width:100%">');
+  }
+  function clearCameraRecent() { camRecent = []; renderCameraRecent(); }
+
+  // ─── settings ───
+  function toggleCameraSettings() {
+    const el = document.getElementById('camera-settings');
+    el.classList.toggle('hidden');
+    if (!el.classList.contains('hidden')) camApplyCfgToUI();
+  }
+  function camApplyCfgToUI() {
+    document.getElementById('cam-url').value = camCfg.url || '';
+    document.getElementById('cam-mode').value = camCfg.netMode || 'snapshot';
+    document.getElementById('cam-fps').value = camCfg.fps || 2;
+    document.getElementById('cam-user').value = camCfg.user || '';
+    document.getElementById('cam-pass').value = camCfg.pass || '';
+    document.getElementById('cam-autostart').checked = !!camCfg.autoStart;
+    document.getElementById('cam-stamp').checked = !!camCfg.stamp;
+    document.getElementById('cam-mirror').checked = !!camCfg.mirror;
+    document.getElementById('cam-rotate').value = String(camCfg.rotate || 0);
+    const sel = document.getElementById('camera-select');
+    if (sel) sel.value = camCfg.deviceId || '';
+    camPaintSourceButtons();
+  }
+  function camPaintSourceButtons() {
+    const base = 'px-2 py-1.5 text-[10px] font-semibold rounded-lg border-2 ';
+    const on = 'border-rc-green bg-green-50 text-rc-green';
+    const off = 'border-gray-200 bg-white text-gray-500';
+    const isNet = camCfg.source === 'network';
+    document.getElementById('cam-src-webcam').className = base + (isNet ? off : on);
+    document.getElementById('cam-src-network').className = base + (isNet ? on : off);
+    document.getElementById('cam-webcam-cfg').classList.toggle('hidden', isNet);
+    document.getElementById('cam-network-cfg').classList.toggle('hidden', !isNet);
+    document.getElementById('cam-fps-wrap').classList.toggle('hidden', camCfg.netMode !== 'snapshot');
+  }
+  // This is the swap-over moment the whole panel exists for: if the camera is
+  // already running, land on the new source immediately.
+  function setCameraSource(src) {
+    if (camCfg.source === src) return;
+    camCfg.source = src; saveCamCfg(); camPaintSourceButtons();
+    if (camActive) startCamera();
+  }
+  function onCameraDeviceChange(v) {
+    camCfg.deviceId = v || ''; saveCamCfg();
+    if (camActive && camCfg.source === 'webcam') startCamera();
+  }
+  function camReadSettingsForm() {
+    camCfg.url = document.getElementById('cam-url').value.trim();
+    camCfg.netMode = document.getElementById('cam-mode').value;
+    camCfg.fps = parseFloat(document.getElementById('cam-fps').value) || 2;
+    camCfg.user = document.getElementById('cam-user').value.trim();
+    camCfg.pass = document.getElementById('cam-pass').value;
+    camCfg.autoStart = document.getElementById('cam-autostart').checked;
+    camCfg.stamp = document.getElementById('cam-stamp').checked;
+    camCfg.mirror = document.getElementById('cam-mirror').checked;
+    camCfg.rotate = parseInt(document.getElementById('cam-rotate').value, 10) || 0;
+    saveCamCfg();
+    camPaintSourceButtons();
+    camApplyTransform();
+  }
+  function camApplySettings() { camReadSettingsForm(); startCamera(); }
+
+  async function testNetworkCamera() {
+    camReadSettingsForm();
+    const out = document.getElementById('cam-test-result');
+    const say = function (cls, msg) { out.className = 'text-[10px] leading-snug ' + cls; out.textContent = msg; };
+    if (!camCfg.url) return say('text-red-600', 'Enter the camera address first.');
+    say('text-gray-500', 'Testing…');
+    if (!(await camBridgeUp())) return say('text-red-600', 'Scale-bridge is not running on this computer — start it, then test again.');
+    try {
+      const r = await fetch(camProxyUrl('/camera/probe'), { cache: 'no-store' });
+      const d = await r.json();
+      if (!d.ok) return say('text-red-600', d.error || 'Could not read a picture from that address.');
+      // Pick the feed type the camera actually serves. Choosing wrong is the
+      // difference between a live picture and a black box, and the camera
+      // already knows the answer.
+      if (d.kind === 'mjpeg' || d.kind === 'snapshot') {
+        camCfg.netMode = d.kind; saveCamCfg();
+        document.getElementById('cam-mode').value = d.kind;
+        camPaintSourceButtons();
+      }
+      say('text-green-700', 'Reached the camera — ' + (d.kind === 'mjpeg' ? 'MJPEG stream' : 'still image') + (d.contentType ? ' (' + d.contentType + ')' : '') + '. Press Apply to use it.');
+    } catch (e) {
+      say('text-red-600', 'Test failed: ' + ((e && e.message) || e));
+    }
+  }
+
+  // Agent DVR is the common case on this station: a recorder on the same Mac
+  // that already owns the Reolink's RTSP stream and re-publishes it as
+  // something a browser can actually display. Asking it for its camera list
+  // beats making the operator assemble /grab.jpg?oid=N&size=WxH by hand.
+  let agentDvrAt = null;
+  async function findAgentDvr() {
+    const msg = document.getElementById('agent-find-msg');
+    const list = document.getElementById('agent-cam-list');
+    const say = function (cls, text) {
+      msg.className = 'text-[10px] leading-snug mt-1 ' + cls;
+      msg.textContent = text;
+      msg.classList.remove('hidden');
+    };
+    list.classList.add('hidden'); list.innerHTML = '';
+    say('text-gray-500', 'Looking for Agent DVR…');
+    if (!(await camBridgeUp())) { say('text-red-600', 'Scale-bridge is not running on this computer — start it, then try again.'); return; }
+    try {
+      const r = await fetch(BRIDGE_URL + '/camera/agentdvr', { cache: 'no-store' });
+      const d = await r.json();
+      if (!d.ok) { say('text-red-600', d.error || 'Could not reach Agent DVR.'); return; }
+      if (!d.cameras || !d.cameras.length) { say('text-amber-600', 'Agent DVR is running, but no cameras are set up in it yet.'); return; }
+      agentDvrAt = { host: d.host, port: d.port };
+      list.innerHTML = d.cameras.map(function (c) {
+        return '<button onclick="useAgentCamera(' + c.id + ')" class="px-2.5 py-1 rounded-full text-[10px] font-semibold border-2 border-gray-200 bg-white text-gray-600 hover:border-rc-green hover:text-rc-green"><i class="fas fa-video mr-1"></i>' + escHtml(c.name) + '</button>';
+      }).join('');
+      list.classList.remove('hidden');
+      say('text-gray-500', 'Pick the camera that watches the scale.');
+    } catch (e) {
+      say('text-red-600', 'Lookup failed: ' + ((e && e.message) || e));
+    }
+  }
+  function useAgentCamera(oid) {
+    const at = agentDvrAt || { host: '127.0.0.1', port: 8090 };
+    // Polled stills rather than the MJPEG stream: one frame every half second
+    // is all a weigh ticket needs, and it costs the recorder far less than
+    // holding a continuous stream open for the whole shift.
+    camCfg.url = 'http://' + at.host + ':' + at.port + '/grab.jpg?oid=' + oid + '&size=1280x720';
+    camCfg.netMode = 'snapshot';
+    camCfg.source = 'network';
+    saveCamCfg();
+    camApplyCfgToUI();
+    startCamera();
+  }
+
+  async function enumerateCameras(ask) {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      // Labels stay hidden until camera permission has been granted once. Only
+      // ask when the operator pressed re-scan: a station running on the yard
+      // camera should never see a permission prompt it has no use for.
+      if (ask && !cameraStream) {
+        const temp = await navigator.mediaDevices.getUserMedia({ video: true });
+        temp.getTracks().forEach(function (t) { t.stop(); });
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(function (d) { return d.kind === 'videoinput'; });
+      const sel = document.getElementById('camera-select');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">Default camera</option>' + cams.map(function (d, i) {
+        return '<option value="' + d.deviceId + '">' + escHtml(d.label || ('Camera ' + (i + 1))) + '</option>';
+      }).join('');
+      sel.value = camCfg.deviceId || '';
+      // A saved device that is no longer plugged in would otherwise leave the
+      // picker blank while startCamera kept demanding it by exact id — which
+      // fails with OverconstrainedError and no clue why.
+      if (camCfg.deviceId && sel.value !== camCfg.deviceId) { camCfg.deviceId = ''; saveCamCfg(); sel.value = ''; }
+    } catch (e) {}
+  }
+
+  function toggleCameraFullscreen() {
+    const stage = document.getElementById('camera-stage');
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    if (stage.requestFullscreen) stage.requestFullscreen();
+  }
+
+  function initCamera() {
+    camCfg = loadCamCfg();
+    camApplyCfgToUI();
+    camApplyTransform();
+    camSetStatus('off');
+    camSetIdle('fa-video-slash', 'Camera off', true);
+    if (camCfg.source === 'webcam') enumerateCameras(false);
+    // Auto-start matters more than it sounds: in unattended agent mode nobody
+    // presses Start, and a ticket closed without a photo cannot be audited.
+    if (camCfg.autoStart) startCamera();
+  }
 
   // ══════════════════════════════════════════
   // SCALE PROTOCOL (USB + BT + Reconnect)
@@ -1673,7 +2334,7 @@ export function renderScaleHouse(): string {
     if (Date.now() - lastPrintTrigger < 5000) return;
     lastPrintTrigger = Date.now();
     lastPrintWeight = weight; autoPromptShown = true; dismissAutoPrompt();
-    autoCapturePhoto();
+    autoCapturePhoto('scale');
     const card = document.getElementById('print-trigger-card');
     card.classList.remove('hidden');
     document.getElementById('print-weight-display').textContent = weight.toLocaleString('en-CA', {minimumFractionDigits:1}) + ' kg';
@@ -1779,7 +2440,76 @@ export function renderScaleHouse(): string {
   // Enter press. For fully-silent printing Chrome must be launched with
   // --kiosk --kiosk-printing (out of scope of this app).
   async function printReceiptToThermal(receipt) {
+    if (await printViaBridge(receipt)) return;
     browserPrintReceipt(receipt);
+  }
+
+  // Which CUPS queue the bridge should print to. Remembered per station, since
+  // the receipt printer is a property of this Mac, not of the account.
+  function receiptPrinterName() {
+    return localStorage.getItem('rc_receipt_printer') || '';
+  }
+
+  // Returns the printer name on success, or '' if the bridge could not do it
+  // (not running, no queue, lp error) so the caller can fall back.
+  async function printViaBridge(receipt) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch(BRIDGE_URL + '/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipt, printer: receiptPrinterName() || undefined }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        agentLog('bridge print refused: ' + (data.error || res.status) + ' — falling back to the browser dialog');
+        return '';
+      }
+      return data.printer || 'printer';
+    } catch (e) {
+      // Bridge not running is the normal case on a laptop; stay quiet about it
+      // and let the browser path handle the job.
+      return '';
+    }
+  }
+
+  // Populate the sidebar printer picker from the bridge's view of CUPS.
+  async function loadBridgePrinters() {
+    const sel = document.getElementById('receipt-printer');
+    if (!sel) return;
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(BRIDGE_URL + '/printers', { signal: ctrl.signal, cache: 'no-store' });
+      const d = await res.json();
+      const saved = receiptPrinterName();
+      const opts = (d.printers || []).map(function (p) {
+        const sel2 = p === (saved || d.receiptGuess || d.default) ? ' selected' : '';
+        return '<option value="' + p + '"' + sel2 + '>' + p + (p === d.default ? ' (system default)' : '') + '</option>';
+      }).join('');
+      sel.innerHTML = '<option value="">Use browser print dialog</option>' + opts;
+      if (!saved && d.receiptGuess) { localStorage.setItem('rc_receipt_printer', d.receiptGuess); sel.value = d.receiptGuess; }
+      const hint = document.getElementById('receipt-printer-hint');
+      if (hint) {
+        hint.textContent = (d.printers || []).length === 0
+          ? 'Bridge is running but macOS has no printers installed.'
+          : (d.receiptGuess ? 'Detected a receipt printer: ' + d.receiptGuess
+                            : 'No Epson/thermal queue found — add the printer in System Settings.');
+      }
+    } catch (e) {
+      sel.innerHTML = '<option value="">Bridge not running — using browser print dialog</option>';
+      const hint = document.getElementById('receipt-printer-hint');
+      if (hint) hint.textContent = 'Start it with: node scale-bridge.js';
+    }
+  }
+
+  function saveReceiptPrinter(name) {
+    if (name) localStorage.setItem('rc_receipt_printer', name);
+    else localStorage.removeItem('rc_receipt_printer');
+    agentLog(name ? 'receipt printer set to ' + name : 'receipts will use the browser print dialog');
   }
   // Returns true only if the receipt actually reached the printer.
   //
@@ -1795,6 +2525,20 @@ export function renderScaleHouse(): string {
     }
     try {
       const res = await axios.get('/api/scale-tickets/' + ticketId + '/receipt');
+
+      // Preferred path: hand the receipt to the local bridge, which calls lp(1).
+      // That is silent by construction -- no dialog exists to suppress -- so it
+      // does not care which browser is open or how Chrome was launched, and it
+      // names the Epson queue explicitly instead of trusting whatever the OS
+      // calls default. Falls through to window.print() if the bridge is down.
+      const viaBridge = await printViaBridge(res.data.receipt);
+      if (viaBridge) {
+        lastPrintedTicketId = ticketId;
+        agentLog('receipt printed via bridge -> ' + viaBridge);
+        try { await axios.post('/api/scale-tickets/' + ticketId + '/receipt-printed'); } catch (e) { /* bookkeeping only */ }
+        return true;
+      }
+
       const t0 = Date.now();
       browserPrintReceipt(res.data.receipt);
       const ms = Date.now() - t0;
@@ -2029,7 +2773,7 @@ export function renderScaleHouse(): string {
           driver_phone: driverPhone,
         });
       }
-      const photo = autoCapturePhoto();
+      const photo = autoCapturePhoto('weigh-out');
       await axios.post('/api/scale-tickets/' + ticketId + '/merge-out', { weight: currentLiveWeight, photo: photo || null });
       closeAssignModal();
       loadTicketDetail(ticketId);
@@ -2081,7 +2825,7 @@ export function renderScaleHouse(): string {
     if (!pendingMergeTicketId) return;
     closeModal('merge-confirm-modal'); showLoading('Completing...');
     try {
-      const photo = autoCapturePhoto();
+      const photo = autoCapturePhoto('weigh-out');
       const res = await axios.post('/api/scale-tickets/' + pendingMergeTicketId + '/merge-out', { weight: lastPrintWeight, photo: photo || null });
       loadTicketDetail(pendingMergeTicketId); autoPrintReceipt(pendingMergeTicketId);
       loadOpenTickets(); loadCompletedToday(); loadStats();
@@ -2276,7 +3020,7 @@ export function renderScaleHouse(): string {
   async function agentDecide(weight) {
     agentSetState('deciding');
     let photo = null;
-    try { photo = autoCapturePhoto(); } catch (e) { photo = null; }
+    try { photo = autoCapturePhoto('agent'); } catch (e) { photo = null; }
     try {
       const res = await axios.post('/api/scale-agent/decide', { weight: weight });
       const d = res.data;
@@ -2684,7 +3428,7 @@ export function renderScaleHouse(): string {
     if (Date.now() - lastPrintTrigger < 3000) return;
     lastPrintTrigger = Date.now();
     lastPrintWeight = currentLiveWeight;
-    autoCapturePhoto();
+    autoCapturePhoto('weigh-out');
     previewMerge(ticketId);
   }
 
@@ -2721,7 +3465,7 @@ export function renderScaleHouse(): string {
         }).join('') + '</div></div>';
       }
       if (t.status === 'voided' && t.void_reason) { voidInfo = '<div class="bg-red-50 rounded-xl p-3 mb-4"><div class="text-xs text-red-600 font-semibold">VOIDED</div><div class="text-sm text-red-700">'+escHtml(t.void_reason)+'</div></div>'; }
-      if (['admin','manager'].includes(userRole) && t.status === 'completed') { editBtn = '<button onclick="openWeightEditModal('+t.id+')" class="px-4 py-3 bg-yellow-500 text-white font-bold rounded-xl hover:bg-yellow-600 btn-press flex items-center justify-center gap-2"><i class="fas fa-edit"></i> Edit Weight</button>'; }
+      if (['admin','manager'].includes(currentUserRole) && t.status === 'completed') { editBtn = '<button onclick="openWeightEditModal('+t.id+')" class="px-4 py-3 bg-yellow-500 text-white font-bold rounded-xl hover:bg-yellow-600 btn-press flex items-center justify-center gap-2"><i class="fas fa-edit"></i> Edit Weight</button>'; }
 
       document.getElementById('detail-body').innerHTML =
         '<div class="space-y-4">' + voidInfo + photosHtml +
@@ -2927,7 +3671,7 @@ export function renderScaleHouse(): string {
       const btn = document.getElementById('btn-settle');
       el.innerHTML = '<div class="space-y-1"><div class="flex justify-between"><span class="text-gray-500">Card</span><span class="font-mono font-semibold">'+s.paid_card.count+' / $'+s.paid_card.amount.toFixed(2)+'</span></div><div class="flex justify-between"><span class="text-gray-500">Cash</span><span class="font-mono font-semibold">'+s.paid_cash.count+' / $'+s.paid_cash.amount.toFixed(2)+'</span></div><div class="flex justify-between"><span class="text-gray-500">Unpaid</span><span class="font-mono font-semibold text-red-600">'+s.unpaid.count+' / $'+s.unpaid.amount.toFixed(2)+'</span></div><div class="flex justify-between border-t pt-1 mt-1"><span class="font-bold">Total</span><span class="font-mono font-bold text-rc-green">$'+s.total_revenue.toFixed(2)+'</span></div></div>';
       if (res.data.batch) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-check mr-1"></i> Settled'; btn.className = btn.className.replace('bg-rc-green','bg-gray-300'); }
-      else if (s.total_tickets > 0 && ['admin','manager'].includes(userRole)) { btn.disabled = false; }
+      else if (s.total_tickets > 0 && ['admin','manager'].includes(currentUserRole)) { btn.disabled = false; }
     } catch(err) { document.getElementById('settlement-summary').textContent = 'Unable to load'; }
   }
 
@@ -3065,13 +3809,14 @@ export function renderScaleHouse(): string {
   (function init() {
     if (typeof axios !== 'undefined') {
       loadOpenTickets(); loadCompletedToday(); loadPricing(); loadStats(); loadSettlement();
-      enumerateCameras(); startAutoRefresh();
+      loadBridgePrinters();
+      initCamera(); startAutoRefresh();
       loadAgentSettings();
       bootstrapScale();
       startStaleWatchdog();
       // Reveal price-management button only to roles permitted by the backend
       // (mirrors roleRequired('admin','manager') on POST/DELETE /api/pricing).
-      if (['admin','manager'].includes(userRole)) {
+      if (['admin','manager'].includes(currentUserRole)) {
         document.getElementById('btn-manage-pricing')?.classList.remove('hidden');
       }
     } else setTimeout(init, 500);
