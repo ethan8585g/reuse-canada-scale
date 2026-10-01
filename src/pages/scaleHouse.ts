@@ -354,8 +354,15 @@ export function renderScaleHouse(): string {
 
           <div class="mt-1 flex items-center justify-between gap-2">
             <span id="camera-health" class="text-[10px] text-gray-400 truncate">Not started</span>
-            <button onclick="capturePhoto('test')" id="btn-cam-test" class="hidden text-[10px] text-gray-400 hover:text-gray-600 shrink-0"><i class="fas fa-vial mr-0.5"></i>Test shot</button>
+            <div class="flex items-center gap-2 shrink-0">
+              <button onclick="capturePhoto('test')" id="btn-cam-test" class="hidden text-[10px] text-gray-400 hover:text-gray-600"><i class="fas fa-vial mr-0.5"></i>Test shot</button>
+              <button onclick="testPlateRead()" id="btn-plate-test" class="hidden text-[10px] font-semibold text-rc-green hover:underline"><i class="fas fa-id-card mr-0.5"></i>Read plate now</button>
+            </div>
           </div>
+          <!-- Aiming aid: press it, read the answer, tilt, press again. Without
+               this the only way to see what the camera gives the agent is to
+               drive a truck onto the scale. -->
+          <div id="plate-test-result" class="hidden mt-1 px-2 py-1.5 rounded-lg text-[10px] leading-snug"></div>
 
           <!-- Settings. Station-scoped (localStorage), like the receipt printer:
                the camera belongs to the scale house, not to whoever logged in. -->
@@ -1103,6 +1110,8 @@ export function renderScaleHouse(): string {
     document.getElementById('btn-stop-cam').classList.toggle('hidden', !camActive);
     document.getElementById('btn-capture').classList.toggle('hidden', !live);
     document.getElementById('btn-cam-test').classList.toggle('hidden', !live);
+    const bpt = document.getElementById('btn-plate-test');
+    if (bpt) bpt.classList.toggle('hidden', !live);
     document.getElementById('camera-overlay').classList.toggle('hidden', !live);
     document.getElementById('camera-live-dot').classList.toggle('hidden', !live);
     document.getElementById('camera-idle').classList.toggle('hidden', live);
@@ -1691,6 +1700,48 @@ export function renderScaleHouse(): string {
       // fails with OverconstrainedError and no clue why.
       if (camCfg.deviceId && sel.value !== camCfg.deviceId) { camCfg.deviceId = ''; saveCamCfg(); sel.value = ''; }
     } catch (e) {}
+  }
+
+  // Reads the plate off the frame on screen right now and says what came back.
+  // Aimed squarely at setting the camera up: tilt, press, read, repeat --
+  // rather than driving a truck onto the scale for every adjustment.
+  async function testPlateRead() {
+    const box = document.getElementById('plate-test-result');
+    const say = function (cls, html) {
+      box.className = 'mt-1 px-2 py-1.5 rounded-lg text-[10px] leading-snug ' + cls;
+      box.innerHTML = html;
+      box.classList.remove('hidden');
+    };
+    const photo = capturePhoto('plate test');
+    if (!photo) { say('bg-red-50 text-red-700', 'No live frame to read — start the camera first.'); return; }
+    say('bg-gray-100 text-gray-500', 'Reading the plate…');
+    try {
+      const res = await axios.post('/api/scale-agent/vision', { photo: photo }, { timeout: 30000 });
+      const d = res.data || {};
+      const took = d.ms ? ' · ' + (d.ms / 1000).toFixed(1) + 's' : '';
+      if (d.ok && d.plate) {
+        const pct = Math.round((d.confidence || 0) * 100);
+        const min = Math.round(Number((agentSettings && agentSettings.plate_min_confidence) || 0.6) * 100);
+        // Reading a plate is not the same as the agent trusting it, so say
+        // which side of the threshold this one landed on.
+        const good = pct >= min;
+        say(good ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800',
+          '<span class="font-mono font-bold tracking-wider text-xs">' + escHtml(d.plate) + '</span>'
+          + ' <span class="opacity-70">' + pct + '% confident' + took + '</span>'
+          + (d.vehicle ? '<br><span class="opacity-70">' + escHtml(d.vehicle) + '</span>' : '')
+          + '<br>' + (good
+              ? '<i class="fas fa-check mr-1"></i>Above the ' + min + '% threshold — the agent would act on this.'
+              : '<i class="fas fa-triangle-exclamation mr-1"></i>Below the ' + min + '% threshold, so the agent would ignore it and fall back to weight. Aim closer or lower.'));
+      } else if (d.reason === 'no_api_key') {
+        say('bg-red-50 text-red-700', 'No API key is set on this site, so plates cannot be read.');
+      } else {
+        say('bg-amber-50 text-amber-800',
+          '<i class="fas fa-eye-slash mr-1"></i>No plate found in this frame' + took + '.'
+          + '<br><span class="opacity-70">Correct if no vehicle is on the scale. If one is, the plate is too small, too angled or cut off — tilt down so the cab fills more of the frame.</span>');
+      }
+    } catch (e) {
+      say('bg-red-50 text-red-700', 'Plate read failed: ' + escHtml((e.response && e.response.data && e.response.data.error) || e.message));
+    }
   }
 
   function toggleCameraFullscreen() {
