@@ -1163,6 +1163,15 @@ export function renderScaleHouse(): string {
 
   async function startNetworkCamera() {
     const u = (camCfg.url || '').trim();
+    if (looksLikeRtsp(u)) {
+      // Go and fix it rather than explain it. One hop, not a loop: the lookup
+      // either rewrites the address to an http one and restarts, or stops with
+      // a message and leaves the camera off.
+      camFail('That is an RTSP address, which no browser can play. Looking for Agent DVR, which can…', false);
+      document.getElementById('camera-settings').classList.remove('hidden');
+      findAgentDvr();
+      return;
+    }
     if (!u) { document.getElementById('camera-settings').classList.remove('hidden'); camApplyCfgToUI(); camFail('No yard-camera address yet. Enter the camera snapshot or MJPEG path in the settings below, then press Apply.', false); return; }
     // Every network frame arrives through the bridge, so when it is down there
     // is nothing to show — and naming which piece is missing saves a lot of
@@ -1537,6 +1546,10 @@ export function renderScaleHouse(): string {
   function setCameraSource(src) {
     if (camCfg.source === src) return;
     camCfg.source = src; saveCamCfg(); camPaintSourceButtons();
+    // Choosing "Yard camera" with nothing configured used to leave the operator
+    // staring at an empty address box, where the obvious thing to paste is the
+    // camera's RTSP URL. Go and find the recorder instead.
+    if (src === 'network' && (!camCfg.url || looksLikeRtsp(camCfg.url))) { findAgentDvr(); return; }
     if (camActive) startCamera();
   }
   function onCameraDeviceChange(v) {
@@ -1563,7 +1576,11 @@ export function renderScaleHouse(): string {
     camReadSettingsForm();
     const out = document.getElementById('cam-test-result');
     const say = function (cls, msg) { out.className = 'text-[10px] leading-snug ' + cls; out.textContent = msg; };
-    if (!camCfg.url) return say('text-red-600', 'Enter the camera address first.');
+    if (looksLikeRtsp(camCfg.url)) {
+      say('text-gray-500', 'That is an RTSP address, which no browser can play. Looking for Agent DVR, which can…');
+      return findAgentDvr();
+    }
+    if (!camCfg.url) { say('text-gray-500', 'No address yet — looking for Agent DVR…'); return findAgentDvr(); }
     say('text-gray-500', 'Testing…');
     if (!(await camBridgeUp())) return say('text-red-600', bridgeUnreachableMsg(''));
     try {
@@ -1588,6 +1605,13 @@ export function renderScaleHouse(): string {
   // that already owns the Reolink's RTSP stream and re-publishes it as
   // something a browser can actually display. Asking it for its camera list
   // beats making the operator assemble /grab.jpg?oid=N&size=WxH by hand.
+  // Pasting the Reolink's own rtsp:// address is the natural thing to try and
+  // can never work in a browser. Refusing it is not enough — hand the operator
+  // the thing that does work, which is already running on this machine.
+  function looksLikeRtsp(u) {
+    const v = String(u || '').trim().toLowerCase();
+    return v.indexOf('rtsp://') === 0 || v.indexOf('rtsps://') === 0;
+  }
   let agentDvrAt = null;
   async function findAgentDvr() {
     const msg = document.getElementById('agent-find-msg');
@@ -1606,6 +1630,14 @@ export function renderScaleHouse(): string {
       if (!d.ok) { say('text-red-600', d.error || 'Could not reach Agent DVR.'); return; }
       if (!d.cameras || !d.cameras.length) { say('text-amber-600', 'Agent DVR is running, but no cameras are set up in it yet.'); return; }
       agentDvrAt = { host: d.host, port: d.port };
+      // Nothing usable configured yet (blank, or an RTSP address that cannot
+      // work) and exactly one camera to choose from — there is no decision to
+      // put in front of the operator, so just use it.
+      if (d.cameras.length === 1 && (!camCfg.url || looksLikeRtsp(camCfg.url))) {
+        useAgentCamera(d.cameras[0].id);
+        say('text-green-700', 'Using ' + d.cameras[0].name + ' from Agent DVR.');
+        return;
+      }
       list.innerHTML = d.cameras.map(function (c) {
         return '<button onclick="useAgentCamera(' + c.id + ')" class="px-2.5 py-1 rounded-full text-[10px] font-semibold border-2 border-gray-200 bg-white text-gray-600 hover:border-rc-green hover:text-rc-green"><i class="fas fa-video mr-1"></i>' + escHtml(c.name) + '</button>';
       }).join('');
@@ -1623,6 +1655,9 @@ export function renderScaleHouse(): string {
     camCfg.url = 'http://' + at.host + ':' + at.port + '/grab.jpg?oid=' + oid + '&size=1280x720';
     camCfg.netMode = 'snapshot';
     camCfg.source = 'network';
+    // Agent DVR on loopback wants no credentials, and the camera's own
+    // username/password left in the boxes would be sent to it as Basic auth.
+    camCfg.user = ''; camCfg.pass = '';
     saveCamCfg();
     camApplyCfgToUI();
     startCamera();
