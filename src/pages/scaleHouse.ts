@@ -1666,7 +1666,11 @@ export function renderScaleHouse(): string {
     // Polled stills rather than the MJPEG stream: one frame every half second
     // is all a weigh ticket needs, and it costs the recorder far less than
     // holding a continuous stream open for the whole shift.
-    camCfg.url = 'http://' + at.host + ':' + at.port + '/grab.jpg?oid=' + oid + '&size=1280x720';
+    // 2560x1440, not 720p. Measured against a real car on the deck: at 1280x720
+    // and 1920x1080 the plate could not be read at all, and 2560x1440 was the
+    // first size that produced one. Agent DVR is on loopback so the extra bytes
+    // cost nothing, and the stored photo stays far under the upload cap.
+    camCfg.url = 'http://' + at.host + ':' + at.port + '/grab.jpg?oid=' + oid + '&size=2560x1440';
     camCfg.netMode = 'snapshot';
     camCfg.source = 'network';
     // Agent DVR on loopback wants no credentials, and the camera's own
@@ -1752,6 +1756,12 @@ export function renderScaleHouse(): string {
 
   function initCamera() {
     camCfg = loadCamCfg();
+    // One-time upgrade of stations configured before plate reading existed:
+    // 720p demonstrably cannot resolve a plate on the deck.
+    if (camCfg.url && camCfg.url.indexOf('/grab.jpg?') !== -1 && camCfg.url.indexOf('size=1280x720') !== -1) {
+      camCfg.url = camCfg.url.replace('size=1280x720', 'size=2560x1440');
+      saveCamCfg();
+    }
     camApplyCfgToUI();
     camApplyTransform();
     camSetStatus('off');
