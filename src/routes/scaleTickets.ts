@@ -334,8 +334,12 @@ scaleTicketRoutes.post('/field', async (c) => {
 // Quick-create ticket from scale PRINT trigger (weight-in only, no customer yet)
 scaleTicketRoutes.post('/print-trigger', async (c) => {
   try {
-    const { weight, photo, material, source } = await c.req.json()
+    const { weight, photo, material, source, plate, plate_confidence } = await c.req.json()
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+    // Plate as read off the weigh-in frame. Stored on vehicle_plate — the same
+    // column the manual New Ticket form writes — so plate matching works for
+    // operator-typed plates too, not only camera reads.
+    const normPlate = String(plate || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
     if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
 
     const employeeId = c.get('userId')
@@ -357,9 +361,10 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
     }
 
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
-      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
-      params: [tn, walkInId, employeeId, tireType, weight, now, photo || null, photo ? now : null],
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, vehicle_plate, plate_in_confidence, plate_source, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
+      params: [tn, walkInId, employeeId, tireType, weight, now, photo || null, photo ? now : null,
+               normPlate || null, normPlate ? (Number(plate_confidence) || null) : null, normPlate ? 'vision' : null],
     }))
 
     await auditLog(c.env.DB, ticketId, 'weighed_in', employeeId, {
@@ -470,10 +475,14 @@ scaleTicketRoutes.post('/:id/weight', async (c) => {
 scaleTicketRoutes.post('/:id/merge-out', async (c) => {
   const id = c.req.param('id')
   try {
-    const { weight, photo } = await c.req.json()
+    const { weight, photo, plate, plate_confidence } = await c.req.json()
     const employeeId = c.get('userId')
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
     if (photoOversize(photo)) return c.json({ error: 'Photo is too large' }, 413)
+    // Kept separate from vehicle_plate: that is the plate this ticket belongs
+    // to, this is what the camera actually read on the way out. Storing both
+    // means a mismatch is visible after the fact instead of overwritten.
+    const outPlate = String(plate || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
 
     const ticket = await c.env.DB.prepare(
       'SELECT * FROM scale_tickets WHERE id = ?'
@@ -504,13 +513,19 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
       `UPDATE scale_tickets SET
         weight_out = ?, weight_out_at = ?, net_weight = ?,
         photo_out = ?, photo_out_at = ?,
+        plate_out = ?, plate_out_confidence = ?,
+        vehicle_plate = COALESCE(vehicle_plate, ?),
         price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
         completed_by = ?, status = 'completed', updated_at = datetime('now')
        WHERE id = ?`
-    ).bind(weight, now, netWeight, photo || null, photo ? now : null, pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, id).run()
+    ).bind(weight, now, netWeight, photo || null, photo ? now : null,
+           outPlate || null, outPlate ? (Number(plate_confidence) || null) : null,
+           outPlate || null,
+           pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, id).run()
 
     await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
-      weight_out: weight, net_weight: netWeight, price_per_kg: pricePerKg, grand_total: grandTotal, has_photo: !!photo
+      weight_out: weight, net_weight: netWeight, price_per_kg: pricePerKg, grand_total: grandTotal,
+      has_photo: !!photo, plate_out: outPlate || null
     })
 
     // Fraud detection

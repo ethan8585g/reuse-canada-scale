@@ -943,12 +943,29 @@ export function renderScaleTickets(): string {
           const auditTrail = res.data.audit_trail || [];
           document.getElementById('detail-title').textContent = 'Ticket ' + t.ticket_number;
 
+          const plateTag = function (plate, conf) {
+            if (!plate) return '';
+            return '<span class="ml-2 px-1.5 py-0.5 rounded bg-gray-900 text-white font-mono text-[10px] tracking-wider">' + escHtml(plate) + '</span>'
+              + (conf ? '<span class="ml-1 text-[10px] text-gray-400">' + Math.round(Number(conf) * 100) + '%</span>' : '');
+          };
+          // A plate read on the way out that is not the plate on the ticket is
+          // the signal that the agent closed the wrong one, so it is called out
+          // rather than quietly displayed next to it.
+          const plateMismatch = t.plate_out && t.vehicle_plate &&
+            String(t.plate_out).toUpperCase() !== String(t.vehicle_plate).toUpperCase();
+
           let photosHtml = '';
           if (t.photo_in || t.photo_out) {
             photosHtml = '<div class="grid grid-cols-2 gap-3 mt-4">' +
-              (t.photo_in ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-In Photo</div><img src="' + t.photo_in + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
-              (t.photo_out ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out Photo</div><img src="' + t.photo_out + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
+              (t.photo_in ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-In Photo' + plateTag(t.vehicle_plate, t.plate_in_confidence) + '</div><img src="' + t.photo_in + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
+              (t.photo_out ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out Photo' + plateTag(t.plate_out, t.plate_out_confidence) + '</div><img src="' + t.photo_out + '" class="w-full rounded-lg border border-gray-200 cursor-pointer" onclick="window.open(this.src)" /></div>' : '') +
             '</div>';
+          } else if (t.vehicle_plate) {
+            photosHtml = '<div class="mt-4 text-xs text-gray-500">Plate' + plateTag(t.vehicle_plate, t.plate_in_confidence) + '</div>';
+          }
+          if (plateMismatch) {
+            photosHtml += '<div class="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800">'
+              + '<i class="fas fa-triangle-exclamation mr-1"></i>The plate read on the way out (' + escHtml(t.plate_out) + ') is not the plate this ticket was opened for (' + escHtml(t.vehicle_plate) + '). Check this ticket closed against the right truck.</div>';
           }
 
           let auditHtml = '';

@@ -530,7 +530,7 @@ export function renderScaleHouse(): string {
           <p class="text-[10px] text-gray-500 leading-snug">Wakes over <span id="agent-wake-label">100</span> kg, decides new load vs. weigh-out, closes the ticket and prints. Negatives are ignored. Anything it is unsure of goes to you.</p>
           <label class="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer">
             <input type="checkbox" id="agent-single-truck" onchange="setAgentSingleTruck(this.checked)" class="rounded mt-0.5">
-            <span>One truck at a time <span class="text-gray-400">— no camera needed; an unexpected second truck goes to you</span></span>
+            <span>One truck at a time <span class="text-gray-400">— needed only while plates are not being read; an unexpected second truck goes to you</span></span>
           </label>
           <div class="pt-1 border-t border-gray-100">
             <div class="text-[10px] font-semibold text-gray-600 mb-1">After a ticket closes</div>
@@ -540,6 +540,11 @@ export function renderScaleHouse(): string {
             </div>
             <p id="agent-prompt-hint" class="text-[9px] text-gray-400 leading-snug mt-1"></p>
           </div>
+          <label class="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer">
+            <input type="checkbox" id="agent-plate-matching" onchange="setAgentPlateMatching(this.checked)" class="rounded mt-0.5">
+            <span>Identify trucks by licence plate <span class="text-gray-400">— lets several trucks be in the yard at once</span></span>
+          </label>
+          <p id="agent-plate-hint" class="text-[9px] text-gray-400 leading-snug"></p>
           <div class="grid grid-cols-3 gap-1">
             <button onclick="setAgentMode('off')" id="agent-btn-off" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Off</button>
             <button onclick="setAgentMode('dry_run')" id="agent-btn-dry_run" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Dry run</button>
@@ -2904,7 +2909,7 @@ export function renderScaleHouse(): string {
   let agentSettings = null;
   let agentState = 'idle';
   let agentSettleSince = 0, agentSettleWeight = 0, agentClearSince = 0;
-  let agentBannerTimer = null, agentPending = null;
+  let agentBannerTimer = null, agentPending = null, agentVisionReady = false;
   // The ticket the agent most recently opened, kept only so the sidebar can
   // show what is in the yard. Attribution waits for weigh-out.
   let agentPendingAssign = null;
@@ -2956,6 +2961,18 @@ export function renderScaleHouse(): string {
     }
     const st = document.getElementById('agent-single-truck');
     if (st && agentSettings) st.checked = !!Number(agentSettings.single_truck_mode);
+    const pm = document.getElementById('agent-plate-matching');
+    if (pm && agentSettings) pm.checked = !!Number(agentSettings.plate_matching);
+    const pHint = document.getElementById('agent-plate-hint');
+    if (pHint) {
+      // "On" with no API key would silently never match anything, which looks
+      // exactly like a camera that cannot read plates. Say which it is.
+      pHint.textContent = !(agentSettings && Number(agentSettings.plate_matching))
+        ? 'Off — the agent tells arrivals from departures by weight alone, so only one truck can be in the yard at a time.'
+        : (agentVisionReady
+            ? 'The camera frame is read at every weigh-in and weigh-out. A plate that matches an open ticket closes it; one that matches nothing opens a new ticket.'
+            : 'ANTHROPIC_API_KEY is not set on this Pages project, so no plate can be read and the agent is still deciding by weight alone.');
+    }
     const prompt = (agentSettings && agentSettings.customer_prompt) || 'on_close';
     ['on_close', 'off'].forEach(function (m) {
       const b = document.getElementById('agent-prompt-' + m);
@@ -2979,6 +2996,7 @@ export function renderScaleHouse(): string {
     try {
       const res = await axios.get('/api/scale-agent/settings');
       agentSettings = res.data.settings;
+      agentVisionReady = !!res.data.vision_ready;
       applyAgentSettingsToUI();
       agentSetState('idle');
     } catch (e) {
@@ -3067,12 +3085,43 @@ export function renderScaleHouse(): string {
     if (isWeightStable && (now - agentSettleSince) >= settleMs) agentDecide(w);
   }
 
+  // Read the plate off the frame we just captured. The answer is advisory:
+  // every failure path -- no key, unreadable frame, slow call -- resolves to
+  // "no plate", and the agent then decides on weight exactly as it did before.
+  // Nothing here is allowed to stall the loop, because a truck is sitting on
+  // the scale while it runs.
+  async function agentReadPlate(photo) {
+    if (!photo) return null;
+    if (agentSettings && Number(agentSettings.plate_matching) === 0) return null;
+    const started = Date.now();
+    try {
+      const res = await axios.post('/api/scale-agent/vision', { photo: photo }, { timeout: 8000 });
+      const d = res.data || {};
+      const ms = Date.now() - started;
+      if (!d.ok) {
+        agentLog('plate: ' + (d.error || d.reason || 'not read') + ' (' + ms + 'ms)');
+        return null;
+      }
+      agentLog('plate ' + d.plate + ' @ ' + Math.round((d.confidence || 0) * 100) + '% (' + ms + 'ms)');
+      return d;
+    } catch (e) {
+      // A timeout here is normal on a slow link and must not cost a ticket.
+      agentLog('plate read failed: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      return null;
+    }
+  }
+
   async function agentDecide(weight) {
     agentSetState('deciding');
     let photo = null;
     try { photo = autoCapturePhoto('agent'); } catch (e) { photo = null; }
+    const plateRead = await agentReadPlate(photo);
     try {
-      const res = await axios.post('/api/scale-agent/decide', { weight: weight });
+      const res = await axios.post('/api/scale-agent/decide', {
+        weight: weight,
+        plate: (plateRead && plateRead.plate) || '',
+        plate_confidence: (plateRead && plateRead.confidence) || 0
+      });
       const d = res.data;
       if (d.settings) { agentSettings = d.settings; applyAgentSettingsToUI(); }
 
@@ -3093,7 +3142,7 @@ export function renderScaleHouse(): string {
         return;
       }
 
-      agentPending = { decision: d, weight: weight, photo: photo };
+      agentPending = { decision: d, weight: weight, photo: photo, plate: plateRead };
       agentShowBanner(d, weight);
     } catch (e) {
       const msg = (e.response && e.response.data && e.response.data.error) || e.message;
@@ -3130,6 +3179,7 @@ export function renderScaleHouse(): string {
       document.getElementById('agent-banner-ticket').textContent = d.ticket.ticket_number;
       document.getElementById('agent-banner-customer').textContent = d.ticket.company_name || 'Unassigned walk-in';
       rows.innerHTML =
+        (d.plate ? agentRow('Plate', d.plate, false) : '') +
         agentRow('Gross (in)', agentKg(p ? p.weight_in : d.ticket.weight_in), false) +
         agentRow('Tare (out)', agentKg(weight), false) +
         agentRow('Net', agentKg(p ? p.net_weight : (d.ticket.weight_in - weight)), true) +
@@ -3137,9 +3187,21 @@ export function renderScaleHouse(): string {
     } else {
       document.getElementById('agent-banner-ticket').textContent = 'New load';
       document.getElementById('agent-banner-customer').textContent = 'Attach the customer once the truck has tipped';
-      rows.innerHTML = agentRow('Gross (in)', agentKg(weight), true);
+      rows.innerHTML = (d.plate ? agentRow('Plate', d.plate, false) : '') + agentRow('Gross (in)', agentKg(weight), true);
     }
     document.getElementById('agent-banner-reason').textContent = d.reason || '';
+  }
+
+  async function setAgentPlateMatching(on) {
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { plate_matching: !!on });
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      agentLog('plate matching ' + (on ? 'ON — several trucks can be in the yard' : 'OFF — one truck at a time'));
+    } catch (e) {
+      alert((e.response && e.response.data && e.response.data.error) || 'Could not save that setting.');
+      applyAgentSettingsToUI();
+    }
   }
 
   function agentShowBanner(d, weight) {
@@ -3199,9 +3261,12 @@ export function renderScaleHouse(): string {
           weight: p.weight,
           photo: p.photo || null,
           material: (agentSettings && agentSettings.material) || 'mixed',
-          source: 'agent'
+          source: 'agent',
+          plate: (p.plate && p.plate.plate) || '',
+          plate_confidence: (p.plate && p.plate.confidence) || 0
         });
-        agentLog('opened ' + res.data.ticket_number + ' at ' + p.weight.toFixed(1) + ' kg');
+        agentLog('opened ' + res.data.ticket_number + ' at ' + p.weight.toFixed(1) + ' kg'
+                 + (p.plate && p.plate.plate ? ' for plate ' + p.plate.plate : ''));
         await agentReport(d.decision_id, 'acted', res.data.id);
         loadOpenTickets(); loadStats();
         // Deliberately NO customer prompt here. The driver is still on the
@@ -3211,7 +3276,9 @@ export function renderScaleHouse(): string {
         agentPendingAssign = { id: res.data.id, number: res.data.ticket_number, weight: p.weight };
       } else {
         await axios.post('/api/scale-tickets/' + d.ticket.id + '/merge-out', {
-          weight: p.weight, photo: p.photo || null
+          weight: p.weight, photo: p.photo || null,
+          plate: (p.plate && p.plate.plate) || '',
+          plate_confidence: (p.plate && p.plate.confidence) || 0
         });
         agentLog('closed ' + d.ticket.ticket_number + ' net ' + (d.preview ? Number(d.preview.net_weight).toFixed(1) : '?') + ' kg');
         await agentReport(d.decision_id, 'acted', d.ticket.id);

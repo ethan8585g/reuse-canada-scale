@@ -14,6 +14,7 @@
     "db:console": "wrangler d1 execute reuse-canada-production --local"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "hono": "^4.12.8"
   },
   "devDependencies": {
