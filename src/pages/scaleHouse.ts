@@ -1167,7 +1167,7 @@ export function renderScaleHouse(): string {
     // Every network frame arrives through the bridge, so when it is down there
     // is nothing to show — and naming which piece is missing saves a lot of
     // guessing at 6am.
-    if (!(await camBridgeUp())) { camFail('Scale-bridge is not running on this computer, so the yard camera cannot be reached.', true); return; }
+    if (!(await camBridgeUp())) { camFail(bridgeUnreachableMsg('the yard camera cannot be reached'), true); return; }
     const img = document.getElementById('camera-net');
     // crossOrigin is what keeps the capture canvas untainted. Without it the
     // preview still works and every capture throws — the worst possible
@@ -1238,6 +1238,21 @@ export function renderScaleHouse(): string {
     if (camCfg.user) q += '&user=' + encodeURIComponent(camCfg.user) + '&pass=' + encodeURIComponent(camCfg.pass || '');
     return BRIDGE_URL + path + q;
   }
+  // A blocked local-network request and a bridge that is simply not running
+  // both surface as the same failed fetch, so the message has to name both —
+  // and Chrome first. Since Chrome 142 a public https page cannot reach
+  // 127.0.0.1 until the operator allows it, and nothing on screen says so: the
+  // scale feed, receipt printing and the yard camera all just stop, with only
+  // a CORS line in a console nobody has open.
+  function bridgeUnreachableMsg(what) {
+    const h = location.hostname;
+    const publicSite = location.protocol === 'https:' && h !== 'localhost' && h !== '127.0.0.1';
+    if (publicSite) {
+      return 'Cannot reach this computer' + (what ? ', so ' + what : '') + '. Chrome blocks a public site from using the local network until it is allowed — open this page with scale-house.command, or click Allow if Chrome asks. If that is already done, the scale-bridge is not running.';
+    }
+    return 'Scale-bridge is not running on this computer' + (what ? ', so ' + what : '') + '.';
+  }
+
   async function camBridgeUp() {
     try {
       const ctrl = new AbortController();
@@ -1550,7 +1565,7 @@ export function renderScaleHouse(): string {
     const say = function (cls, msg) { out.className = 'text-[10px] leading-snug ' + cls; out.textContent = msg; };
     if (!camCfg.url) return say('text-red-600', 'Enter the camera address first.');
     say('text-gray-500', 'Testing…');
-    if (!(await camBridgeUp())) return say('text-red-600', 'Scale-bridge is not running on this computer — start it, then test again.');
+    if (!(await camBridgeUp())) return say('text-red-600', bridgeUnreachableMsg(''));
     try {
       const r = await fetch(camProxyUrl('/camera/probe'), { cache: 'no-store' });
       const d = await r.json();
@@ -1584,7 +1599,7 @@ export function renderScaleHouse(): string {
     };
     list.classList.add('hidden'); list.innerHTML = '';
     say('text-gray-500', 'Looking for Agent DVR…');
-    if (!(await camBridgeUp())) { say('text-red-600', 'Scale-bridge is not running on this computer — start it, then try again.'); return; }
+    if (!(await camBridgeUp())) { say('text-red-600', bridgeUnreachableMsg('')); return; }
     try {
       const r = await fetch(BRIDGE_URL + '/camera/agentdvr', { cache: 'no-store' });
       const d = await r.json();
@@ -2500,9 +2515,9 @@ export function renderScaleHouse(): string {
                             : 'No Epson/thermal queue found — add the printer in System Settings.');
       }
     } catch (e) {
-      sel.innerHTML = '<option value="">Bridge not running — using browser print dialog</option>';
+      sel.innerHTML = '<option value="">No bridge — using browser print dialog</option>';
       const hint = document.getElementById('receipt-printer-hint');
-      if (hint) hint.textContent = 'Start it with: node scale-bridge.js';
+      if (hint) hint.textContent = bridgeUnreachableMsg('receipts cannot print silently');
     }
   }
 

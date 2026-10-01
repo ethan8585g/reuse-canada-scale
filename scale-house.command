@@ -2,14 +2,26 @@
 # ============================================================
 # Reuse Canada — Scale House launcher (silent receipt printing)
 # ============================================================
-# Double-click this file. It restarts Chrome with --kiosk-printing so
-# window.print() goes STRAIGHT to the default printer with no dialog.
+# Double-click this file. It cold-starts Chrome with the two flags the Scale
+# House station needs: one to let the page talk to this Mac at all, and one to
+# send window.print() straight to the printer with no dialog.
 #
-# WHY THIS EXISTS -- AND WHEN YOU NO LONGER NEED IT
-# This is now the FALLBACK path, not the main one. If scale-bridge.js is
-# running and a receipt printer is picked in the Scale House sidebar, receipts
-# print through `lp` on this Mac: silent in any browser, no flags, no cold
-# start. Use this launcher only when the bridge is not running.
+# WHY THIS EXISTS -- TWO SEPARATE REASONS
+#
+# 1. LOCAL NETWORK ACCESS (the important one, since Chrome 142).
+#    www.reusecanadascale.com is a public https site, and Chrome now blocks a
+#    public site from reaching 127.0.0.1 unless the operator grants a
+#    permission prompt. Everything the Scale House gets from this Mac goes
+#    through http://localhost:5555 -- the scale feed, silent receipt printing,
+#    and the yard camera -- so when that is blocked the page looks like the
+#    bridge is simply not running, with only a CORS error in the console to
+#    say otherwise. --disable-features=LocalNetworkAccessChecks removes the
+#    gate for this launch. (Clicking "Allow" on Chrome's prompt works too, but
+#    it is one unlabelled dialog between the operator and a working scale.)
+#
+# 2. SILENT PRINTING, which is now only the fallback path. If scale-bridge.js
+#    is running and a receipt printer is picked in the Scale House sidebar,
+#    receipts print through `lp`: silent in any browser, no flags needed.
 #
 # Browser printing is what needs the flag: in ordinary Chrome, window.print()
 # always opens the macOS print preview and waits for a click -- no JavaScript
@@ -91,4 +103,4 @@ echo "normally. Anything you print from any tab will skip the dialog."
 
 # No --user-data-dir on purpose: the normal profile keeps the CRM login and
 # the Web Bluetooth pairing with the scale.
-exec "$CHROME" --kiosk-printing $EXTRA "$URL" >/dev/null 2>&1 &
+exec "$CHROME" --kiosk-printing --disable-features=LocalNetworkAccessChecks $EXTRA "$URL" >/dev/null 2>&1 &
