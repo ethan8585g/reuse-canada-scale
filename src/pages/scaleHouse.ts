@@ -2892,12 +2892,23 @@ export function renderScaleHouse(): string {
   }
   // Sample print to verify the Epson is set up correctly without burning a
   // real ticket number. Mirrors the live receipt layout exactly.
-  function printTestReceipt() {
-    browserPrintReceipt({
+  // A test print is only worth pressing if it exercises what a real receipt
+  // now contains -- the vehicle line and the photos. It pulls a LIVE frame
+  // from the camera rather than a canned image, so one button answers
+  // "is the printer working", "is the camera working" and "does a photo come
+  // out legible on this paper" at once. No camera is not a failure: the
+  // receipt prints without it, exactly as a real one would.
+  async function printTestReceipt() {
+    let frame = null;
+    try { frame = capturePhoto('test print'); } catch (e) { frame = null; }
+    if (!frame) agentLog('test print: no camera frame — printing the text-only receipt');
+    await printReceiptToThermal({
       ticket_number: 'TEST-PRINT',
       date: new Date().toISOString(),
       customer: 'Test Customer',
       material: 'mixed',
+      vehicle_plate: 'TEST123',
+      appearance_in: JSON.stringify({ body: 'sedan', color: 'white', markings: '', confidence: 1 }),
       weight_in: 12000,
       weight_out: 8000,
       net_weight: 4000,
@@ -2905,6 +2916,7 @@ export function renderScaleHouse(): string {
       subtotal: 560.00,
       tax_amount: 28.00,
       grand_total: 588.00,
+      photo_in: frame,
     });
   }
 
