@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { photoOversize } from '../utils/photo'
-import { GST_RATE, cents } from '../utils/money'
+import { GST_RATE, cents, billableKg } from '../utils/money'
 import { todayEdmonton } from '../utils/date'
 import { hashPassword } from '../utils/passwords'
 import { normalizeAppearance } from './scaleAgent'
@@ -544,6 +544,61 @@ scaleTicketRoutes.post('/:id/weight', async (c) => {
 })
 
 // Merge weigh-out with an existing open ticket
+// ─── POST /:id/vehicle ───
+// Attach the camera's description of the truck to a ticket that was written
+// before the read came back. The agent opens an arrival the moment the scale
+// settles -- with nothing else in the yard the camera cannot change that
+// answer -- and sends the read here when it lands, a few seconds later. Only
+// EMPTY fields are filled: a plate typed by the operator or read at weigh-in
+// is never overwritten by a later read.
+scaleTicketRoutes.post('/:id/vehicle', async (c) => {
+  const id = c.req.param('id')
+  if (!/^\d+$/.test(id)) return c.json({ error: 'Bad id' }, 400)
+  try {
+    const body = await c.req.json().catch(() => ({})) as any
+    const normPlate = String(body?.plate || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+    const conf = Number(body?.plate_confidence)
+    const lookIn = appearanceJson(body?.appearance)
+    if (!normPlate && !lookIn) return c.json({ error: 'Nothing to attach' }, 400)
+
+    const t = await c.env.DB.prepare(
+      'SELECT id, status, vehicle_plate, appearance_in FROM scale_tickets WHERE id = ?'
+    ).bind(id).first<any>()
+    if (!t) return c.json({ error: 'Ticket not found' }, 404)
+    if (t.status === 'voided') return c.json({ error: 'Ticket is voided' }, 409)
+
+    const setPlate = !!normPlate && !String(t.vehicle_plate || '').trim()
+    const setLook = !!lookIn && !String(t.appearance_in || '').trim()
+    const sets: string[] = []
+    const vals: any[] = []
+    if (setPlate) {
+      sets.push('vehicle_plate = ?', 'plate_in_confidence = ?', "plate_source = 'vision'")
+      vals.push(normPlate, Number.isFinite(conf) ? conf : null)
+    }
+    if (setLook) { sets.push('appearance_in = ?'); vals.push(lookIn) }
+    if (sets.length) {
+      await c.env.DB.prepare(`UPDATE scale_tickets SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, id).run()
+    }
+
+    // The decision that opened this ticket was recorded before the read
+    // existed; fill it in so the audit log shows what the camera saw.
+    const decisionId = Number(body?.decision_id)
+    if (Number.isFinite(decisionId) && decisionId > 0) {
+      await c.env.DB.prepare(
+        `UPDATE scale_agent_decisions
+         SET plate = COALESCE(plate, ?), plate_confidence = COALESCE(plate_confidence, ?),
+             appearance = COALESCE(appearance, ?), vision_used = 1,
+             ticket_id = COALESCE(ticket_id, ?)
+         WHERE id = ? AND (ticket_id = ? OR ticket_id IS NULL)`
+      ).bind(normPlate || null, Number.isFinite(conf) ? conf : null, lookIn, id, decisionId, id).run()
+    }
+    return c.json({ success: true, plate_set: setPlate, appearance_set: setLook })
+  } catch (err: any) {
+    console.error('vehicle attach error:', err)
+    return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 scaleTicketRoutes.post('/:id/merge-out', async (c) => {
   const id = c.req.param('id')
   try {
@@ -578,7 +633,7 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
       'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
     ).bind(ticket.tire_type || 'mixed').first()
     const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
-    const subtotal = cents(netWeight * pricePerKg)
+    const subtotal = cents(billableKg(netWeight) * pricePerKg)
     const tax = cents(subtotal * GST_RATE)
     const grandTotal = cents(subtotal + tax)
 
@@ -649,7 +704,7 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
       'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
     ).bind(ticket.tire_type || 'mixed').first()
     const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
-    const subtotal = cents(netWeight * pricePerKg)
+    const subtotal = cents(billableKg(netWeight) * pricePerKg)
     const tax = cents(subtotal * GST_RATE)
     const grandTotal = cents(subtotal + tax)
 
@@ -1055,7 +1110,7 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
     let grandTotal = ticket.grand_total as number
 
     if (netWeight !== ticket.net_weight && ticket.status === 'completed' && pricePerKg > 0 && netWeight) {
-      subtotal = cents(netWeight * pricePerKg)
+      subtotal = cents(billableKg(netWeight) * pricePerKg)
       tax = cents(subtotal * GST_RATE)
       grandTotal = cents(subtotal + tax)
     }

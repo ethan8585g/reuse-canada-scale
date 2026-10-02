@@ -239,10 +239,10 @@ export function renderScaleHouse(): string {
   <div id="print-failed-card" class="hidden mb-4 bg-red-50 border-2 border-red-300 rounded-xl p-4 flex items-center gap-3">
     <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-print text-red-500 text-xl"></i></div>
     <div class="flex-1 min-w-0">
-      <div class="text-sm font-bold text-red-700">Receipt did not print</div>
-      <div id="print-failed-msg" class="text-xs text-red-600 truncate"></div>
+      <div id="print-failed-title" class="text-sm font-bold text-red-700">Receipt did not print</div>
+      <div id="print-failed-msg" class="text-xs text-red-600 leading-snug"></div>
     </div>
-    <button onclick="retryFailedPrint()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg btn-press flex-shrink-0"><i class="fas fa-redo mr-1"></i> Reprint</button>
+    <button id="print-failed-retry" onclick="retryFailedPrint()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg btn-press flex-shrink-0"><i class="fas fa-redo mr-1"></i> Reprint</button>
     <button onclick="dismissPrintFailure()" class="text-red-400 hover:text-red-600 flex-shrink-0"><i class="fas fa-times"></i></button>
   </div>
 
@@ -576,6 +576,15 @@ export function renderScaleHouse(): string {
             </div>
             <p id="agent-prompt-hint" class="text-[9px] text-gray-400 leading-snug mt-1"></p>
           </div>
+          <div class="pt-1 border-t border-gray-100">
+            <div class="text-[10px] font-semibold text-gray-600 mb-1">Before it acts</div>
+            <div class="grid grid-cols-3 gap-1">
+              <button onclick="setAgentCancel(0)" id="agent-cancel-0" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Instant</button>
+              <button onclick="setAgentCancel(3)" id="agent-cancel-3" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">3 s</button>
+              <button onclick="setAgentCancel(5)" id="agent-cancel-5" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">5 s</button>
+            </div>
+            <p id="agent-cancel-hint" class="text-[9px] text-gray-400 leading-snug mt-1"></p>
+          </div>
           <label class="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer">
             <input type="checkbox" id="agent-plate-matching" onchange="setAgentPlateMatching(this.checked)" class="rounded mt-0.5">
             <span>Identify trucks by licence plate <span class="text-gray-400">— lets several trucks be in the yard at once</span></span>
@@ -615,6 +624,7 @@ export function renderScaleHouse(): string {
             <option value="">Looking for the bridge&hellip;</option>
           </select>
           <p class="text-[10px] text-gray-500 leading-snug" id="receipt-printer-hint">Pick the Epson queue and receipts print silently — no dialog, any browser. Needs the scale-bridge running on this Mac.</p>
+          <p id="receipt-printer-status" class="text-[10px] text-gray-400 mt-1 leading-snug"></p>
           <div class="grid grid-cols-2 gap-1">
             <button onclick="printTestReceipt()" class="px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-vial mr-1"></i> Test Print</button>
             <button onclick="reprintLastReceipt()" class="px-2 py-1.5 bg-gray-100 text-gray-700 text-[10px] font-semibold rounded-lg hover:bg-gray-200 border border-gray-200"><i class="fas fa-redo mr-1"></i> Reprint last</button>
@@ -1490,7 +1500,10 @@ export function renderScaleHouse(): string {
   // Draws whatever source is live, burns the stamp, and encodes under the size
   // cap. The signature is unchanged (label is optional), so every existing
   // caller — print-trigger, merge-out, the agent — is untouched.
-  function capturePhoto(label) {
+  // opts.quiet: no flash and not added to the recent strip -- for a frame the
+  // agent reads but does not keep, so one truck still means one thumbnail.
+  function capturePhoto(label, opts) {
+    const quiet = !!(opts && opts.quiet);
     const size = camFrameSize();
     if (!camActive || !camKind || !size) { try { logSerial('[cam] capture skipped — no live frame'); } catch (e) {} return null; }
     const src = camKind === 'webcam' ? document.getElementById('camera-preview')
@@ -1512,8 +1525,10 @@ export function renderScaleHouse(): string {
     ctx.restore();
     if (camCfg.stamp) camDrawStamp(ctx, canvas.width, canvas.height, label);
     const flash = document.getElementById('camera-flash');
-    flash.classList.remove('hidden');
-    setTimeout(function () { flash.classList.add('hidden'); }, 150);
+    if (!quiet) {
+      flash.classList.remove('hidden');
+      setTimeout(function () { flash.classList.add('hidden'); }, 150);
+    }
     let dataUrl = null;
     try { dataUrl = canvasToCappedJpeg(canvas); }
     catch (e) {
@@ -1523,8 +1538,10 @@ export function renderScaleHouse(): string {
       return null;
     }
     if (!dataUrl) { try { logSerial('[cam] photo too large to upload at any quality'); } catch (e) {} return null; }
-    lastCapturedPhoto = dataUrl;
-    camPushRecent(dataUrl, label);
+    if (!quiet) {
+      lastCapturedPhoto = dataUrl;
+      camPushRecent(dataUrl, label);
+    }
     return dataUrl;
   }
   function autoCapturePhoto(label) { return camActive ? capturePhoto(label || 'auto') : null; }
@@ -2624,16 +2641,56 @@ export function renderScaleHouse(): string {
   // The middle one exists because a yard may not own a thermal printer, and
   // window.print() in a normally-launched Chrome always stops for a dialog --
   // which is a person standing at a screen, not automation. lp has no dialog.
+  //
+  // Every receipt goes through here -- the live close, Test Print, Reprint --
+  // and it reports which path actually ran. autoPrintReceipt() used to call
+  // the ESC/POS function directly, so only the Test Print button ever took
+  // the silent PDF route; a real weigh-out on the HP fell to the dialog.
   async function printReceiptToThermal(receipt) {
-    const queue = receiptPrinterName();
+    let queue = receiptPrinterName();
+    // Nothing chosen on this station yet -- which is different from the
+    // operator having picked "Use browser print dialog" -- so ask the bridge
+    // what it has. This is what makes the first receipt print silently even
+    // when the bridge was started after the page was opened.
+    if (!queue && receiptPrinterPref() === null) queue = await resolveReceiptQueue();
     if (queue) {
       if (looksLikeReceiptQueue(queue)) {
-        if (await printViaBridge(receipt)) return;
-      } else if (await printViaBridgePdf(receipt, queue)) {
-        return;
+        const p = await printViaBridge(receipt);
+        if (p) return { path: 'escpos', printer: p, summary: 'printed via bridge -> ' + p };
+      } else {
+        const p = await printViaBridgePdf(receipt, queue);
+        if (p) return { path: 'pdf', printer: p, summary: 'printed silently as a PDF -> ' + p };
       }
     }
+    const t0 = Date.now();
     browserPrintReceipt(receipt);
+    const ms = Date.now() - t0;
+    // window.print() blocks until the print dialog is dismissed. Returning
+    // almost instantly means Chrome printed silently (--kiosk-printing);
+    // a long block means a dialog was shown and somebody clicked it.
+    return { path: 'dialog', printer: '', ms: ms,
+      summary: 'sent to the browser print dialog — ' + ms + 'ms (' + (ms < 250 ? 'silent' : 'print dialog was shown') + ')' };
+  }
+
+  // Ask the bridge for a queue and remember it, so printing does not depend
+  // on the sidebar picker having been populated at page load.
+  async function resolveReceiptQueue() {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(function () { ctrl.abort(); }, 3000);
+      const res = await fetch(BRIDGE_URL + '/printers', { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      const d = await res.json();
+      const pick = d.receiptGuess || d.default || '';
+      if (pick) {
+        localStorage.setItem('rc_receipt_printer', pick);
+        agentLog('receipt printer: using ' + pick);
+        loadBridgePrinters();
+      }
+      return pick;
+    } catch (e) {
+      return '';
+    }
   }
 
   // Render the receipt as a real PDF and let CUPS print it. Built here rather
@@ -2772,6 +2829,7 @@ export function renderScaleHouse(): string {
         agentLog('bridge PDF print refused: ' + (data.error || res.status) + ' — falling back to the browser dialog');
         return '';
       }
+      notePrinterStatus(data.status);
       return data.printer || queue;
     } catch (e) {
       agentLog('bridge unreachable for PDF printing — falling back to the browser dialog');
@@ -2783,6 +2841,11 @@ export function renderScaleHouse(): string {
   // the receipt printer is a property of this Mac, not of the account.
   function receiptPrinterName() {
     return localStorage.getItem('rc_receipt_printer') || '';
+  }
+  // null when this station has never chosen; '' when the operator explicitly
+  // picked the browser dialog. Only the first is open to being auto-resolved.
+  function receiptPrinterPref() {
+    return localStorage.getItem('rc_receipt_printer');
   }
 
   // ── Photos on the thermal receipt ──────────────────────────────────
@@ -2935,6 +2998,7 @@ export function renderScaleHouse(): string {
         agentLog('bridge print refused: ' + (data.error || res.status) + ' — falling back to the browser dialog');
         return '';
       }
+      notePrinterStatus(data.status);
       return data.printer || 'printer';
     } catch (e) {
       // Bridge not running is the normal case on a laptop; stay quiet about it
@@ -2952,19 +3016,21 @@ export function renderScaleHouse(): string {
       setTimeout(() => ctrl.abort(), 4000);
       const res = await fetch(BRIDGE_URL + '/printers', { signal: ctrl.signal, cache: 'no-store' });
       const d = await res.json();
-      const saved = receiptPrinterName();
+      const pref = receiptPrinterPref();
+      const saved = pref || '';
       // Any CUPS queue is now usable: a thermal one gets ESC/POS, anything else
       // gets a rendered PDF, and both go through lp, which has no dialog. So
       // the system default is a good pick when there is no thermal queue --
       // and it is SAVED, not merely displayed, because an unsaved selection
       // silently means "use the browser dialog" and the operator would have no
-      // way to tell the difference from looking at the box.
-      const pick = saved || d.receiptGuess || d.default || '';
+      // way to tell the difference from looking at the box. An explicit choice
+      // of the dialog (pref === '') is respected.
+      const pick = saved || (pref === null ? (d.receiptGuess || d.default || '') : '');
       const opts = (d.printers || []).map(function (p) {
         return '<option value="' + p + '"' + (p === pick ? ' selected' : '') + '>' + p + (p === d.default ? ' (system default)' : '') + '</option>';
       }).join('');
       sel.innerHTML = '<option value="">Use browser print dialog</option>' + opts;
-      if (!saved && pick) { localStorage.setItem('rc_receipt_printer', pick); sel.value = pick; }
+      if (pref === null && pick) { localStorage.setItem('rc_receipt_printer', pick); sel.value = pick; }
       const hint = document.getElementById('receipt-printer-hint');
       if (hint) {
         const chosen = receiptPrinterName();
@@ -2977,6 +3043,7 @@ export function renderScaleHouse(): string {
               ? 'Thermal receipts print silently on ' + chosen + '.'
               : chosen + ' is not a thermal printer, so receipts print silently as a full-page PDF.';
       }
+      checkPrinterStatus();
     } catch (e) {
       sel.innerHTML = '<option value="">No bridge — using browser print dialog</option>';
       const hint = document.getElementById('receipt-printer-hint');
@@ -3008,8 +3075,10 @@ export function renderScaleHouse(): string {
   }
 
   function saveReceiptPrinter(name) {
-    if (name) localStorage.setItem('rc_receipt_printer', name);
-    else localStorage.removeItem('rc_receipt_printer');
+    // An explicit "browser dialog" is stored as '' rather than removed, so it
+    // is not mistaken for "never chosen" and silently auto-resolved later.
+    localStorage.setItem('rc_receipt_printer', name || '');
+    checkPrinterStatus();
     const hint = document.getElementById('receipt-printer-hint');
     if (hint) {
       hint.className = 'text-[10px] text-gray-400 mt-1 leading-snug';
@@ -3038,28 +3107,13 @@ export function renderScaleHouse(): string {
     try {
       const res = await axios.get('/api/scale-tickets/' + ticketId + '/receipt');
 
-      // Preferred path: hand the receipt to the local bridge, which calls lp(1).
-      // That is silent by construction -- no dialog exists to suppress -- so it
-      // does not care which browser is open or how Chrome was launched, and it
-      // names the Epson queue explicitly instead of trusting whatever the OS
-      // calls default. Falls through to window.print() if the bridge is down.
-      const viaBridge = await printViaBridge(res.data.receipt);
-      if (viaBridge) {
-        lastPrintedTicketId = ticketId;
-        agentLog('receipt printed via bridge -> ' + viaBridge);
-        try { await axios.post('/api/scale-tickets/' + ticketId + '/receipt-printed'); } catch (e) { /* bookkeeping only */ }
-        return true;
-      }
-
-      const t0 = Date.now();
-      browserPrintReceipt(res.data.receipt);
-      const ms = Date.now() - t0;
+      // Same router as Test Print: thermal queue -> ESC/POS via the bridge,
+      // any other queue -> PDF via the bridge, nothing chosen -> the browser
+      // dialog. Both bridge paths end in lp(1), which has no dialog to
+      // suppress, so they do not care how Chrome was launched.
+      const how = await printReceiptToThermal(res.data.receipt);
       lastPrintedTicketId = ticketId;
-      // window.print() blocks until the print dialog is dismissed. Returning
-      // almost instantly means Chrome printed silently (--kiosk-printing);
-      // a long block means a dialog was shown and somebody clicked it. That
-      // single number tells us which mode the station is really running in.
-      agentLog('receipt sent to printer — ' + ms + 'ms (' + (ms < 250 ? 'silent' : 'print dialog was shown') + ')');
+      agentLog('receipt ' + how.summary);
       try { await axios.post('/api/scale-tickets/' + ticketId + '/receipt-printed'); } catch (e) { /* bookkeeping only */ }
       return true;
     } catch(e) {
@@ -3076,9 +3130,60 @@ export function renderScaleHouse(): string {
   function showPrintFailure(ticketId, msg) {
     const el = document.getElementById('print-failed-card');
     if (!el) { alert('Receipt did not print: ' + msg); return; }
+    document.getElementById('print-failed-title').textContent = 'Receipt did not print';
     document.getElementById('print-failed-msg').textContent = msg;
+    document.getElementById('print-failed-retry').style.display = '';
     el.dataset.ticketId = ticketId;
+    el.dataset.kind = 'failure';
     el.classList.remove('hidden');
+  }
+  // lp accepting a job is not the receipt coming out. When the bridge reports
+  // the queue has a problem, the operator must see it -- otherwise "printed"
+  // is a lie, and the next thing that happens is the Print button being
+  // pressed twenty times into a tray with no paper in it. No Reprint button
+  // here: another copy is the one thing that does not help.
+  function showPrinterWarning(problem) {
+    const el = document.getElementById('print-failed-card');
+    if (!el) return;
+    document.getElementById('print-failed-title').textContent = 'Receipt is waiting at the printer';
+    document.getElementById('print-failed-msg').textContent = problem + '. It prints by itself once that is fixed — do not print it again.';
+    document.getElementById('print-failed-retry').style.display = 'none';
+    el.dataset.kind = 'warning';
+    el.classList.remove('hidden');
+  }
+  function notePrinterStatus(st) {
+    if (!st) return;
+    if (st.problem) {
+      agentLog('PRINTER: ' + st.problem);
+      showPrinterWarning(st.problem);
+    } else {
+      const el = document.getElementById('print-failed-card');
+      if (el && el.dataset.kind === 'warning') el.classList.add('hidden');
+    }
+    refreshPrinterStatusHint(st);
+  }
+  // The sidebar line under the printer picker: red when the queue has a problem.
+  function refreshPrinterStatusHint(st) {
+    const line = document.getElementById('receipt-printer-status');
+    if (!line) return;
+    if (st && st.problem) {
+      line.textContent = '⚠ ' + st.problem;
+      line.className = 'text-[10px] text-red-600 font-semibold mt-1 leading-snug';
+    } else {
+      line.textContent = st && st.printer ? 'Printer ready' + (st.queued ? ' · ' + st.queued + ' job' + (st.queued === 1 ? '' : 's') + ' in queue' : '') : '';
+      line.className = 'text-[10px] text-gray-400 mt-1 leading-snug';
+    }
+  }
+  async function checkPrinterStatus() {
+    const q = receiptPrinterName();
+    if (!q) { refreshPrinterStatusHint(null); return; }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(function () { ctrl.abort(); }, 4000);
+      const res = await fetch(BRIDGE_URL + '/printer-status?printer=' + encodeURIComponent(q), { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      refreshPrinterStatusHint(await res.json());
+    } catch (e) { /* bridge down: the picker already says so */ }
   }
   function dismissPrintFailure() { document.getElementById('print-failed-card').classList.add('hidden'); }
   async function retryFailedPrint() {
@@ -3159,7 +3264,7 @@ export function renderScaleHouse(): string {
     let frame = null;
     try { frame = capturePhoto('test print'); } catch (e) { frame = null; }
     if (!frame) agentLog('test print: no camera frame — printing the text-only receipt');
-    await printReceiptToThermal({
+    const how = await printReceiptToThermal({
       ticket_number: 'TEST-PRINT',
       date: new Date().toISOString(),
       customer: 'Test Customer',
@@ -3175,6 +3280,7 @@ export function renderScaleHouse(): string {
       grand_total: 588.00,
       photo_in: frame,
     });
+    agentLog('test print ' + how.summary);
   }
 
   // ══════════════════════════════════════════
@@ -3438,6 +3544,13 @@ export function renderScaleHouse(): string {
   let lastPrintedTicketId = null;
   const AGENT_CLEAR_HOLD_MS = 5000;
   const AGENT_SETTLE_BAND_KG = 20;
+  // The camera read is the slow part of a decision (3-5 s on the yard camera)
+  // and nothing about it depends on the final settled weight. So it starts
+  // once the vehicle has held still for this long, and runs WHILE the scale
+  // finishes settling instead of after it. agentEpisode ties a read to one
+  // visit so a read from a truck that left cannot be used for the next one.
+  const AGENT_PREREAD_MS = 800;
+  let agentEpisode = 0, agentPreRead = null;
 
   function agentLog(msg) {
     const el = document.getElementById('agent-log');
@@ -3506,6 +3619,17 @@ export function renderScaleHouse(): string {
     if (hint) hint.textContent = prompt === 'off'
       ? 'Opens, closes and prints with no screen at all. Tickets stay unattributed until you assign them in Ticket History.'
       : 'Asks who the load was for once the truck has weighed out and printed.';
+    const cancelSec = agentSettings ? Number(agentSettings.cancel_seconds) : 5;
+    [0, 3, 5].forEach(function (n) {
+      const b = document.getElementById('agent-cancel-' + n);
+      if (!b) return;
+      b.className = 'px-1 py-1.5 text-[10px] font-semibold rounded-lg border ' +
+        (n === cancelSec ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50');
+    });
+    const cancelHint = document.getElementById('agent-cancel-hint');
+    if (cancelHint) cancelHint.textContent = cancelSec === 0
+      ? 'Acts the moment the scale settles, then shows what it did for a few seconds.'
+      : 'Shows what it is about to do for ' + cancelSec + ' s, with a Cancel button, before acting.';
     ['off', 'dry_run', 'live'].forEach(function (m) {
       const b = document.getElementById('agent-btn-' + m);
       if (!b) return;
@@ -3554,6 +3678,19 @@ export function renderScaleHouse(): string {
     }
   }
 
+  async function setAgentCancel(sec) {
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { cancel_seconds: sec });
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      agentLog('before acting: ' + (sec === 0 ? 'instant' : sec + ' s cancel window'));
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      alert('Could not change that setting: ' + msg);
+      applyAgentSettingsToUI();
+    }
+  }
+
   async function setAgentSingleTruck(on) {
     try {
       const res = await axios.put('/api/scale-agent/settings', { single_truck_mode: on ? 1 : 0 });
@@ -3595,16 +3732,27 @@ export function renderScaleHouse(): string {
     }
 
     if (agentState === 'idle') {
-      if (w > wake) { agentSetState('occupied'); agentSettleSince = now; agentSettleWeight = w; }
+      if (w > wake) { agentSetState('occupied'); agentSettleSince = now; agentSettleWeight = w; agentEpisode++; agentPreRead = null; }
       return;
     }
 
     // occupied: wait for the reading to hold still, then decide
-    if (w < wake) { agentSetState('idle'); agentSettleSince = 0; return; }
+    if (w < wake) { agentSetState('idle'); agentSettleSince = 0; agentPreRead = null; return; }
     if (Math.abs(w - agentSettleWeight) > AGENT_SETTLE_BAND_KG) {
       agentSettleSince = now; agentSettleWeight = w; return;
     }
+    const floor = Number(agentSettings.vehicle_floor_kg) || wake;
+    if (!agentPreRead && w >= floor && (now - agentSettleSince) >= AGENT_PREREAD_MS) agentStartPreRead();
     if (isWeightStable && (now - agentSettleSince) >= settleMs) agentDecide(w);
+  }
+
+  function agentStartPreRead() {
+    let frame = null;
+    try { frame = camActive ? capturePhoto('agent', { quiet: true }) : null; } catch (e) { frame = null; }
+    // Recorded even when there is no frame, so this is attempted once per
+    // visit rather than on every weight tick.
+    agentPreRead = { episode: agentEpisode, startedAt: Date.now(), promise: frame ? agentReadVehicle(frame) : null };
+    if (frame) agentLog('camera: reading the vehicle while the scale settles');
   }
 
   // Read the plate off the frame we just captured. The answer is advisory:
@@ -3648,14 +3796,38 @@ export function renderScaleHouse(): string {
     agentSetState('deciding');
     let photo = null;
     try { photo = autoCapturePhoto('agent'); } catch (e) { photo = null; }
-    const plateRead = await agentReadVehicle(photo);
+    // Use the read that started while the scale was settling, if there is one
+    // for THIS visit; otherwise read now. Either way the ticket keeps the
+    // photo taken at the settled weight, so its stamp matches the ticket.
+    const pre = agentPreRead; agentPreRead = null;
+    const readP = (pre && pre.episode === agentEpisode && pre.promise) ? pre.promise : agentReadVehicle(photo);
+    const t0 = Date.now();
+    let plateRead = null, lateRead = null;
     try {
-      const res = await axios.post('/api/scale-agent/decide', {
-        weight: weight,
-        plate: (plateRead && plateRead.plate) || '',
-        plate_confidence: (plateRead && plateRead.confidence) || 0,
-        appearance: (plateRead && plateRead.appearance) || null
-      });
+      // With nothing open in the yard this can only be an arrival, and the
+      // camera has no say in that -- so the ticket is written first and the
+      // camera's description is attached when it lands, instead of the driver
+      // waiting several seconds for a read that cannot change the answer. The
+      // server has the final word: if something IS open it answers 'wait' and
+      // the decision goes round again with the read.
+      const nothingOpen = Array.isArray(openTickets) && openTickets.length === 0;
+      let res = null;
+      if (nothingOpen) {
+        res = await axios.post('/api/scale-agent/decide', { weight: weight, plate: '', plate_confidence: 0, appearance: null, vision_pending: true });
+      }
+      if (!res || res.data.action === 'wait') {
+        plateRead = await readP;
+        const waited = Date.now() - t0;
+        if (pre && pre.promise) agentLog('camera: ' + (waited < 50 ? 'already read when the scale settled' : 'decision waited ' + waited + 'ms for the camera'));
+        res = await axios.post('/api/scale-agent/decide', {
+          weight: weight,
+          plate: (plateRead && plateRead.plate) || '',
+          plate_confidence: (plateRead && plateRead.confidence) || 0,
+          appearance: (plateRead && plateRead.appearance) || null
+        });
+      } else {
+        lateRead = readP;
+      }
       const d = res.data;
       if (d.settings) { agentSettings = d.settings; applyAgentSettingsToUI(); }
 
@@ -3676,7 +3848,7 @@ export function renderScaleHouse(): string {
         return;
       }
 
-      agentPending = { decision: d, weight: weight, photo: photo, plate: plateRead };
+      agentPending = { decision: d, weight: weight, photo: photo, plate: plateRead, lateRead: lateRead };
       agentShowBanner(d, weight);
     } catch (e) {
       const msg = (e.response && e.response.data && e.response.data.error) || e.message;
@@ -3749,7 +3921,15 @@ export function renderScaleHouse(): string {
 
     let left = Number(agentSettings && agentSettings.cancel_seconds);
     if (!isFinite(left) || left < 0) left = 5;
-    if (left === 0) { agentAct(); return; }
+    if (left === 0) {
+      // No countdown: act now. The banner stays up with nothing to press, as a
+      // notice of what was done, and clears itself once the ticket is written.
+      document.getElementById('agent-banner-actions').style.display = 'none';
+      countEl.style.display = 'none';
+      document.getElementById('agent-banner-foot').textContent = 'Working…';
+      agentAct(true);
+      return;
+    }
     countEl.textContent = String(left);
     if (agentBannerTimer) { clearInterval(agentBannerTimer); clearTimeout(agentBannerTimer); }
     agentBannerTimer = setInterval(function () {
@@ -3783,12 +3963,13 @@ export function renderScaleHouse(): string {
   // Deliberately reuses the existing /print-trigger and /:id/merge-out routes:
   // the pricing, GST, audit log and detectAnomalies() are inherited rather
   // than reimplemented, so an agent ticket is byte-for-byte an operator ticket.
-  async function agentAct() {
-    agentHideBanner();
+  async function agentAct(keepBanner) {
+    if (!keepBanner) agentHideBanner();
     const p = agentPending; agentPending = null;
-    if (!p) { agentSetState('cooldown'); return; }
+    if (!p) { agentHideBanner(); agentSetState('cooldown'); return; }
     const d = p.decision;
     agentSetState('acting');
+    let done = false;
     try {
       if (d.action === 'new') {
         const res = await axios.post('/api/scale-tickets/print-trigger', {
@@ -3805,6 +3986,7 @@ export function renderScaleHouse(): string {
                  + (p.plate && p.plate.plate ? ' for plate ' + p.plate.plate
                     : (p.plate && p.plate.vehicle ? ' for a ' + p.plate.vehicle : '')));
         await agentReport(d.decision_id, 'acted', res.data.id);
+        if (p.lateRead) agentAttachLateRead(p.lateRead, res.data.id, res.data.ticket_number, d.decision_id);
         loadOpenTickets(); loadStats();
         // Deliberately NO customer prompt here. The driver is still on the
         // scale about to pull off and the operator is watching the truck, not
@@ -3838,7 +4020,9 @@ export function renderScaleHouse(): string {
           openAssignModal(d.ticket.id, d.ticket.ticket_number, d.ticket.weight_in, { net: net, total: total });
         }
       }
+      done = true;
     } catch (e) {
+      agentHideBanner();
       const msg = (e.response && e.response.data && e.response.data.error) || e.message;
       agentLog('ACT FAILED: ' + msg);
       await agentReport(d.decision_id, 'failed', null);
@@ -3848,7 +4032,32 @@ export function renderScaleHouse(): string {
       onPrintTrigger(p.weight, true);
     } finally {
       agentSetState('cooldown');
+      if (keepBanner && done) {
+        const title = document.getElementById('agent-banner-title');
+        if (title) title.textContent = d.action === 'close' ? 'Ticket closed' : 'Ticket opened';
+        const foot = document.getElementById('agent-banner-foot');
+        if (foot) foot.textContent = 'Done';
+        if (agentBannerTimer) { clearInterval(agentBannerTimer); clearTimeout(agentBannerTimer); }
+        agentBannerTimer = setTimeout(agentHideBanner, 3500);
+      }
     }
+  }
+
+  // The camera's description of a truck whose ticket was written before the
+  // read came back. Attached in the background; nothing waits on it.
+  function agentAttachLateRead(readP, ticketId, ticketNumber, decisionId) {
+    Promise.resolve(readP).then(function (read) {
+      if (!read || (!read.plate && !read.appearance)) return null;
+      return axios.post('/api/scale-tickets/' + ticketId + '/vehicle', {
+        plate: read.plate || '', plate_confidence: read.confidence || 0,
+        appearance: read.appearance || null, decision_id: decisionId || null
+      }).then(function () {
+        agentLog('camera: ' + (read.plate ? 'plate ' + read.plate + ' ' : '') + (read.vehicle || '') + ' attached to ' + ticketNumber);
+        loadOpenTickets();
+      });
+    }).catch(function (e) {
+      agentLog('camera: could not attach the read to ' + ticketNumber + ': ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+    });
   }
 
   async function agentCancel() {

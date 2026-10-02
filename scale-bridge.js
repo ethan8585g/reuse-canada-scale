@@ -88,6 +88,48 @@ function defaultPrinter() {
   } catch { return null; }
 }
 
+// What CUPS and the printer say about a queue right now. lp exits 0 the moment
+// a job is ACCEPTED, which is not the same as printed: a queue stopped on an
+// empty tray accepts jobs all day. So every print answers with this, and the
+// page can say "queued, but the printer is out of paper" instead of "printed".
+// (The day this was written, 24 copies of one receipt were stacked behind a
+// tray that had run out at 10:55.)
+const ALERT_TEXT = [
+  [/media-needed|media-empty|input-tray-missing/, 'out of paper'],
+  [/media-jam/, 'jammed'],
+  [/cover-open|door-open|interlock-open/, 'open (a cover or door)'],
+  [/offline|connecting-to-device|unable-to-connect|timed-out/, 'not reachable on the network'],
+  [/marker-supply-empty|toner-empty|ink-empty/, 'out of ink'],
+  [/^paused$|^stopped$|shutdown/, 'paused'],
+];
+function queueStatus(printer) {
+  const s = { printer: printer || null, state: 'unknown', alerts: [], queued: 0, problem: null };
+  if (!printer) return s;
+  try {
+    const out = execFileSync('lpstat', ['-l', '-p', printer], { encoding: 'utf8' });
+    const head = out.split('\n')[0] || '';
+    s.state = /is idle/.test(head) ? 'idle' : /now printing/.test(head) ? 'printing' : /disabled/.test(head) ? 'stopped' : 'unknown';
+    const m = out.match(/^\s*Alerts:\s*(.*)$/m);
+    if (m) s.alerts = m[1].split(/\s+/).filter(a => a && !/^cups-/.test(a) && !/-warning$/.test(a));
+  } catch { /* no CUPS or unknown queue */ }
+  try {
+    const out = execFileSync('lpstat', ['-o', printer], { encoding: 'utf8' });
+    s.queued = out.split('\n').filter(l => l.startsWith(printer + '-')).length;
+  } catch { /* no jobs */ }
+  const texts = [];
+  for (const a of s.alerts) {
+    const hit = ALERT_TEXT.find(([re]) => re.test(a));
+    if (hit && !texts.includes(hit[1])) texts.push(hit[1]);
+  }
+  if (s.state === 'stopped' && !texts.includes('paused')) texts.push('paused');
+  if (texts.length) {
+    s.problem = printer + ' is ' + texts.join(' and ') + (s.queued > 1 ? ' — ' + s.queued + ' jobs are waiting' : '');
+  } else if (s.queued > 3) {
+    s.problem = s.queued + ' jobs are waiting on ' + printer;
+  }
+  return s;
+}
+
 function listPrinters() {
   let printers = [];
   try {
@@ -707,10 +749,12 @@ const server = http.createServer(async (req, res) => {
     try {
       const images = Array.isArray(body.images) ? body.images : [];
       const job = printReceipt(body.receipt || {}, printer, images);
-      console.log(`[bridge] printed ${body.receipt?.ticket_number || '(no number)'} -> ${printer}`
-                  + (images.length ? ` (+${images.length} photo${images.length === 1 ? '' : 's'})` : ''));
+      const status = queueStatus(printer);
+      console.log(`[bridge] queued ${body.receipt?.ticket_number || '(no number)'} -> ${printer}`
+                  + (images.length ? ` (+${images.length} photo${images.length === 1 ? '' : 's'})` : '')
+                  + (status.problem ? ` — WARNING: ${status.problem}` : ''));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, printer, job }));
+      res.end(JSON.stringify({ ok: true, printer, job, status }));
     } catch (err) {
       console.error('[bridge] print failed:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -731,14 +775,23 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const job = printPdf(body.pdf, printer, body.title);
-      console.log(`[bridge] printed PDF ${body.title || '(untitled)'} -> ${printer}`);
+      const status = queueStatus(printer);
+      console.log(`[bridge] queued PDF ${body.title || '(untitled)'} -> ${printer}`
+                  + (status.problem ? ` — WARNING: ${status.problem}` : ''));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, printer, job }));
+      res.end(JSON.stringify({ ok: true, printer, job, status }));
     } catch (err) {
       console.error('[bridge] pdf print failed:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
+    return;
+  }
+
+  // Is the receipt printer actually able to print right now?
+  if (url.pathname === '/printer-status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(queueStatus(url.searchParams.get('printer') || PRINTER_NAME || defaultPrinter())));
     return;
   }
 

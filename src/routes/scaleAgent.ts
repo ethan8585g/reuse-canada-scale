@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import Anthropic from '@anthropic-ai/sdk'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
-import { GST_RATE, cents } from '../utils/money'
+import { GST_RATE, cents, billableKg } from '../utils/money'
 
 // ANTHROPIC_API_KEY is a Cloudflare secret and is read only here. The frame it
 // describes is captured in the browser, but the key must never go there.
@@ -420,17 +420,23 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
       // out heavier than it weighed in, and a load outside the sane range is a
       // bad reading rather than a finished job. Knowing WHO this is does not
       // mean we know WHAT happened to it.
-      if (net <= 0) {
+      // "Heavier" means MEANINGFULLY heavier. A truck that comes back at the
+      // weight it arrived at -- give or take the driver climbing out or a
+      // tank of fuel -- dropped nothing, and that is a finished visit with a
+      // zero load, not an impossibility. The same minimum that defines a real
+      // load defines the tolerance here; it used to be a strict > 0, which
+      // sent every empty return to the operator.
+      if (net < -minNet) {
         return {
           action: 'defer', ticket: null, confidence: 0, rule: 'plate_match_not_lighter',
           reason: `Plate ${plateNorm} is ${t.ticket_number}, open at ${t.weight_in.toFixed(1)} kg, but this reading is ${weight.toFixed(1)} kg — the same truck cannot leave heavier than it arrived. Sending it to the operator.`,
           candidates: matches,
         }
       }
-      if (net < minNet || net > maxNet) {
+      if (net > maxNet) {
         return {
           action: 'defer', ticket: null, confidence: 0, rule: 'plate_match_implausible_net',
-          reason: `Plate ${plateNorm} is ${t.ticket_number}, but that gives a ${net.toFixed(1)} kg load, outside ${minNet}-${maxNet} kg. Sending it to the operator.`,
+          reason: `Plate ${plateNorm} is ${t.ticket_number}, but that gives a ${net.toFixed(1)} kg load, over the ${maxNet} kg maximum. Sending it to the operator.`,
           candidates: matches,
         }
       }
@@ -443,6 +449,14 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
         return {
           action: 'defer', ticket: null, confidence: 0, rule: 'plate_match_appearance_conflict',
           reason: `Plate ${plateNorm} matches ${t.ticket_number}, but ${clash.why}. The plate and the camera disagree about what is on the scale, so this needs the operator.`,
+          candidates: matches,
+        }
+      }
+
+      if (net < minNet) {
+        return {
+          action: 'close', ticket: t, confidence: 0.95, rule: 'plate_match_zero_net',
+          reason: `Plate ${plateNorm} is ${t.ticket_number}, open at ${t.weight_in.toFixed(1)} kg, and it is leaving at ${weight.toFixed(1)} kg — the weight it arrived at, so nothing was dropped. Closing it with a 0 kg load.`,
           candidates: matches,
         }
       }
@@ -522,6 +536,45 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
     }
     // Fall through: at least one open ticket has no plate recorded, so this
     // read cannot rule it out.
+  }
+
+  // ── Nothing dropped ────────────────────────────────────────────────
+  // With one truck on site and one ticket open, a reading at that ticket's
+  // weigh-in weight is that truck leaving empty -- turned away, picked up
+  // nothing, or a yard test. This used to fall through to the "possible"
+  // filter below, which demands a strictly positive net, and from there to
+  // single_truck_unexpected_arrival: every empty return was reported as
+  // "heavier than its weigh-in" and parked on the manual card. A zero load is
+  // a legitimate outcome of a visit (merge-out already records it and
+  // detectAnomalies flags it), so it closes like any other weigh-out, with the
+  // same two guards: the ticket must be fresh, and the camera must not say
+  // this is a different vehicle. Tolerance is the minimum real load, both
+  // ways -- a few kg over is the driver back in the cab, not a second truck.
+  if (singleTruck && open.length === 1 && Number.isFinite(open[0].weight_in)) {
+    const t = open[0]
+    const net = t.weight_in - weight
+    if (net >= -minNet && net < minNet) {
+      if (Number.isFinite(t.age_hours) && t.age_hours > maxAge) {
+        return {
+          action: 'defer', ticket: null, confidence: 0, rule: 'stale_open_ticket',
+          reason: `${t.ticket_number} has been open ${t.age_hours.toFixed(1)} h, past the ${maxAge} h limit. It is probably an abandoned ticket rather than this truck, so it will not be closed automatically.`,
+          candidates: open,
+        }
+      }
+      const clash = looksWrong(t)
+      if (clash) {
+        return {
+          action: 'defer', ticket: null, confidence: 0, rule: 'appearance_conflict',
+          reason: `${weight.toFixed(1)} kg is ${t.ticket_number}'s weigh-in weight, but ${clash.why}. That is not the same vehicle, so it needs the operator.`,
+          candidates: open,
+        }
+      }
+      return {
+        action: 'close', ticket: t, confidence: 0.85, rule: 'single_truck_zero_net',
+        reason: `${t.ticket_number} is the only open ticket and ${weight.toFixed(1)} kg is the weight it arrived at (${t.weight_in.toFixed(1)} kg in), so nothing was dropped. Closing it with a 0 kg load rather than treating the same truck as a new arrival.`,
+        candidates: open,
+      }
+    }
   }
 
   const possible = open.filter(t => Number.isFinite(t.weight_in) && (t.weight_in - weight) > 0)
@@ -798,6 +851,20 @@ scaleAgentRoutes.post('/decide', async (c) => {
       appearance: parseAppearance(r.appearance_in),
     }))
 
+    // The browser may ask before its camera read is back. With nothing open
+    // the answer cannot depend on the camera -- it is an arrival -- so it is
+    // given now and the read is attached to the ticket afterwards (see
+    // POST /api/scale-tickets/:id/vehicle). With anything open it can, so the
+    // browser is told to come back with the read, and nothing is recorded for
+    // this round.
+    if (body?.vision_pending && open.length > 0) {
+      return c.json({
+        mode: s.mode, action: 'wait', rule: 'needs_camera',
+        reason: `${open.length} ticket${open.length === 1 ? ' is' : 's are'} open, so the camera read is needed before deciding.`,
+        open_ticket_count: open.length, settings: s,
+      })
+    }
+
     const minConf = Number(s.plate_min_confidence ?? DEFAULTS.plate_min_confidence)
     const plateUsable = normalizePlate(rawPlate) && (!Number.isFinite(plateConf) || plateConf >= minConf)
     const d = decide(weight, open, s, plateUsable ? rawPlate : '', nowLook)
@@ -812,7 +879,7 @@ scaleAgentRoutes.post('/decide', async (c) => {
         'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
       ).bind(d.ticket.tire_type || s.material || 'mixed').first<any>()
       const ppk = pricing ? Number(pricing.price_per_kg) : 0.14
-      const subtotal = cents(net * ppk)
+      const subtotal = cents(billableKg(net) * ppk)
       const tax = cents(subtotal * GST_RATE)
       preview = {
         weight_in: d.ticket.weight_in,
@@ -993,6 +1060,8 @@ const PLATE_PROMPT = [
   '- If no vehicle is on the scale, return body "other", color "other", empty markings and appearance_confidence 0.',
 ].join('\n')
 
+const VISION_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001']
+
 scaleAgentRoutes.post('/vision', async (c) => {
   const started = Date.now()
   try {
@@ -1011,9 +1080,14 @@ scaleAgentRoutes.post('/vision', async (c) => {
     }
     const mediaType = (m[1] === 'image/jpg' ? 'image/jpeg' : m[1]) as 'image/jpeg' | 'image/png' | 'image/webp'
 
+    // An explicit model is accepted only from a short allow-list. It exists so
+    // the live read can be timed and compared across models on real frames
+    // without changing the station's setting under a working agent.
+    const override = typeof body?.model === 'string' && VISION_MODELS.includes(body.model) ? body.model : null
+
     const client = new Anthropic({ apiKey: key })
     const res = await client.messages.create({
-      model: s.vision_model || DEFAULTS.vision_model,
+      model: override || s.vision_model || DEFAULTS.vision_model,
       max_tokens: 1024,
       // Reading characters off a plate is a simple extraction, and this call
       // sits inside the few seconds between a truck settling and the ticket
