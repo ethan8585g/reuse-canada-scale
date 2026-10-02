@@ -2794,8 +2794,15 @@ export function renderScaleHouse(): string {
       const res = await fetch(BRIDGE_URL + '/printers', { signal: ctrl.signal, cache: 'no-store' });
       const d = await res.json();
       const saved = receiptPrinterName();
+      // Deliberately NOT falling back to the system default here. That made the
+      // dropdown display a queue that was not actually in effect: nothing is
+      // saved, so printing really goes through the browser dialog, while the
+      // box claimed the office inkjet was chosen. Worse, touching the dropdown
+      // would then "confirm" that queue and start aiming raw ESC/POS at an
+      // inkjet. With nothing selected the first option, "Use browser print
+      // dialog", shows -- which is the truth.
       const opts = (d.printers || []).map(function (p) {
-        const sel2 = p === (saved || d.receiptGuess || d.default) ? ' selected' : '';
+        const sel2 = p === (saved || d.receiptGuess) ? ' selected' : '';
         return '<option value="' + p + '"' + sel2 + '>' + p + (p === d.default ? ' (system default)' : '') + '</option>';
       }).join('');
       sel.innerHTML = '<option value="">Use browser print dialog</option>' + opts;
@@ -2827,7 +2834,31 @@ export function renderScaleHouse(): string {
     if (v !== null) cb.checked = v === '1';
   }
 
+  // Only a thermal receipt printer can make sense of the ESC/POS the bridge
+  // sends. Picking anything else here is almost always a mistake, and the
+  // failure is silent -- lp accepts the bytes and the inkjet prints rubbish --
+  // so say so at the moment of choosing rather than after a customer is handed
+  // a page of control codes.
+  function looksLikeReceiptQueue(name) {
+    const n = String(name || '').toLowerCase();
+    return ['epson', 'tm-t88', 'tmt88', 'thermal', 'receipt', 'pos'].some(function (k) { return n.indexOf(k) !== -1; });
+  }
+
   function saveReceiptPrinter(name) {
+    const hint = document.getElementById('receipt-printer-hint');
+    if (name && !looksLikeReceiptQueue(name)) {
+      if (!confirm(name + ' does not look like a thermal receipt printer.\\n\\n'
+          + 'Receipts are sent to it as raw ESC/POS, which an office printer cannot read — it would print pages of junk, and the app would report success.\\n\\n'
+          + 'Leave this on "Use browser print dialog" for a normal printer.\\n\\nSelect it anyway?')) {
+        const sel = document.getElementById('receipt-printer');
+        if (sel) sel.value = receiptPrinterName() || '';
+        return;
+      }
+      if (hint) {
+        hint.textContent = name + ' is not a thermal printer — receipts will likely print as junk.';
+        hint.className = 'text-[10px] text-red-600 mt-1 font-semibold';
+      }
+    }
     if (name) localStorage.setItem('rc_receipt_printer', name);
     else localStorage.removeItem('rc_receipt_printer');
     agentLog(name ? 'receipt printer set to ' + name : 'receipts will use the browser print dialog');
