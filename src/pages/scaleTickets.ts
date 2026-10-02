@@ -469,7 +469,7 @@ export function renderScaleTickets(): string {
         var a = raw;
         if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return ''; } }
         if (!a) return '';
-        var bits = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+        var bits = [a.color, a.make, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
         return a.markings ? (bits ? bits + ' / ' + a.markings : a.markings) : bits;
       }
 
@@ -999,7 +999,7 @@ export function renderScaleTickets(): string {
             let a = raw;
             if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return ''; } }
             if (!a) return '';
-            const bits = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+            const bits = [a.color, a.make, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
             const text = a.markings ? (bits ? bits + ' · ' + a.markings : a.markings) : bits;
             if (!text) return '';
             return '<span class="ml-2 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px]">' + escHtml(text) + '</span>';

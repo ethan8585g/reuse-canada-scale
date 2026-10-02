@@ -224,6 +224,33 @@ function receiptBytes(r, cols, images) {
   return Buffer.concat(chunks);
 }
 
+// Print an already-rendered PDF on an ordinary (non-thermal) printer.
+//
+// This exists because a yard may not own a thermal printer, and `window.print()`
+// in a normally-launched Chrome always shows a dialog somebody has to click --
+// which is not automation, it is a person standing at a screen. `lp` has no
+// dialog by construction, and unlike the ESC/POS path this hands CUPS a real
+// PDF, so an office inkjet renders it properly instead of spewing control
+// codes. The browser builds the PDF because that is where the receipt and the
+// photo already are; this file stays dependency-free.
+function printPdf(pdfBase64, printer, title) {
+  const bytes = Buffer.from(String(pdfBase64 || ''), 'base64');
+  if (bytes.length < 5 || bytes.subarray(0, 4).toString('latin1') !== '%PDF') {
+    throw new Error('Not a PDF');
+  }
+  const tmp = path.join(os.tmpdir(), 'rc-receipt-' + Date.now() + '.pdf');
+  fs.writeFileSync(tmp, bytes);
+  try {
+    // No -o raw: CUPS must run its PDF filter chain for the target printer.
+    const args = ['-d', printer];
+    if (title) args.push('-t', String(title).slice(0, 60));
+    args.push(tmp);
+    return execFileSync('lp', args, { encoding: 'utf8' }).trim();
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+  }
+}
+
 // `lp` reads the job from a file rather than stdin so a failure surfaces as a
 // non-zero exit with a real message, not a broken pipe.
 function printReceipt(receipt, printer, images) {
@@ -686,6 +713,29 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, printer, job }));
     } catch (err) {
       console.error('[bridge] print failed:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Silent printing for an ordinary sheet printer. Same contract as /print:
+  // an explicit queue wins, otherwise the system default -- which here is
+  // exactly right, because any CUPS queue can render a PDF.
+  if (url.pathname === '/print-pdf' && req.method === 'POST') {
+    const body = await readBody(req);
+    const printer = body.printer || PRINTER_NAME || defaultPrinter();
+    if (!printer) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'No printer selected, no PRINTER env var, and no system default' }));
+    }
+    try {
+      const job = printPdf(body.pdf, printer, body.title);
+      console.log(`[bridge] printed PDF ${body.title || '(untitled)'} -> ${printer}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, printer, job }));
+    } catch (err) {
+      console.error('[bridge] pdf print failed:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }

@@ -2615,9 +2615,168 @@ export function renderScaleHouse(): string {
   // Operator sets the Epson as default once; subsequent prints are a single
   // Enter press. For fully-silent printing Chrome must be launched with
   // --kiosk --kiosk-printing (out of scope of this app).
+  // Three delivery paths, picked by what the station actually has.
+  //
+  //   thermal queue selected -> ESC/POS through the bridge   (silent)
+  //   any other queue        -> a PDF through the bridge     (silent)
+  //   nothing selected       -> window.print()               (shows a dialog)
+  //
+  // The middle one exists because a yard may not own a thermal printer, and
+  // window.print() in a normally-launched Chrome always stops for a dialog --
+  // which is a person standing at a screen, not automation. lp has no dialog.
   async function printReceiptToThermal(receipt) {
-    if (await printViaBridge(receipt)) return;
+    const queue = receiptPrinterName();
+    if (queue) {
+      if (looksLikeReceiptQueue(queue)) {
+        if (await printViaBridge(receipt)) return;
+      } else if (await printViaBridgePdf(receipt, queue)) {
+        return;
+      }
+    }
     browserPrintReceipt(receipt);
+  }
+
+  // Render the receipt as a real PDF and let CUPS print it. Built here rather
+  // than in the bridge because the receipt and its photo are already in this
+  // page, and scale-bridge.js is deliberately a single dependency-free file.
+  async function buildReceiptPdf(receipt) {
+    await loadJsPdf();
+    // 80mm wide, roll-shaped. On a sheet printer that prints as a narrow strip,
+    // which is what a receipt should look like, on one sheet rather than
+    // scaled up to fill A4.
+    //
+    // Drawn TWICE: jsPDF fixes a page's height when the page is created and
+    // resizing it afterwards does not retroactively trim it, so the first pass
+    // only measures how tall the content actually came out -- the photo's
+    // aspect ratio is the part that cannot be known up front -- and the second
+    // draws it on a page cut to that height. Without this every receipt
+    // carried a hand's width of blank paper.
+    const W = 80, M = 5;
+    const measured = await renderReceiptPdf(receipt, W, M, null);
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: [W, Math.max(60, measured + M)] });
+    await renderReceiptPdf(receipt, W, M, doc);
+    return doc.output('datauristring').split(',')[1];
+  }
+
+  // Returns the Y the content ended at. With doc === null it measures only.
+  async function renderReceiptPdf(receipt, W, M, doc) {
+    const scratch = doc || new window.jspdf.jsPDF({ unit: 'mm', format: [W, 400] });
+    const d = scratch;
+    const money = function (v) { return '$' + (Number(v) || 0).toFixed(2); };
+    const kg = function (v) { return (v === null || v === undefined || v === '') ? '—' : (Number(v).toFixed(1) + ' kg'); };
+    let y = M + 3;
+
+    const centre = function (text, size, bold) {
+      d.setFont('courier', bold ? 'bold' : 'normal'); d.setFontSize(size);
+      d.text(String(text), W / 2, y, { align: 'center' }); y += size * 0.45 + 1.2;
+    };
+    const row = function (l, r, size, bold) {
+      d.setFont('courier', bold ? 'bold' : 'normal'); d.setFontSize(size || 8);
+      d.text(String(l), M, y);
+      d.text(String(r), W - M, y, { align: 'right' });
+      y += (size || 8) * 0.45 + 1.2;
+    };
+    const rule = function () {
+      d.setLineWidth(0.15); d.setLineDashPattern([0.6, 0.6], 0);
+      d.line(M, y - 1.5, W - M, y - 1.5); d.setLineDashPattern([], 0); y += 1.5;
+    };
+
+    centre('REUSE CANADA', 13, true);
+    centre('Waste-to-Value Recycling · Alberta', 7);
+    centre('www.reusecanadascale.com', 7);
+    y += 1; rule();
+    centre('SCALE TICKET', 10, true);
+    centre(receipt.ticket_number || '', 10, true);
+    y += 1; rule();
+
+    const when = receipt.date ? new Date(receipt.date) : null;
+    row('Date', when && !isNaN(when.getTime()) ? when.toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+    row('Customer', (receipt.customer || 'Walk-in').slice(0, 24));
+    row('Material', getMaterialLabel(receipt.material).slice(0, 24));
+    const veh = receiptVehicleText(receipt);
+    if (veh) {
+      // Plate, colour, make and body together overflow one 80mm line, and a
+      // slice() produced "White Nissan Sed" on the real receipt. Wrapping keeps
+      // every part readable, which is the whole point of printing it.
+      d.setFont('courier', 'normal'); d.setFontSize(8);
+      const lines = d.splitTextToSize(veh, W - M * 2 - 18);
+      d.text('Vehicle', M, y);
+      lines.forEach(function (ln, i) {
+        d.text(ln, W - M, y + i * 3.8, { align: 'right' });
+      });
+      y += lines.length * 3.8 + 0.8;
+    }
+    y += 1; rule();
+
+    row('Gross (in)', kg(receipt.weight_in));
+    row('Tare (out)', kg(receipt.weight_out));
+    row('TOTAL DROPPED', kg(receipt.net_weight), 10, true);
+    y += 1; rule();
+
+    row('Rate', '$' + (Number(receipt.price_per_kg) || 0).toFixed(2) + '/kg');
+    row('Subtotal', money(receipt.subtotal));
+    row('GST (5%)', money(receipt.tax_amount));
+    y += 1; rule();
+    row('TOTAL', money(receipt.grand_total) + ' CAD', 11, true);
+    y += 1; rule();
+
+    // The arrival frame, same choice as every other receipt path: it shows the
+    // truck loaded, which is what the weight is evidence of.
+    if (receiptPhotosEnabled() && receipt.photo_in) {
+      try {
+        const dims = await new Promise(function (resolve, reject) {
+          const i = new Image();
+          i.onload = function () { resolve({ w: i.width, h: i.height }); };
+          i.onerror = function () { reject(new Error('photo decode failed')); };
+          i.src = receipt.photo_in;
+        });
+        const iw = W - M * 2;
+        const ih = Math.round(dims.h * (iw / dims.w));
+        d.setFont('courier', 'normal'); d.setFontSize(6);
+        d.text('TRUCK AT WEIGH-IN', W / 2, y, { align: 'center' }); y += 2.5;
+        d.addImage(receipt.photo_in, 'JPEG', M, y, iw, ih);
+        y += ih + 2;
+      } catch (e) {
+        agentLog('receipt photo skipped: ' + e.message);
+      }
+    }
+
+    rule();
+    centre('Thank you for choosing', 7);
+    centre('Reuse Canada', 9, true);
+
+    return y;
+  }
+
+  // Returns the queue name on success, '' to fall through to the dialog.
+  async function printViaBridgePdf(receipt, queue) {
+    let pdf;
+    try {
+      pdf = await buildReceiptPdf(receipt);
+    } catch (e) {
+      agentLog('could not build the receipt PDF: ' + e.message + ' — falling back to the browser dialog');
+      return '';
+    }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(function () { ctrl.abort(); }, 25000);
+      const res = await fetch(BRIDGE_URL + '/print-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdf: pdf, printer: queue, title: receipt.ticket_number || 'Scale ticket' }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      const data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        agentLog('bridge PDF print refused: ' + (data.error || res.status) + ' — falling back to the browser dialog');
+        return '';
+      }
+      return data.printer || queue;
+    } catch (e) {
+      agentLog('bridge unreachable for PDF printing — falling back to the browser dialog');
+      return '';
+    }
   }
 
   // Which CUPS queue the bridge should print to. Remembered per station, since
@@ -2794,25 +2953,29 @@ export function renderScaleHouse(): string {
       const res = await fetch(BRIDGE_URL + '/printers', { signal: ctrl.signal, cache: 'no-store' });
       const d = await res.json();
       const saved = receiptPrinterName();
-      // Deliberately NOT falling back to the system default here. That made the
-      // dropdown display a queue that was not actually in effect: nothing is
-      // saved, so printing really goes through the browser dialog, while the
-      // box claimed the office inkjet was chosen. Worse, touching the dropdown
-      // would then "confirm" that queue and start aiming raw ESC/POS at an
-      // inkjet. With nothing selected the first option, "Use browser print
-      // dialog", shows -- which is the truth.
+      // Any CUPS queue is now usable: a thermal one gets ESC/POS, anything else
+      // gets a rendered PDF, and both go through lp, which has no dialog. So
+      // the system default is a good pick when there is no thermal queue --
+      // and it is SAVED, not merely displayed, because an unsaved selection
+      // silently means "use the browser dialog" and the operator would have no
+      // way to tell the difference from looking at the box.
+      const pick = saved || d.receiptGuess || d.default || '';
       const opts = (d.printers || []).map(function (p) {
-        const sel2 = p === (saved || d.receiptGuess) ? ' selected' : '';
-        return '<option value="' + p + '"' + sel2 + '>' + p + (p === d.default ? ' (system default)' : '') + '</option>';
+        return '<option value="' + p + '"' + (p === pick ? ' selected' : '') + '>' + p + (p === d.default ? ' (system default)' : '') + '</option>';
       }).join('');
       sel.innerHTML = '<option value="">Use browser print dialog</option>' + opts;
-      if (!saved && d.receiptGuess) { localStorage.setItem('rc_receipt_printer', d.receiptGuess); sel.value = d.receiptGuess; }
+      if (!saved && pick) { localStorage.setItem('rc_receipt_printer', pick); sel.value = pick; }
       const hint = document.getElementById('receipt-printer-hint');
       if (hint) {
+        const chosen = receiptPrinterName();
+        hint.className = 'text-[10px] text-gray-400 mt-1 leading-snug';
         hint.textContent = (d.printers || []).length === 0
           ? 'Bridge is running but macOS has no printers installed.'
-          : (d.receiptGuess ? 'Detected a receipt printer: ' + d.receiptGuess
-                            : 'No Epson/thermal queue found — add the printer in System Settings.');
+          : !chosen
+            ? 'Receipts open the browser print dialog, which someone has to click.'
+            : looksLikeReceiptQueue(chosen)
+              ? 'Thermal receipts print silently on ' + chosen + '.'
+              : chosen + ' is not a thermal printer, so receipts print silently as a full-page PDF.';
       }
     } catch (e) {
       sel.innerHTML = '<option value="">No bridge — using browser print dialog</option>';
@@ -2845,23 +3008,20 @@ export function renderScaleHouse(): string {
   }
 
   function saveReceiptPrinter(name) {
-    const hint = document.getElementById('receipt-printer-hint');
-    if (name && !looksLikeReceiptQueue(name)) {
-      if (!confirm(name + ' does not look like a thermal receipt printer.\\n\\n'
-          + 'Receipts are sent to it as raw ESC/POS, which an office printer cannot read — it would print pages of junk, and the app would report success.\\n\\n'
-          + 'Leave this on "Use browser print dialog" for a normal printer.\\n\\nSelect it anyway?')) {
-        const sel = document.getElementById('receipt-printer');
-        if (sel) sel.value = receiptPrinterName() || '';
-        return;
-      }
-      if (hint) {
-        hint.textContent = name + ' is not a thermal printer — receipts will likely print as junk.';
-        hint.className = 'text-[10px] text-red-600 mt-1 font-semibold';
-      }
-    }
     if (name) localStorage.setItem('rc_receipt_printer', name);
     else localStorage.removeItem('rc_receipt_printer');
-    agentLog(name ? 'receipt printer set to ' + name : 'receipts will use the browser print dialog');
+    const hint = document.getElementById('receipt-printer-hint');
+    if (hint) {
+      hint.className = 'text-[10px] text-gray-400 mt-1 leading-snug';
+      hint.textContent = !name
+        ? 'Receipts open the browser print dialog, which someone has to click.'
+        : looksLikeReceiptQueue(name)
+          ? 'Thermal receipts print silently on ' + name + '.'
+          : name + ' is not a thermal printer, so receipts print silently as a full-page PDF.';
+    }
+    agentLog(name
+      ? 'receipts print silently on ' + name + (looksLikeReceiptQueue(name) ? ' (thermal)' : ' (PDF)')
+      : 'receipts will use the browser print dialog');
   }
   // Returns true only if the receipt actually reached the printer.
   //
@@ -4020,7 +4180,7 @@ export function renderScaleHouse(): string {
     }
     const look = parseLook(t.appearance_in) || parseLook(t.appearance_out);
     if (look) {
-      const desc = [look.color, (look.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+      const desc = [look.color, look.make, (look.body || '').replace('_', ' ')].filter(Boolean).join(' ');
       const text = look.markings ? (desc ? desc + ' · ' + look.markings : look.markings) : desc;
       if (text) bits.push('<span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[9px]">' + escHtml(text) + '</span>');
     }
@@ -4157,7 +4317,7 @@ export function renderScaleHouse(): string {
           + (conf ? '<span class="ml-1 text-[9px] text-gray-400">' + Math.round(Number(conf) * 100) + '%</span>' : '');
         const a = parseLook(look);
         if (a) {
-          const desc = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+          const desc = [a.color, a.make, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
           const txt = a.markings ? (desc ? desc + ' · ' + a.markings : a.markings) : desc;
           if (txt) h += '<span class="ml-1.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[9px]">' + escHtml(txt) + '</span>';
         }
@@ -4491,16 +4651,23 @@ export function renderScaleHouse(): string {
   // One line of text describing the vehicle, for the receipt. Text first and
   // picture second: on a 203 dpi thermal head "CXW9501 / white sedan" is
   // legible forever, while the photo is grainy evidence that supports it.
+  function titleCase(v) {
+    return String(v || '').replace(/_/g, ' ').replace(/\\b[a-z]/g, function (c) { return c.toUpperCase(); });
+  }
+
   function receiptVehicleText(r) {
+    // Plate first and unaltered -- it is the one thing a customer or an
+    // insurer will check the receipt against -- then colour, make and body,
+    // which is how a person describes a vehicle out loud.
     const bits = [];
-    if (r.vehicle_plate) bits.push(String(r.vehicle_plate));
+    if (r.vehicle_plate) bits.push(String(r.vehicle_plate).toUpperCase());
     const a = parseLook(r.appearance_in) || parseLook(r.appearance_out);
     if (a) {
-      const desc = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+      const desc = [a.color, a.make, a.body].filter(Boolean).map(titleCase).join(' ');
       if (desc) bits.push(desc);
       if (a.markings) bits.push(a.markings);
     }
-    return bits.join(' / ');
+    return bits.join(' · ');
   }
 
   function browserPrintReceipt(r) {

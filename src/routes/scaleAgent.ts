@@ -173,6 +173,12 @@ export interface Appearance {
   body: string
   color: string
   markings: string
+  // The manufacturer, for the receipt and the ticket -- something an operator
+  // or a customer can recognise. It is deliberately NOT part of matching:
+  // measured across three frames of the same stationary car the model came
+  // back Altima, Sentra, Sentra, so deciding anything on it would mis-identify
+  // trucks. appearanceMatch() ignores this field entirely.
+  make: string
   confidence: number
 }
 
@@ -201,16 +207,20 @@ export function normalizeAppearance(raw: any): Appearance | null {
   const body = String(raw.body ?? '').toLowerCase().trim()
   const color = String(raw.color ?? '').toLowerCase().trim()
   const markings = String(raw.markings ?? '').trim().slice(0, 80)
+  const make = String(raw.make ?? '').trim().slice(0, 30)
   const confidence = Number(raw.confidence)
   const okBody = (BODY_TYPES as readonly string[]).includes(body) && body !== 'other' ? body : ''
   const okColor = (COLORS as readonly string[]).includes(color) && color !== 'other' ? color : ''
   // Nothing identifying at all is the same as no reading. 'other' is explicitly
-  // not identifying -- it is the model saying it could not tell.
+  // not identifying -- it is the model saying it could not tell. The make is
+  // not counted here: it is descriptive, not identifying, so a frame that
+  // yielded only a brand name is still "nothing read".
   if (!okBody && !okColor && !markings) return null
   return {
     body: okBody,
     color: okColor,
     markings,
+    make,
     confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0,
   }
 }
@@ -226,7 +236,7 @@ export function parseAppearance(stored: unknown): Appearance | null {
 // sentence, so what the operator reads is exactly what the matcher compared.
 export function describeAppearance(a: Appearance | null): string {
   if (!a) return ''
-  const parts = [a.color, a.body.replace('_', ' ')].filter(Boolean)
+  const parts = [a.color, a.make, a.body.replace('_', ' ')].filter(Boolean)
   const base = parts.join(' ') || 'vehicle'
   return a.markings ? `${base} — "${a.markings}"` : base
 }
@@ -939,12 +949,16 @@ const PLATE_TOOL = {
         type: 'string',
         description: 'Company name, lettering, or unit/fleet number painted on the vehicle, exactly as written. Empty string if the vehicle carries none or none can be read.',
       },
+      make: {
+        type: 'string',
+        description: 'The manufacturer only, e.g. "Nissan", "Freightliner", "Ford". Not the model. Empty string if you cannot tell from the badge or grille.',
+      },
       appearance_confidence: {
         type: 'number',
         description: '0 to 1. How sure you are of the body, colour and markings. This is separate from the plate confidence and is usually higher.',
       },
     },
-    required: ['plate', 'confidence', 'body', 'color', 'markings', 'appearance_confidence'],
+    required: ['plate', 'confidence', 'body', 'color', 'markings', 'make', 'appearance_confidence'],
     additionalProperties: false,
   },
 }
@@ -975,7 +989,7 @@ const PLATE_PROMPT = [
   '- color: the dominant body colour only. Ignore the colour of the load, the trailer tarp, and anything in the background.',
   '- markings: company lettering or a unit/fleet number painted on the vehicle. This is the single most useful field when it exists, so read it carefully and copy it exactly. Return an empty string rather than guessing at blurred text.',
   '- markings must NOT include the manufacturer\'s own badging -- the make, the model name, or a brand logo. Every vehicle of that model carries the same badge, so it identifies a model rather than a truck, and treating it as identifying would match two different vehicles to each other.',
-  '- Do NOT report the make or model anywhere. The same vehicle is identified across several frames and model guesses are not stable enough to match on.',
+  '- make: the manufacturer only, read off the badge or grille -- "Nissan", "Freightliner", "Ford". NEVER the model name. This one is printed on the customer\'s receipt so a person can recognise the vehicle; it is not used to decide which ticket this is, because model guesses are not stable between frames. Return an empty string rather than guessing.',
   '- If no vehicle is on the scale, return body "other", color "other", empty markings and appearance_confidence 0.',
 ].join('\n')
 
@@ -1028,7 +1042,7 @@ scaleAgentRoutes.post('/vision', async (c) => {
     const plate = normalizePlate(out?.plate)
     const confidence = Number(out?.confidence)
     const look = normalizeAppearance({
-      body: out?.body, color: out?.color, markings: out?.markings,
+      body: out?.body, color: out?.color, markings: out?.markings, make: out?.make,
       confidence: out?.appearance_confidence,
     })
 
@@ -1094,6 +1108,7 @@ const VERIFY_TOOL = {
       body: { type: 'string', enum: [...BODY_TYPES], description: 'Body style of the vehicle, judged across both photos.' },
       color: { type: 'string', enum: [...COLORS], description: 'Dominant body colour, judged across both photos.' },
       markings: { type: 'string', description: 'Company lettering or unit number visible on the vehicle in either photo, copied exactly. Empty string if none.' },
+      make: { type: 'string', description: 'The manufacturer only, e.g. "Nissan", "Freightliner". Not the model. Empty string if you cannot tell.' },
       load_change: {
         type: 'string',
         enum: ['unloaded_between', 'loaded_between', 'no_visible_change', 'cannot_tell'],
@@ -1101,7 +1116,7 @@ const VERIFY_TOOL = {
       },
       note: { type: 'string', description: 'One sentence an operator can act on, naming what you actually saw. Empty string if everything is consistent.' },
     },
-    required: ['same_vehicle', 'plate_in', 'plate_out', 'plate_confidence', 'body', 'color', 'markings', 'load_change', 'note'],
+    required: ['same_vehicle', 'plate_in', 'plate_out', 'plate_confidence', 'body', 'color', 'markings', 'make', 'load_change', 'note'],
     additionalProperties: false,
   },
 }
@@ -1231,7 +1246,7 @@ async function verifyOne(env: Bindings, ticketId: number): Promise<any> {
     plateLearned = pin
   }
 
-  const look = normalizeAppearance({ body: out?.body, color: out?.color, markings: out?.markings, confidence: 0.9 })
+  const look = normalizeAppearance({ body: out?.body, color: out?.color, markings: out?.markings, make: out?.make, confidence: 0.9 })
 
   await env.DB.prepare(
     `UPDATE scale_tickets
