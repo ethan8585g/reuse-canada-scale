@@ -191,7 +191,8 @@ function receiptBytes(r, cols, images) {
   if (kg(r.weight_in)) out += padLine('Weight in', kg(r.weight_in), cols) + '\n';
   if (kg(r.weight_out)) out += padLine('Weight out', kg(r.weight_out), cols) + '\n';
   if (kg(r.net_weight)) {
-    out += boldOn + padLine('NET WEIGHT', kg(r.net_weight), cols) + boldOff + '\n';
+    // Same wording as the browser receipt: this is what the customer dropped.
+    out += boldOn + padLine('TOTAL DROPPED', kg(r.net_weight), cols) + boldOff + '\n';
   }
   out += rule + '\n';
 

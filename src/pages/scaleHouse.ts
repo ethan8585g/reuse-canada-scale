@@ -2708,8 +2708,7 @@ export function renderScaleHouse(): string {
   async function receiptImages(receipt) {
     if (!receiptPhotosEnabled()) return [];
     const want = [
-      { label: 'WEIGH-IN', src: receipt.photo_in },
-      { label: 'WEIGH-OUT', src: receipt.photo_out },
+      { label: 'TRUCK AT WEIGH-IN', src: receipt.photo_in },
     ].filter(function (x) { return !!x.src; });
     const out = [];
     for (const w of want) {
@@ -4338,7 +4337,12 @@ export function renderScaleHouse(): string {
       if (result.status === 'COMPLETED') {
         const paymentId = (result.payment_ids && result.payment_ids[0]) || null;
         await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'paid', payment_method:'card', square_checkout_id: checkoutId, square_payment_id: paymentId });
-        closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement(); autoPrintReceipt(ticketId);
+        // Deliberately NO print here. The receipt is printed once, when the
+        // truck weighs out and leaves -- payment is taken seconds later at the
+        // same window, so printing again just hands the driver a second copy of
+        // a ticket they are already holding. The Print button on the ticket is
+        // still there when somebody actually wants another one.
+        closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement();
       } else if (result.status === 'CANCELED' || result.status === 'CANCEL_REQUESTED') {
         alert('Square checkout was cancelled. Ticket left unpaid.');
       } else if (result.status === 'TIMED_OUT') {
@@ -4375,7 +4379,12 @@ export function renderScaleHouse(): string {
       const total = parseFloat(res.data.ticket.grand_total)||0;
       if (!confirm('Record cash payment of $'+total.toFixed(2)+'?')) return;
       showLoading('Recording...'); await axios.post('/api/square/cash-payment', { scale_ticket_id: ticketId, amount: total });
-      closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement(); autoPrintReceipt(ticketId);
+      // Deliberately NO print here. The receipt is printed once, when the
+      // truck weighs out and leaves -- payment is taken seconds later at the
+      // same window, so printing again just hands the driver a second copy of
+      // a ticket they are already holding. The Print button on the ticket is
+      // still there when somebody actually wants another one.
+      closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement();
     } catch(err) { alert('Failed'); }
     finally { hideLoading(); }
   }
@@ -4422,7 +4431,7 @@ export function renderScaleHouse(): string {
       '<div class="print-divider"></div>' +
       row('Gross (in)', fmt(r.weight_in, 1) + ' kg') +
       row('Tare (out)', fmt(r.weight_out, 1) + ' kg') +
-      '<div class="print-row print-bold" style="font-size:13px;margin-top:1mm"><span>NET</span><span>' + netW.toFixed(1) + ' kg</span></div>' +
+      '<div class="print-row print-bold" style="font-size:13px;margin-top:1mm"><span>TOTAL DROPPED</span><span>' + netW.toFixed(1) + ' kg</span></div>' +
       '<div class="print-divider"></div>' +
       row('Rate', '$' + fmt(r.price_per_kg, 2) + '/kg') +
       row('Subtotal', '$' + fmt(r.subtotal, 2)) +
@@ -4434,10 +4443,15 @@ export function renderScaleHouse(): string {
       // dialog is the fallback whenever the bridge is down, and a receipt that
       // silently loses its evidence depending on which path ran would be worse
       // than one that never had it.
-      (receiptPhotosEnabled() && (r.photo_in || r.photo_out)
+      // The ARRIVAL photo only. That frame shows the truck loaded, which is
+      // what the weight on this receipt is evidence of; the weigh-out frame
+      // shows an empty truck, tells the customer nothing, and costs a second
+      // block of paper on every ticket. Both frames are still stored on the
+      // ticket and shown in the app.
+      (receiptPhotosEnabled() && r.photo_in
         ? '<div class="print-divider"></div>'
-          + (r.photo_in ? '<div class="print-center" style="font-size:8px">WEIGH-IN</div><img src="' + r.photo_in + '" style="width:100%;display:block;margin-bottom:2mm;filter:grayscale(1) contrast(1.4)" />' : '')
-          + (r.photo_out ? '<div class="print-center" style="font-size:8px">WEIGH-OUT</div><img src="' + r.photo_out + '" style="width:100%;display:block;margin-bottom:2mm;filter:grayscale(1) contrast(1.4)" />' : '')
+          + '<div class="print-center" style="font-size:8px">TRUCK AT WEIGH-IN</div>'
+          + '<img src="' + r.photo_in + '" style="width:100%;display:block;margin-bottom:2mm;filter:grayscale(1) contrast(1.4)" />'
         : '') +
       '<div class="print-divider"></div>' +
       '<div class="print-center" style="font-size:9px">Thank you for choosing</div>' +
