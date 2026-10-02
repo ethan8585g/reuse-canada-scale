@@ -457,29 +457,61 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
     // ticket and counts the truck twice. So when the read is within one edit of
     // a truck that could plausibly be weighing out right now, that is far more
     // likely a misread than a new arrival, and it goes to the operator.
+    // One character out on a plate is what this camera does on a good day, so a
+    // near miss goes to the operator. It used to also require the net to be
+    // plausible before it would defer, which was backwards: if the plate nearly
+    // matches, that is evidence about WHICH truck this is, and a strange weight
+    // is a reason for more caution, not less. Without that fix a misread plate
+    // on a truck with an odd net fell through and opened a duplicate.
     const nearMiss = open.filter(t => {
       const dist = plateDistance(t.plate, plateNorm)
       if (dist < 0 || dist > 1) return false
-      const net = t.weight_in - weight
-      return net > 0 && net >= minNet && net <= maxNet
+      // The one thing that still rules a near miss out is physics: a vehicle
+      // meaningfully HEAVIER than that ticket's weigh-in cannot be that truck
+      // leaving, so a similar plate there really is a different vehicle.
+      // "Meaningfully" matters -- a few kg over is the driver getting out or a
+      // tank of fuel, not a different truck -- so the same minimum that defines
+      // a real load defines the tolerance here.
+      return (t.weight_in - weight) >= -minNet
     })
     if (nearMiss.length > 0) {
       const t = nearMiss[0]
+      const net = t.weight_in - weight
       return {
         action: 'defer', ticket: null, confidence: 0, rule: 'plate_near_miss',
-        reason: `Read plate ${plateNorm}, which is one character from ${t.plate} on ${t.ticket_number} — and that ticket would give a sensible ${(t.weight_in - weight).toFixed(1)} kg load. That is more likely a misread than a new truck, so it needs the operator.`,
+        reason: `Read plate ${plateNorm}, which is one character from ${t.plate} on ${t.ticket_number}`
+          + (net > 0 && net >= minNet && net <= maxNet
+              ? ` — and that ticket would give a sensible ${net.toFixed(1)} kg load.`
+              : `, though the weight does not line up with that ticket.`)
+          + ` That is more likely a misread than a new truck, so it needs the operator.`,
         candidates: nearMiss,
       }
     }
 
-    // Belongs to no open ticket and is not a near miss of one: a truck arriving.
-    // This holds with any number of trucks already in the yard, which is the
-    // entire reason plate matching exists.
-    return {
-      action: 'new', ticket: null, confidence: 0.95, rule: 'plate_no_match',
-      reason: `Plate ${plateNorm} does not match any of the ${open.length} open ticket${open.length === 1 ? '' : 's'}, so this is a different truck arriving.`,
-      candidates: none,
+    // A plate can only rule OUT a ticket that has a plate to compare against.
+    //
+    // This is what used to open a duplicate on every second pass: the camera
+    // often cannot read a plate at weigh-in, so the ticket is stored with none;
+    // on the way out it reads one, finds it "matches nothing", and concluded a
+    // different truck had arrived. Comparing a plate against NULL is not a
+    // mismatch, it is an absence of evidence -- and absence of evidence must
+    // never become evidence of a different truck, because the result is a
+    // duplicate ticket that strands the real one and counts the load twice.
+    //
+    // So this only declares an arrival when every open ticket actually carries
+    // a plate and none of them matched. Otherwise the plate has told us nothing
+    // useful and we fall through to the weight and appearance rules below,
+    // which know how to handle "I am not sure".
+    const platelessOpen = open.filter(t => !normalizePlate(t.plate))
+    if (platelessOpen.length === 0) {
+      return {
+        action: 'new', ticket: null, confidence: 0.95, rule: 'plate_no_match',
+        reason: `Plate ${plateNorm} does not match any of the ${open.length} open ticket${open.length === 1 ? '' : 's'}, all of which have a plate on file, so this is a different truck arriving.`,
+        candidates: none,
+      }
     }
+    // Fall through: at least one open ticket has no plate recorded, so this
+    // read cannot rule it out.
   }
 
   const possible = open.filter(t => Number.isFinite(t.weight_in) && (t.weight_in - weight) > 0)
