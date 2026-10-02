@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { BUILD_ID } from './utils/build'
 import { cors } from 'hono/cors'
 import { authRoutes } from './routes/auth'
 import { customerRoutes } from './routes/customer'
@@ -59,6 +60,10 @@ app.route('/api/pricing', pricingRoutes)
 app.route('/api/invoices', invoiceRoutes)
 app.route('/api/junk-removal', junkRemovalRoutes)
 app.route('/api/fleet', fleetRoutes)
+
+// ── Which build is live. The Scale House page polls this and reloads itself
+// when a newer build is deployed, because that tab stays open for days. ──
+app.get('/api/version', (c) => c.json({ build: BUILD_ID }))
 
 // ── Config endpoint (serves safe public keys) ──
 app.get('/api/config/maps-key', (c) => {
@@ -121,7 +126,7 @@ app.get('/customer/pickups', (c) => c.html(renderCustomerDashboard()))
 
 // Employee Pages
 app.get('/employee/dashboard', (c) => c.html(renderEmployeeDashboard()))
-app.get('/employee/scale-house', (c) => c.html(renderScaleHouse()))
+app.get('/employee/scale-house', (c) => c.html(renderScaleHouse(BUILD_ID)))
 app.get('/employee/scale-tickets', (c) => c.html(renderScaleTickets()))
 app.get('/employee/scale-tickets/new', (c) => c.html(renderScaleTickets()))
 app.get('/employee/pickups', (c) => c.html(renderPickupManagement()))

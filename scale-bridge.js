@@ -738,6 +738,17 @@ const server = http.createServer(async (req, res) => {
     const chosen = body.printer || PRINTER_NAME;
     const fallback = defaultPrinter();
     const printer = chosen || (isReceiptQueue(fallback) ? fallback : null);
+    // An explicit choice used to be honoured as-is. It no longer is: the page
+    // sends every non-thermal queue to /print-pdf, so the only thing that still
+    // aims ESC/POS at an inkjet is a tab running a build from before that --
+    // which is exactly what queued a page of control codes on the HP today.
+    // Refusing makes that tab fall back to a visible dialog instead.
+    if (printer && !isReceiptQueue(printer)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        error: `"${printer}" is not a thermal receipt printer, so raw ESC/POS would print as garbage on it. Reload the Scale House page — current builds send this printer a PDF instead.`,
+      }));
+    }
     if (!printer) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({

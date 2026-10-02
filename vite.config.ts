@@ -11,6 +11,11 @@ export default defineConfig({
       entry: 'src/index.tsx'
     })
   ],
+  // Stamped into the bundle so an always-open Scale House tab can tell when a
+  // newer build has been deployed and reload itself at a quiet moment.
+  define: {
+    __BUILD_ID__: JSON.stringify(new Date().toISOString().replace(/[-:]/g, '').slice(0, 15))
+  },
   build: {
     outDir: 'dist'
   }

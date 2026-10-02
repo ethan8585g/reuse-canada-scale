@@ -1,7 +1,7 @@
 import { layout } from '../utils/layout'
 import { employeePageWrapper } from '../utils/employeeLayout'
 
-export function renderScaleHouse(): string {
+export function renderScaleHouse(buildId: string = 'dev'): string {
   return layout('Scale House', employeePageWrapper('scale-house', 'Scale House — Truck Scale', `
 
   <!-- ═══════ BROWSER / SETUP BANNER ═══════ -->
@@ -930,6 +930,10 @@ export function renderScaleHouse(): string {
   const STALE_AFTER_MS = 15000;
   let bridgeES = null;
   const BRIDGE_URL = localStorage.getItem('scale_bridge_url') || 'http://localhost:5555';
+  // The build this page was served from. This tab stays open for days, so a
+  // deploy never reaches it by itself -- twice today a fix was live on the
+  // server while the yard's screen was still running the code it replaced.
+  let pageBuild = '${buildId}';
   // Web scale-bridge publish throttle. The scale streams ~10 frames/sec; we
   // only post once per second so phones and the office can read the latest
   // value without us hammering D1.
@@ -4008,7 +4012,10 @@ export function renderScaleHouse(): string {
         // on_close mode -- after the assign modal had already opened on top
         // of it. Printing now finishes before the screen changes underneath.
         await autoPrintReceipt(d.ticket.id);
-        loadTicketDetail(d.ticket.id);
+        // Deliberately no ticket window here. In a hands-off yard a window
+        // that opens by itself after every close is one more thing to dismiss
+        // -- and its Print button is what got pressed into an empty tray. The
+        // banner already says what was done; the history panel has the rest.
         loadOpenTickets(); loadCompletedToday(); loadStats();
         agentPendingAssign = null;
         // Ask who the load belonged to now that the visit is over -- unless
@@ -4059,6 +4066,39 @@ export function renderScaleHouse(): string {
       agentLog('camera: could not attach the read to ' + ticketNumber + ': ' + ((e.response && e.response.data && e.response.data.error) || e.message));
     });
   }
+
+  // Poll the server's build id and reload this tab when it changes -- only
+  // while nothing is in flight: no truck on the deck, no decision pending, no
+  // modal or manual card open. Otherwise try again on the next tick.
+  let versionCheckBusy = false;
+  function quietEnough() {
+    const card = document.getElementById('print-trigger-card');
+    const banner = document.getElementById('agent-banner');
+    return (agentState === 'idle' || agentState === 'cooldown')
+      && !agentPending
+      && !activeModalId
+      && (!card || card.classList.contains('hidden'))
+      && (!banner || banner.style.display === 'none');
+  }
+  async function checkForNewVersion() {
+    if (versionCheckBusy) return false;
+    versionCheckBusy = true;
+    try {
+      const res = await axios.get('/api/version?t=' + Date.now(), { timeout: 8000 });
+      const live = res.data && res.data.build;
+      if (!live || live === pageBuild) return false;
+      if (!quietEnough()) { agentLog('a newer build is live — will reload when the scale is quiet'); return false; }
+      agentLog('newer build ' + live + ' is live — reloading');
+      setTimeout(function () { location.reload(); }, 300);
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      versionCheckBusy = false;
+    }
+  }
+  setInterval(checkForNewVersion, 60000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkForNewVersion(); });
 
   async function agentCancel() {
     const p = agentPending; agentPending = null;
