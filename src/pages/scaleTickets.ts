@@ -295,7 +295,7 @@ export function renderScaleTickets(): string {
         // somebody who already suspected something.
         return (t.verify_status === 'mismatch' ? '<i class="fas fa-triangle-exclamation text-red-500 text-[10px] ml-1" title="Weigh-in and weigh-out photos do not agree — needs review"></i>' : '') +
                (t.verify_status === 'ok' ? '<i class="fas fa-circle-check text-green-500 text-[10px] ml-1" title="Photos verified: same vehicle in and out"></i>' : '') +
-               (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '') +
+               (t.has_photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '') +
                (t.receipt_printed ? '<i class="fas fa-print text-blue-400 text-[10px] ml-1" title="Receipt printed"></i>' : '') +
                (t.manual_entry ? '<i class="fas fa-keyboard text-orange-400 text-[10px] ml-1" title="Manual entry"></i>' : '');
       }
@@ -461,13 +461,26 @@ export function renderScaleTickets(): string {
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
+      // Flattens the camera's reading of the vehicle for a spreadsheet, which
+      // is where an operator actually reconciles a day's tickets.
+      function csvVehicle(t) {
+        var raw = t.appearance_in || t.appearance_out;
+        if (!raw) return '';
+        var a = raw;
+        if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return ''; } }
+        if (!a) return '';
+        var bits = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+        return a.markings ? (bits ? bits + ' / ' + a.markings : a.markings) : bits;
+      }
+
       function exportTicketsCsv() {
         var rows = selectedTicketRows();
         if (!rows.length) return;
-        var out = [['Ticket #','Date','Customer','Material','Operator','Driver','Driver Phone','Status','Weight In (kg)','Weight Out (kg)','Net Weight (kg)','Total']];
+        var out = [['Ticket #','Date','Customer','Material','Operator','Driver','Driver Phone','Status','Plate','Vehicle','Photo check','Weight In (kg)','Weight Out (kg)','Net Weight (kg)','Total']];
         rows.forEach(function(t) {
           out.push([t.ticket_number, fmtDate(t.created_at), t.company_name || t.field_store_name || '', t.tire_type || '',
             t.employee_name || '', t.driver_display_name || '', t.driver_display_phone || '', t.status || '',
+            t.vehicle_plate || '', csvVehicle(t), t.verify_status || '',
             t.weight_in || '', t.weight_out || '', t.net_weight || '', t.grand_total || '']);
         });
         downloadCsv('scale-tickets-' + new Date().toISOString().slice(0, 10) + '.csv', out);

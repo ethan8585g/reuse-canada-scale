@@ -470,15 +470,44 @@ export function renderScaleHouse(): string {
         </div>
       </div>
 
-      <!-- Completed Today (compact table) -->
+      <!-- Scale Ticket History -->
       <div class="bg-white rounded-xl shadow-card border border-gray-100">
-        <div class="p-3 border-b border-gray-100 flex items-center justify-between">
+        <div class="p-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-            <i class="fas fa-check-circle text-green-500"></i> Completed Today
+            <i class="fas fa-clock-rotate-left text-rc-green"></i> Scale Ticket History
           </h3>
-          <button onclick="loadCompletedToday()" class="text-gray-400 hover:text-gray-600 text-xs"><i class="fas fa-sync-alt"></i></button>
+          <div class="flex items-center gap-2">
+            <a href="/employee/scale-tickets" class="text-[11px] text-gray-400 hover:text-rc-green">Full view <i class="fas fa-arrow-up-right-from-square text-[9px]"></i></a>
+            <button onclick="loadTicketHistory()" class="text-gray-400 hover:text-gray-600 text-xs" title="Refresh"><i class="fas fa-sync-alt"></i></button>
+          </div>
         </div>
-        <div id="completed-today" class="max-h-48 overflow-y-auto">
+
+        <div class="px-3 pt-2.5 pb-2 border-b border-gray-100 space-y-2">
+          <div id="history-periods" class="flex flex-wrap gap-1"></div>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <i class="fas fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-[11px]"></i>
+              <input id="history-search" type="text" placeholder="Ticket #, customer or plate"
+                     oninput="onHistorySearch()"
+                     class="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-rc-green/30 focus:border-rc-green outline-none" />
+            </div>
+            <select id="history-status" onchange="loadTicketHistory()"
+                    class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green">
+              <option value="">All</option>
+              <option value="completed">Completed</option>
+              <option value="weighed_in,field_pending,field_complete">Open</option>
+              <option value="voided">Voided</option>
+            </select>
+          </div>
+          <div id="history-range" class="hidden flex items-center gap-1.5">
+            <input id="history-from" type="date" onchange="loadTicketHistory()" class="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-rc-green" />
+            <span class="text-gray-300 text-xs">to</span>
+            <input id="history-to" type="date" onchange="loadTicketHistory()" class="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-rc-green" />
+          </div>
+          <div id="history-summary" class="grid grid-cols-3 gap-1.5"></div>
+        </div>
+
+        <div id="ticket-history" class="max-h-80 overflow-y-auto">
           <div class="p-4 text-center text-gray-400 text-sm">Loading...</div>
         </div>
       </div>
@@ -578,6 +607,9 @@ export function renderScaleHouse(): string {
           </div>
           <label class="flex items-center gap-1.5 text-[10px] text-gray-600">
             <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out
+          </label>
+          <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer mt-1.5">
+            <input type="checkbox" id="print-photos" checked onchange="savePrintPhotos(this.checked)" class="rounded"> Print scale photos on the receipt
           </label>
         </div>
       </div>
@@ -2575,16 +2607,143 @@ export function renderScaleHouse(): string {
     return localStorage.getItem('rc_receipt_printer') || '';
   }
 
+  // ── Photos on the thermal receipt ──────────────────────────────────
+  //
+  // The conversion happens HERE, not in the bridge, for one decisive reason:
+  // the photo is a JPEG, and a browser canvas decodes JPEG for free while
+  // Node would need an image library the bridge deliberately does not have
+  // (it is a single dependency-free file the operator runs by hand). So the
+  // page hands the bridge a finished 1-bit raster and the bridge only has to
+  // wrap it in ESC/POS.
+  //
+  // 576 dots is the printable width of an 80mm head at 203 dpi -- 72 bytes
+  // per row, which is exactly what GS v 0 wants.
+  const RECEIPT_DOTS = 576;
+
+  function receiptPhotosEnabled() {
+    const cb = document.getElementById('print-photos');
+    return cb ? cb.checked : true;
+  }
+
+  // Returns { w, h, data } with data base64 of packed 1bpp rows, MSB first.
+  async function rasterizeForReceipt(dataUrl, maxRows) {
+    if (!dataUrl) return null;
+    const img = await new Promise(function (resolve, reject) {
+      const i = new Image();
+      i.onload = function () { resolve(i); };
+      i.onerror = function () { reject(new Error('decode failed')); };
+      i.src = dataUrl;
+    });
+    const w = RECEIPT_DOTS;
+    let h = Math.round(img.height * (w / img.width));
+    if (maxRows && h > maxRows) h = maxRows;
+    if (h < 1) return null;
+
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+
+    // Grayscale into a float buffer first, because Floyd-Steinberg pushes
+    // error into neighbours and clipping that to 0-255 per step visibly
+    // banded the sky in test frames.
+    //
+    // The contrast stretch is not cosmetic. Dithered straight from the camera,
+    // the yard frame came out at 56% ink coverage -- the sky alone became a
+    // solid grey block, which on a thermal head is slow, muddy and hard on the
+    // element. Pushing contrast about mid-grey and lifting brightness drops it
+    // to ~45% and, measured on the real weigh-in frame, leaves the vehicle
+    // clearly recognisable with both burned-in stamps still legible.
+    const CONTRAST = 1.8, BRIGHTEN = 45;
+    const gray = new Float32Array(w * h);
+    for (let i = 0, p = 0; i < px.length; i += 4, p++) {
+      const luma = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      const v = (luma - 128) * CONTRAST + 128 + BRIGHTEN;
+      gray[p] = v < 0 ? 0 : (v > 255 ? 255 : v);
+    }
+
+    // A thermal head is one bit per dot, so a photo without dithering comes
+    // out as flat black and white blobs -- a truck becomes a silhouette and
+    // the whole point of printing it is lost.
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const old = gray[i];
+        const nw = old < 128 ? 0 : 255;
+        gray[i] = nw;
+        const err = old - nw;
+        if (x + 1 < w) gray[i + 1] += err * 7 / 16;
+        if (y + 1 < h) {
+          if (x > 0) gray[i + w - 1] += err * 3 / 16;
+          gray[i + w] += err * 5 / 16;
+          if (x + 1 < w) gray[i + w + 1] += err * 1 / 16;
+        }
+      }
+    }
+
+    // ESC/POS raster: a SET bit prints black, so dark pixels become 1.
+    const bytesPerRow = w / 8;
+    const out = new Uint8Array(bytesPerRow * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (gray[y * w + x] < 128) out[y * bytesPerRow + (x >> 3)] |= (0x80 >> (x & 7));
+      }
+    }
+
+    let bin = '';
+    for (let i = 0; i < out.length; i++) bin += String.fromCharCode(out[i]);
+    return { w: w, h: h, data: btoa(bin) };
+  }
+
+  // Build the image payload for one receipt. Failures are swallowed on
+  // purpose: a photo that will not rasterize must never stop the receipt --
+  // the paper the customer needs is the numbers, the picture is a bonus.
+  async function receiptImages(receipt) {
+    if (!receiptPhotosEnabled()) return [];
+    const want = [
+      { label: 'WEIGH-IN', src: receipt.photo_in },
+      { label: 'WEIGH-OUT', src: receipt.photo_out },
+    ].filter(function (x) { return !!x.src; });
+    const out = [];
+    for (const w of want) {
+      try {
+        // Capped so two photos cannot eat half a roll of paper. 324 rows at
+        // 203 dpi is about 40mm, so a pair lands near 80mm of image.
+        const r = await rasterizeForReceipt(w.src, 324);
+        if (r) out.push({ label: w.label, width: r.w, height: r.h, data: r.data });
+      } catch (e) {
+        agentLog('receipt photo skipped (' + w.label + '): ' + e.message);
+      }
+    }
+    return out;
+  }
+
   // Returns the printer name on success, or '' if the bridge could not do it
   // (not running, no queue, lp error) so the caller can fall back.
   async function printViaBridge(receipt) {
     try {
+      // Rasterizing two frames takes a few hundred ms, so it happens before
+      // the request opens rather than inside its timeout budget.
+      let images = [];
+      try { images = await receiptImages(receipt); } catch (e) { images = []; }
+      // The bridge formats plain fields, so the vehicle is flattened to one
+      // string here rather than teaching it to parse the appearance JSON.
+      // Photos are stripped from the JSON body: the bridge is getting the
+      // rasters, and sending ~140 KB of base64 JPEG it would only throw away
+      // is the difference between a receipt printing and a request timing out.
+      const slim = Object.assign({}, receipt, { vehicle: receiptVehicleText(receipt) });
+      delete slim.photo_in; delete slim.photo_out;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6000);
+      // Raster data makes the body ~50 KB per photo and the printer has to
+      // physically chew through it, so the window is wider when images ride
+      // along than the 6s a text-only receipt needed.
+      const timer = setTimeout(() => ctrl.abort(), images.length ? 20000 : 6000);
       const res = await fetch(BRIDGE_URL + '/print', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receipt, printer: receiptPrinterName() || undefined }),
+        body: JSON.stringify({ receipt: slim, printer: receiptPrinterName() || undefined, images }),
         signal: ctrl.signal,
       });
       clearTimeout(timer);
@@ -2629,6 +2788,19 @@ export function renderScaleHouse(): string {
       const hint = document.getElementById('receipt-printer-hint');
       if (hint) hint.textContent = bridgeUnreachableMsg('receipts cannot print silently');
     }
+  }
+
+  // A property of the station, like the printer itself -- one yard may want
+  // the picture on every customer copy and another may be rationing paper.
+  function savePrintPhotos(on) {
+    localStorage.setItem('rc_print_photos', on ? '1' : '0');
+    agentLog(on ? 'receipts will include the scale photos' : 'receipts will print without photos');
+  }
+  function restorePrintPhotos() {
+    const cb = document.getElementById('print-photos');
+    if (!cb) return;
+    const v = localStorage.getItem('rc_print_photos');
+    if (v !== null) cb.checked = v === '1';
   }
 
   function saveReceiptPrinter(name) {
@@ -3428,7 +3600,7 @@ export function renderScaleHouse(): string {
   // ══════════════════════════════════════════
   async function loadOpenTickets() {
     try {
-      const res = await axios.get('/api/scale-tickets?status=weighed_in,field_pending,field_complete');
+      const res = await axios.get('/api/scale-tickets?status=weighed_in,field_pending,field_complete&photos=1');
       openTickets = (res.data.tickets||[]).filter(t => t.status !== 'completed' && t.status !== 'voided');
       const grid = document.getElementById('open-tickets-grid');
       document.getElementById('open-count').textContent = '(' + openTickets.length + ')';
@@ -3634,18 +3806,217 @@ export function renderScaleHouse(): string {
     previewMerge(ticketId);
   }
 
-  async function loadCompletedToday() {
+  // ══════════════════════════════════════════
+  // SCALE TICKET HISTORY
+  // ══════════════════════════════════════════
+  // Every scale ticket, past and present, lives in one place: the
+  // scale_tickets table. This panel is a view onto it scoped to the periods
+  // an operator actually thinks in -- today, yesterday, this week, this month.
+  // The full-page version at /employee/scale-tickets is the same data; this
+  // exists so the yard does not have to leave the scale screen to answer
+  // "did that truck already come through".
+
+  const HISTORY_PERIODS = [
+    { key: 'today',     label: 'Today' },
+    { key: 'yesterday', label: 'Yesterday' },
+    { key: 'week',      label: 'This week' },
+    { key: 'month',     label: 'This month' },
+    { key: 'custom',    label: 'Range' },
+  ];
+  let historyPeriod = 'today';
+  let historySearchTimer = null;
+
+  // Local dates, not UTC. toISOString() would roll the yard into tomorrow
+  // after 6pm Alberta time and show an empty "today" for the whole evening
+  // shift -- which is exactly when the scale house is busiest.
+  function ymdLocal(d) {
+    const p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  function historyRange() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (historyPeriod === 'today') return { from: ymdLocal(start), to: ymdLocal(start) };
+    if (historyPeriod === 'yesterday') {
+      const y = new Date(start); y.setDate(y.getDate() - 1);
+      return { from: ymdLocal(y), to: ymdLocal(y) };
+    }
+    if (historyPeriod === 'week') {
+      // Week starts Monday: the yard's week, not the calendar widget's.
+      const dow = (start.getDay() + 6) % 7;
+      const mon = new Date(start); mon.setDate(mon.getDate() - dow);
+      return { from: ymdLocal(mon), to: ymdLocal(start) };
+    }
+    if (historyPeriod === 'month') {
+      return { from: ymdLocal(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymdLocal(start) };
+    }
+    const f = document.getElementById('history-from');
+    const t = document.getElementById('history-to');
+    return { from: (f && f.value) || '', to: (t && t.value) || '' };
+  }
+
+  function renderHistoryPeriods() {
+    const el = document.getElementById('history-periods');
+    if (!el) return;
+    el.innerHTML = HISTORY_PERIODS.map(function (p) {
+      const on = p.key === historyPeriod;
+      // &quot; rather than an escaped quote: a lone backslash in this page's
+      // inline script is eaten by the outer template literal.
+      return '<button onclick="setHistoryPeriod(&quot;' + p.key + '&quot;)" class="px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors '
+        + (on ? 'bg-rc-green text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200') + '">' + p.label + '</button>';
+    }).join('');
+  }
+
+  function setHistoryPeriod(key) {
+    historyPeriod = key;
+    const range = document.getElementById('history-range');
+    if (range) range.classList.toggle('hidden', key !== 'custom');
+    if (key === 'custom') {
+      // Seed the pickers with the last 30 days so the panel is never blank
+      // the moment Range is chosen.
+      const f = document.getElementById('history-from'), t = document.getElementById('history-to');
+      if (f && !f.value) { const d = new Date(); d.setDate(d.getDate() - 30); f.value = ymdLocal(d); }
+      if (t && !t.value) t.value = ymdLocal(new Date());
+    }
+    renderHistoryPeriods();
+    loadTicketHistory();
+  }
+
+  function onHistorySearch() {
+    // Debounced: this hits D1 and the operator types with gloves on.
+    if (historySearchTimer) clearTimeout(historySearchTimer);
+    historySearchTimer = setTimeout(loadTicketHistory, 350);
+  }
+
+  // The camera's read of the vehicle, compressed to something scannable in a
+  // list. This is the whole point of showing it here: an operator remembers
+  // "the white sedan", not RC-2026-00021.
+  function vehicleChip(t) {
+    const bits = [];
+    if (t.vehicle_plate) {
+      bits.push('<span class="px-1.5 py-0.5 rounded bg-gray-900 text-white font-mono text-[9px] tracking-wider">' + escHtml(t.vehicle_plate) + '</span>');
+    }
+    const look = parseLook(t.appearance_in) || parseLook(t.appearance_out);
+    if (look) {
+      const desc = [look.color, (look.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+      const text = look.markings ? (desc ? desc + ' · ' + look.markings : look.markings) : desc;
+      if (text) bits.push('<span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[9px]">' + escHtml(text) + '</span>');
+    }
+    if (t.verify_status === 'mismatch') {
+      bits.push('<span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[9px] font-semibold" title="' + escAttr(t.verify_note || '') + '"><i class="fas fa-triangle-exclamation"></i> review</span>');
+    } else if (t.verify_status === 'ok') {
+      bits.push('<i class="fas fa-circle-check text-green-500 text-[9px]" title="Photos verified: same vehicle in and out"></i>');
+    }
+    return bits.length ? '<div class="flex items-center gap-1 flex-wrap mt-0.5">' + bits.join('') + '</div>' : '';
+  }
+
+  // Appearance is stored as a JSON string; tolerate an already-parsed object
+  // and tolerate junk, because a bad row must not blank the whole panel.
+  function parseLook(raw) {
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  function historyStatusDot(t) {
+    const map = {
+      completed: ['bg-green-500', 'Completed'],
+      weighed_in: ['bg-amber-500', 'In yard'],
+      field_pending: ['bg-blue-400', 'In field'],
+      field_complete: ['bg-blue-500', 'To weigh in'],
+      voided: ['bg-red-400', 'Voided'],
+    };
+    const m = map[t.status] || ['bg-gray-300', t.status || ''];
+    return '<span class="inline-block w-1.5 h-1.5 rounded-full ' + m[0] + '" title="' + escAttr(m[1]) + '"></span>';
+  }
+
+  async function loadTicketHistory() {
+    const el = document.getElementById('ticket-history');
+    if (!el) return;
+    const r = historyRange();
+    const statusSel = document.getElementById('history-status');
+    const searchEl = document.getElementById('history-search');
+    const q = [];
+    if (r.from) q.push('date_from=' + encodeURIComponent(r.from));
+    if (r.to) q.push('date_to=' + encodeURIComponent(r.to));
+    if (statusSel && statusSel.value) q.push('status=' + encodeURIComponent(statusSel.value));
+    if (searchEl && searchEl.value.trim()) q.push('search=' + encodeURIComponent(searchEl.value.trim()));
+    q.push('limit=200');
+
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const res = await axios.get('/api/scale-tickets?status=completed&date=' + today);
+      const res = await axios.get('/api/scale-tickets?' + q.join('&'));
       const tickets = res.data.tickets || [];
-      const el = document.getElementById('completed-today');
-      if (tickets.length === 0) { el.innerHTML = '<div class="p-4 text-center text-gray-400 text-xs">No completed tickets today</div>'; return; }
-      // Compact table view
-      el.innerHTML = '<table class="w-full text-xs"><thead><tr class="text-[10px] text-gray-400 border-b border-gray-100"><th class="px-3 py-2 text-left font-semibold">Ticket</th><th class="px-3 py-2 text-left font-semibold">Customer</th><th class="px-3 py-2 text-right font-semibold">Net kg</th><th class="px-3 py-2 text-right font-semibold">Revenue</th></tr></thead><tbody>' +
-        tickets.map(t => '<tr class="border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors" onclick="loadTicketDetail(' + t.id + ')"><td class="px-3 py-2 font-mono font-bold text-rc-green">' + escHtml(t.ticket_number) + '</td><td class="px-3 py-2 text-gray-600 truncate max-w-[120px]">' + escHtml(t.company_name||'Walk-in') + '</td><td class="px-3 py-2 text-right font-mono font-bold">' + (t.net_weight ? parseFloat(t.net_weight).toLocaleString('en-CA',{maximumFractionDigits:0}) : '—') + '</td><td class="px-3 py-2 text-right font-mono font-bold text-rc-green">' + (t.grand_total ? '$' + parseFloat(t.grand_total).toFixed(2) : '') + '</td></tr>').join('') +
-        '</tbody></table>';
-    } catch(err) {}
+      const sum = res.data.summary || {};
+      renderHistorySummary(sum);
+
+      if (tickets.length === 0) {
+        el.innerHTML = '<div class="p-5 text-center text-gray-400 text-xs"><i class="fas fa-inbox block text-xl mb-1.5 text-gray-200"></i>No tickets in this period</div>';
+        return;
+      }
+
+      el.innerHTML = tickets.map(function (t) {
+        const when = t.created_at ? new Date(String(t.created_at).replace(' ', 'T') + 'Z') : null;
+        const stamp = when && !isNaN(when.getTime())
+          ? (historyPeriod === 'today'
+              ? when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' })
+              : when.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' ' + when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }))
+          : '';
+        return '<div onclick="loadTicketDetail(' + t.id + ')" class="px-3 py-2 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors flex items-start gap-2.5">'
+          + '<div class="pt-1.5">' + historyStatusDot(t) + '</div>'
+          + '<div class="min-w-0 flex-1">'
+            + '<div class="flex items-center gap-1.5">'
+              + '<span class="font-mono text-[11px] font-bold text-rc-green">' + escHtml(t.ticket_number) + '</span>'
+              + (t.has_photo_in ? '<i class="fas fa-camera text-green-400 text-[9px]" title="Weigh-in photo"></i>' : '')
+              + (t.has_photo_out ? '<i class="fas fa-camera text-green-600 text-[9px]" title="Weigh-out photo"></i>' : '')
+              + '<span class="text-[10px] text-gray-400 ml-auto">' + stamp + '</span>'
+            + '</div>'
+            + '<div class="text-[11px] text-gray-600 truncate">' + escHtml(t.company_name || 'Walk-in') + '</div>'
+            + vehicleChip(t)
+          + '</div>'
+          + '<div class="text-right shrink-0">'
+            + '<div class="font-mono text-[11px] font-bold text-gray-800">' + (t.net_weight ? parseFloat(t.net_weight).toLocaleString('en-CA', { maximumFractionDigits: 0 }) + ' kg' : '—') + '</div>'
+            + '<div class="font-mono text-[11px] font-bold text-rc-green">' + (t.grand_total ? '$' + parseFloat(t.grand_total).toFixed(2) : '') + '</div>'
+          + '</div>'
+        + '</div>';
+      }).join('');
+    } catch (err) {
+      el.innerHTML = '<div class="p-4 text-center text-red-500 text-xs">Could not load tickets. <button onclick="loadTicketHistory()" class="underline">Retry</button></div>';
+    }
+  }
+
+  function renderHistorySummary(s) {
+    const el = document.getElementById('history-summary');
+    if (!el) return;
+    const cell = function (value, label, cls) {
+      return '<div class="rounded-lg bg-gray-50 px-2 py-1.5 text-center">'
+        + '<div class="text-sm font-bold tabular-nums ' + (cls || 'text-gray-800') + '">' + value + '</div>'
+        + '<div class="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">' + label + '</div></div>';
+    };
+    el.innerHTML =
+      cell(Number(s.count || 0), 'Tickets') +
+      cell(Number(s.net_kg || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }), 'Net kg') +
+      cell('$' + Number(s.revenue || 0).toFixed(2), 'Revenue', 'text-rc-green');
+  }
+
+  // Kept as the name every completion path already calls. The panel defaults
+  // to Today, so this still means "refresh what just changed" -- and when the
+  // operator has paged back to last month, refreshing that view is right too.
+  function loadCompletedToday() { return loadTicketHistory(); }
+
+  // On-demand second-pass check from the scale-house detail modal. The sweep
+  // does this on its own every ten minutes; this is for the moment somebody is
+  // looking at a ticket and wants the answer now.
+  async function verifyTicketFromScaleHouse(id) {
+    try {
+      const res = await axios.post('/api/scale-agent/verify', { ticket_id: id });
+      const d = res.data || {};
+      if (d.ok === false && d.error) { alert(d.error); return; }
+      agentLog('verified ' + (d.ticket_number || id) + ': ' + d.status);
+      loadTicketDetail(id);
+    } catch (e) {
+      alert('Verification failed: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+    }
   }
 
   async function loadTicketDetail(id) {
@@ -3656,8 +4027,44 @@ export function renderScaleHouse(): string {
       const netW = t.net_weight || 0;
       let photosHtml = '', auditHtml = '', voidInfo = '', editBtn = '';
 
+      // Each photo is captioned with what the agent read off it, so the
+      // operator can see the evidence and the conclusion side by side rather
+      // than having to trust a plate string on its own.
+      const capt = function (plate, conf, look) {
+        let h = '';
+        if (plate) h += '<span class="ml-1.5 px-1.5 py-0.5 rounded bg-gray-900 text-white font-mono text-[9px] tracking-wider">' + escHtml(plate) + '</span>'
+          + (conf ? '<span class="ml-1 text-[9px] text-gray-400">' + Math.round(Number(conf) * 100) + '%</span>' : '');
+        const a = parseLook(look);
+        if (a) {
+          const desc = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+          const txt = a.markings ? (desc ? desc + ' · ' + a.markings : a.markings) : desc;
+          if (txt) h += '<span class="ml-1.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[9px]">' + escHtml(txt) + '</span>';
+        }
+        return h;
+      };
+      const noPhoto = '<div class="bg-gray-100 rounded-lg p-4 text-center text-xs text-gray-400"><i class="fas fa-camera-slash block text-xl mb-1"></i>No photo</div>';
       if (t.photo_in || t.photo_out) {
-        photosHtml = '<div class="grid grid-cols-2 gap-3 mb-4">' + (t.photo_in ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-In</div><img src="'+t.photo_in+'" class="w-full rounded-lg border cursor-pointer" onclick="window.open(this.src)" /></div>' : '<div class="bg-gray-100 rounded-lg p-4 text-center text-xs text-gray-400"><i class="fas fa-camera-slash block text-xl mb-1"></i>No photo</div>') + (t.photo_out ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out</div><img src="'+t.photo_out+'" class="w-full rounded-lg border cursor-pointer" onclick="window.open(this.src)" /></div>' : '<div class="bg-gray-100 rounded-lg p-4 text-center text-xs text-gray-400"><i class="fas fa-camera-slash block text-xl mb-1"></i>No photo</div>') + '</div>';
+        photosHtml = '<div class="grid grid-cols-2 gap-3 mb-2">'
+          + (t.photo_in ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-In' + capt(t.vehicle_plate, t.plate_in_confidence, t.appearance_in) + '</div><img src="' + t.photo_in + '" class="w-full rounded-lg border cursor-pointer" onclick="window.open(this.src)" /></div>' : noPhoto)
+          + (t.photo_out ? '<div><div class="text-xs text-gray-500 font-semibold mb-1">Weigh-Out' + capt(t.plate_out, t.plate_out_confidence, t.appearance_out) + '</div><img src="' + t.photo_out + '" class="w-full rounded-lg border cursor-pointer" onclick="window.open(this.src)" /></div>' : noPhoto)
+          + '</div>';
+      }
+      // The second-pass verdict. Shown even when clean, because "this was
+      // checked" is itself what lets an operator stop looking at it.
+      if (t.verify_status) {
+        const vmap = {
+          ok: ['bg-green-50 border-green-200 text-green-800', 'fa-circle-check', 'Verified'],
+          mismatch: ['bg-red-50 border-red-200 text-red-800', 'fa-triangle-exclamation', 'Needs review'],
+          unverifiable: ['bg-gray-50 border-gray-200 text-gray-500', 'fa-circle-question', 'Could not verify'],
+        };
+        const v = vmap[t.verify_status] || vmap.unverifiable;
+        photosHtml += '<div class="mb-4 px-3 py-2 rounded-lg border text-[11px] ' + v[0] + '">'
+          + '<i class="fas ' + v[1] + ' mr-1"></i><span class="font-semibold">' + v[2] + '</span> — ' + escHtml(t.verify_note || '') + '</div>';
+      } else if (t.photo_in && t.photo_out) {
+        photosHtml += '<div class="mb-4 text-[11px] text-gray-400"><i class="fas fa-hourglass-half mr-1"></i>Not yet double-checked. '
+          + '<button onclick="verifyTicketFromScaleHouse(' + t.id + ')" class="underline hover:text-gray-600">Check now</button></div>';
+      } else if (photosHtml) {
+        photosHtml += '<div class="mb-4"></div>';
       }
       if (auditTrail.length > 0) {
         auditHtml = '<div class="mt-4"><div class="text-xs font-bold text-gray-500 uppercase mb-2">Audit Trail</div><div class="space-y-1 max-h-32 overflow-y-auto">' + auditTrail.map(a => {
@@ -3950,6 +4357,21 @@ export function renderScaleHouse(): string {
     finally { hideLoading(); }
   }
 
+  // One line of text describing the vehicle, for the receipt. Text first and
+  // picture second: on a 203 dpi thermal head "CXW9501 / white sedan" is
+  // legible forever, while the photo is grainy evidence that supports it.
+  function receiptVehicleText(r) {
+    const bits = [];
+    if (r.vehicle_plate) bits.push(String(r.vehicle_plate));
+    const a = parseLook(r.appearance_in) || parseLook(r.appearance_out);
+    if (a) {
+      const desc = [a.color, (a.body || '').replace('_', ' ')].filter(Boolean).join(' ');
+      if (desc) bits.push(desc);
+      if (a.markings) bits.push(a.markings);
+    }
+    return bits.join(' / ');
+  }
+
   function browserPrintReceipt(r) {
     const netW = parseFloat(r.net_weight) || 0;
     const dateStr = r.date ? new Date(r.date).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : '';
@@ -3967,6 +4389,7 @@ export function renderScaleHouse(): string {
       row('Date', dateStr) +
       row('Customer', r.customer || 'Walk-in') +
       row('Material', getMaterialLabel(r.material)) +
+      (receiptVehicleText(r) ? row('Vehicle', receiptVehicleText(r)) : '') +
       '<div class="print-divider"></div>' +
       row('Gross (in)', fmt(r.weight_in, 1) + ' kg') +
       row('Tare (out)', fmt(r.weight_out, 1) + ' kg') +
@@ -3977,6 +4400,16 @@ export function renderScaleHouse(): string {
       row('GST (5%)', '$' + fmt(r.tax_amount, 2)) +
       '<div class="print-divider"></div>' +
       '<div class="print-row print-bold" style="font-size:14px"><span>TOTAL</span><span>$' + fmt(r.grand_total, 2) + ' CAD</span></div>' +
+      '<div class="print-divider"></div>' +
+      // Same photos the ESC/POS path prints, here as plain <img>. The browser
+      // dialog is the fallback whenever the bridge is down, and a receipt that
+      // silently loses its evidence depending on which path ran would be worse
+      // than one that never had it.
+      (receiptPhotosEnabled() && (r.photo_in || r.photo_out)
+        ? '<div class="print-divider"></div>'
+          + (r.photo_in ? '<div class="print-center" style="font-size:8px">WEIGH-IN</div><img src="' + r.photo_in + '" style="width:100%;display:block;margin-bottom:2mm;filter:grayscale(1) contrast(1.4)" />' : '')
+          + (r.photo_out ? '<div class="print-center" style="font-size:8px">WEIGH-OUT</div><img src="' + r.photo_out + '" style="width:100%;display:block;margin-bottom:2mm;filter:grayscale(1) contrast(1.4)" />' : '')
+        : '') +
       '<div class="print-divider"></div>' +
       '<div class="print-center" style="font-size:9px">Thank you for choosing</div>' +
       '<div class="print-center print-bold" style="font-size:11px">Reuse Canada</div>' +
@@ -4066,6 +4499,8 @@ export function renderScaleHouse(): string {
   // ── Init ──
   (function init() {
     if (typeof axios !== 'undefined') {
+      renderHistoryPeriods();
+      restorePrintPhotos();
       loadOpenTickets(); loadCompletedToday(); loadPricing(); loadStats(); loadSettlement();
       loadBridgePrinters();
       initCamera(); startAutoRefresh();

@@ -99,6 +99,14 @@ scaleTicketRoutes.get('/', async (c) => {
     const dateTo = c.req.query('date_to')
     const search = c.req.query('search')
     const material = c.req.query('material')
+    // Photos are base64 blobs of 50-150 KB EACH, and every agent ticket now
+    // carries two. Shipping them with every list row turned a 100-row history
+    // page into a multi-megabyte response for data the list only ever uses as
+    // a yes/no. They are opt-in now; the one caller that actually renders a
+    // thumbnail (the live-ticket cards, never more than a handful of rows)
+    // asks for them explicitly.
+    const wantPhotos = c.req.query('photos') === '1'
+    const limit = Math.min(500, Math.max(1, Number(c.req.query('limit')) || 100))
 
     let sql = `SELECT st.*, c.company_name, e.first_name || ' ' || e.last_name as employee_name,
                       COALESCE(NULLIF(st.driver_name, ''), dr.first_name || ' ' || dr.last_name) as driver_display_name,
@@ -136,21 +144,54 @@ scaleTicketRoutes.get('/', async (c) => {
       params.push(dateTo)
     }
     if (search) {
-      sql += ' AND (st.ticket_number LIKE ? OR c.company_name LIKE ?)'
-      params.push('%' + search + '%', '%' + search + '%')
+      // Plate included deliberately: once the camera reads them, "which ticket
+      // was that truck" is the question an operator actually has, and the
+      // ticket number is the one thing they do not have in front of them.
+      sql += ' AND (st.ticket_number LIKE ? OR c.company_name LIKE ? OR st.vehicle_plate LIKE ?)'
+      params.push('%' + search + '%', '%' + search + '%', '%' + search + '%')
     }
     if (material) {
       sql += ' AND st.tire_type = ?'
       params.push(material)
     }
 
-    sql += ' ORDER BY st.created_at DESC LIMIT 100'
+    // The totals are computed over the WHOLE filtered set, not over the page of
+    // rows returned, so "this month" reports the real month even when the list
+    // is truncated. Built from the same WHERE clause for exactly that reason.
+    const whereOnly = sql.slice(sql.indexOf('WHERE 1=1'))
+    const sumSql = `SELECT COUNT(*) AS n,
+                           SUM(CASE WHEN st.status = 'completed' THEN st.net_weight ELSE 0 END) AS net_kg,
+                           SUM(CASE WHEN st.status = 'completed' THEN st.grand_total ELSE 0 END) AS revenue
+                      FROM scale_tickets st
+                      LEFT JOIN customers c ON st.customer_id = c.id
+                      ${whereOnly}`
+
+    sql += ' ORDER BY st.created_at DESC LIMIT ' + limit
 
     let stmt = c.env.DB.prepare(sql)
     if (params.length > 0) stmt = stmt.bind(...params)
+    let sumStmt = c.env.DB.prepare(sumSql)
+    if (params.length > 0) sumStmt = sumStmt.bind(...params)
 
-    const { results } = await stmt.all()
-    return c.json({ tickets: results })
+    const [{ results }, summary] = await Promise.all([stmt.all(), sumStmt.first<any>()])
+
+    const tickets = (results || []).map((t: any) => {
+      const hasIn = !!(t.photo_in && String(t.photo_in).length)
+      const hasOut = !!(t.photo_out && String(t.photo_out).length)
+      const row = { ...t, has_photo_in: hasIn, has_photo_out: hasOut }
+      if (!wantPhotos) { delete row.photo_in; delete row.photo_out }
+      return row
+    })
+
+    return c.json({
+      tickets,
+      summary: {
+        count: Number(summary?.n || 0),
+        net_kg: Number(summary?.net_kg || 0),
+        revenue: Number(summary?.revenue || 0),
+        truncated: tickets.length >= limit,
+      },
+    })
   } catch (err: any) {
     console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
   }
@@ -905,6 +946,16 @@ scaleTicketRoutes.get('/:id/receipt', async (c) => {
         payment_method: ticket.payment_method,
         payment_status: ticket.payment_status,
         vehicle_tare_used: ticket.vehicle_tare_used,
+        driver_name: ticket.driver_name,
+        // What the camera saw. On the receipt this is the customer's own
+        // record of which vehicle was weighed -- the thing a disputed ticket
+        // actually turns on -- so it is printed as text AND as the frames.
+        vehicle_plate: ticket.vehicle_plate,
+        appearance_in: ticket.appearance_in,
+        appearance_out: ticket.appearance_out,
+        verify_status: ticket.verify_status,
+        photo_in: ticket.photo_in,
+        photo_out: ticket.photo_out,
       }
     })
   } catch (err: any) {

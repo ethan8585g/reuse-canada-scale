@@ -118,8 +118,41 @@ function kg(v) {
   return v === null || v === undefined || v === '' ? null : Number(v).toFixed(1) + ' kg';
 }
 
+// One photo as ESC/POS raster graphics.
+//
+// The page sends an already-packed 1-bit bitmap because a browser canvas
+// decodes JPEG for free and this file deliberately has no dependencies -- it
+// is a single script the operator runs by hand, and adding an image library
+// to it would be the thing that stops it starting one morning.
+//
+// GS v 0 is the obsolete-but-universal raster command; every TM-T88 generation
+// accepts it, where the newer GS ( L needs feature probing. Rows are sent in
+// bands rather than one call because some firmware silently truncates a single
+// very tall raster, which shows up as a photo that just stops halfway.
+function rasterBytes(img) {
+  const width = Number(img.width) || 0;
+  const height = Number(img.height) || 0;
+  if (!width || !height || width % 8 !== 0) return Buffer.alloc(0);
+  const bytesPerRow = width / 8;
+  const data = Buffer.from(String(img.data || ''), 'base64');
+  if (data.length < bytesPerRow * height) return Buffer.alloc(0);
+
+  const BAND = 128;
+  const parts = [];
+  for (let y = 0; y < height; y += BAND) {
+    const rows = Math.min(BAND, height - y);
+    const header = Buffer.from([
+      0x1D, 0x76, 0x30, 0x00,
+      bytesPerRow & 0xFF, (bytesPerRow >> 8) & 0xFF,
+      rows & 0xFF, (rows >> 8) & 0xFF,
+    ]);
+    parts.push(header, data.subarray(y * bytesPerRow, (y + rows) * bytesPerRow));
+  }
+  return Buffer.concat(parts);
+}
+
 // Build the ESC/POS byte stream for one receipt.
-function receiptBytes(r, cols) {
+function receiptBytes(r, cols, images) {
   const ESC = '\x1B', GS = '\x1D';
   const init = ESC + '@';
   const left = ESC + 'a' + '\x00';
@@ -144,6 +177,9 @@ function receiptBytes(r, cols) {
   out += left + '\n' + rule + '\n';
   out += padLine('Customer', (r.customer || 'Walk-In').slice(0, cols - 10), cols) + '\n';
   if (r.material) out += padLine('Material', String(r.material).replace(/_/g, ' '), cols) + '\n';
+  // Which truck this was, in text. The photos below are the evidence; this is
+  // the part that is still readable on a faded receipt in a year.
+  if (r.vehicle) out += padLine('Vehicle', String(r.vehicle).slice(0, cols - 9), cols) + '\n';
   out += rule + '\n';
 
   if (kg(r.weight_in)) out += padLine('Weight in', kg(r.weight_in), cols) + '\n';
@@ -166,14 +202,25 @@ function receiptBytes(r, cols) {
 
   out += '\n' + mid + 'Thank you for choosing Reuse Canada\n';
   out += centre('reusecanadascale.com', cols) + '\n';
-  out += '\n\n\n' + cut;
-  return Buffer.from(out, 'binary');
+
+  // Photos go after the totals: the numbers must survive even if the head runs
+  // out of heat or the roll ends mid-picture.
+  const chunks = [Buffer.from(out, 'binary')];
+  for (const img of (images || [])) {
+    const raster = rasterBytes(img);
+    if (!raster.length) continue;
+    chunks.push(Buffer.from('\n' + mid + (img.label || '') + '\n' + left, 'binary'));
+    chunks.push(raster);
+  }
+
+  chunks.push(Buffer.from('\n\n\n' + cut, 'binary'));
+  return Buffer.concat(chunks);
 }
 
 // `lp` reads the job from a file rather than stdin so a failure surfaces as a
 // non-zero exit with a real message, not a broken pipe.
-function printReceipt(receipt, printer) {
-  const bytes = receiptBytes(receipt, RECEIPT_COLS);
+function printReceipt(receipt, printer, images) {
+  const bytes = receiptBytes(receipt, RECEIPT_COLS, images);
   const tmp = path.join(os.tmpdir(), 'rc-receipt-' + Date.now() + '.bin');
   fs.writeFileSync(tmp, bytes);
   try {
@@ -611,8 +658,10 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'No printer selected, no PRINTER env var, and no system default' }));
     }
     try {
-      const job = printReceipt(body.receipt || {}, printer);
-      console.log(`[bridge] printed ${body.receipt?.ticket_number || '(no number)'} -> ${printer}`);
+      const images = Array.isArray(body.images) ? body.images : [];
+      const job = printReceipt(body.receipt || {}, printer, images);
+      console.log(`[bridge] printed ${body.receipt?.ticket_number || '(no number)'} -> ${printer}`
+                  + (images.length ? ` (+${images.length} photo${images.length === 1 ? '' : 's'})` : ''));
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, printer, job }));
     } catch (err) {
