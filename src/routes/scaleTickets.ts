@@ -384,8 +384,24 @@ scaleTicketRoutes.post('/field', async (c) => {
 // Quick-create ticket from scale PRINT trigger (weight-in only, no customer yet)
 scaleTicketRoutes.post('/print-trigger', async (c) => {
   try {
-    const { weight, photo, material, source, plate, plate_confidence, appearance } = await c.req.json()
+    const { weight, photo, material, source, plate, plate_confidence, appearance, test_offset_kg } = await c.req.json()
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+
+    // Simulated load, for proving the loop end to end when there is no real
+    // load to drop. This writes a weight the scale never reported, so it is
+    // bounded, and recorded BOTH in the ticket's own notes and in the audit
+    // log. A fabricated weight that cannot later be told apart from a real
+    // one is the single thing this must never become.
+    const offsetRaw = Number(test_offset_kg)
+    const offset = Number.isFinite(offsetRaw) && offsetRaw !== 0
+      ? Math.max(-5000, Math.min(5000, offsetRaw))
+      : 0
+    const actualWeight = Number(weight)
+    const recordedWeight = actualWeight + offset
+    if (recordedWeight <= 0) return c.json({ error: 'Test offset would make the weight zero or negative' }, 400)
+    const testNote = offset
+      ? `TEST TICKET — ${offset > 0 ? '+' : ''}${offset.toFixed(1)} kg simulated load added at weigh-in. The scale actually read ${actualWeight.toFixed(1)} kg. Not a real load.`
+      : null
     // Plate as read off the weigh-in frame. Stored on vehicle_plate — the same
     // column the manual New Ticket form writes — so plate matching works for
     // operator-typed plates too, not only camera reads.
@@ -415,16 +431,17 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
     }
 
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
-      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, vehicle_plate, plate_in_confidence, plate_source, appearance_in, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
-      params: [tn, walkInId, employeeId, tireType, weight, now, photo || null, photo ? now : null,
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, vehicle_plate, plate_in_confidence, plate_source, appearance_in, notes, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
+      params: [tn, walkInId, employeeId, tireType, recordedWeight, now, photo || null, photo ? now : null,
                normPlate || null, normPlate ? (Number(plate_confidence) || null) : null, normPlate ? 'vision' : null,
-               lookIn],
+               lookIn, testNote],
     }))
 
     await auditLog(c.env.DB, ticketId, 'weighed_in', employeeId, {
-      weight, has_photo: !!photo, material: tireType,
+      weight: recordedWeight, has_photo: !!photo, material: tireType,
       source: source === 'agent' ? 'agent' : 'operator',
+      ...(offset ? { test_offset_kg: offset, actual_scale_weight: actualWeight } : {}),
     })
 
     return c.json({

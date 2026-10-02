@@ -587,6 +587,20 @@ export function renderScaleHouse(): string {
             <button onclick="setAgentMode('live')" id="agent-btn-live" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Live</button>
           </div>
           <div id="agent-log" class="text-[9px] font-mono text-gray-400 leading-relaxed max-h-28 overflow-y-auto"></div>
+
+          <!-- Simulated load. Writes a weight the scale never reported, so it
+               is one-shot, admin/manager only, and stamped on the ticket. -->
+          <div id="test-load-box" class="pt-2 mt-1 border-t border-gray-100" style="display:none;">
+            <div class="text-[10px] font-semibold text-gray-500 mb-1">Simulate a load (testing)</div>
+            <div class="flex items-center gap-1.5">
+              <input id="test-load-kg" type="number" min="1" max="5000" step="1" value="50"
+                     class="w-16 px-2 py-1 text-[11px] border border-gray-200 rounded-lg outline-none focus:border-rc-green" />
+              <span class="text-[10px] text-gray-400">kg</span>
+              <button id="test-load-btn" onclick="toggleTestLoad()"
+                      class="flex-1 px-2 py-1 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Arm for next weigh-in</button>
+            </div>
+            <div id="test-load-hint" class="text-[9px] text-gray-400 mt-1 leading-snug">Adds this to the NEXT weigh-in only, then disarms. The ticket is stamped as a test.</div>
+          </div>
         </div>
       </div>
 
@@ -2897,6 +2911,59 @@ export function renderScaleHouse(): string {
   // "is the printer working", "is the camera working" and "does a photo come
   // out legible on this paper" at once. No camera is not a failure: the
   // receipt prints without it, exactly as a real one would.
+  // ══════════════════════════════════════════
+  // SIMULATED LOAD (testing only)
+  // ══════════════════════════════════════════
+  // Proving the full loop needs a weight DIFFERENCE between arrival and
+  // departure, and a yard testing with one car has nothing to drop. This adds
+  // a simulated load to the ARRIVAL -- not the departure -- because a truck
+  // leaves lighter than it came: adding on the way out would make the agent
+  // correctly refuse to close the ticket.
+  //
+  // It is one-shot by construction. It writes a weight the scale never
+  // reported, so it must never be a mode somebody can leave switched on: it
+  // disarms itself the moment it is used, and the server stamps the ticket's
+  // notes and audit log with the real reading.
+  let testLoadKg = 0;
+
+  function toggleTestLoad() {
+    if (testLoadKg) { testLoadKg = 0; agentLog('simulated load disarmed'); renderTestLoad(); return; }
+    const el = document.getElementById('test-load-kg');
+    const kg = Math.max(1, Math.min(5000, Number(el && el.value) || 0));
+    if (!kg) { agentLog('simulated load: enter a weight first'); return; }
+    testLoadKg = kg;
+    agentLog('simulated load ARMED: +' + kg.toFixed(1) + ' kg on the next weigh-in');
+    renderTestLoad();
+  }
+
+  // Consume it: returns the offset and disarms in the same step, so two trucks
+  // crossing the scale in quick succession cannot both pick it up.
+  function takeTestLoad() {
+    if (!testLoadKg) return 0;
+    const kg = testLoadKg;
+    testLoadKg = 0;
+    agentLog('simulated load used: +' + kg.toFixed(1) + ' kg added to this weigh-in');
+    renderTestLoad();
+    return kg;
+  }
+
+  function renderTestLoad() {
+    const btn = document.getElementById('test-load-btn');
+    const hint = document.getElementById('test-load-hint');
+    if (!btn || !hint) return;
+    if (testLoadKg) {
+      btn.textContent = 'ARMED +' + testLoadKg + ' kg — cancel';
+      btn.className = 'flex-1 px-2 py-1 text-[10px] font-semibold rounded-lg border-2 border-amber-400 bg-amber-50 text-amber-800';
+      hint.textContent = 'The next weigh-in will record ' + testLoadKg + ' kg more than the scale reads. Void that ticket afterwards.';
+      hint.className = 'text-[9px] text-amber-700 mt-1 leading-snug font-semibold';
+    } else {
+      btn.textContent = 'Arm for next weigh-in';
+      btn.className = 'flex-1 px-2 py-1 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50';
+      hint.textContent = 'Adds this to the NEXT weigh-in only, then disarms. The ticket is stamped as a test.';
+      hint.className = 'text-[9px] text-gray-400 mt-1 leading-snug';
+    }
+  }
+
   async function printTestReceipt() {
     let frame = null;
     try { frame = capturePhoto('test print'); } catch (e) { frame = null; }
@@ -2928,7 +2995,7 @@ export function renderScaleHouse(): string {
     dismissPrintCard(); showLoading('Creating ticket...');
     try {
       const photo = lastCapturedPhoto || null;
-      const res = await axios.post('/api/scale-tickets/print-trigger', { weight, photo });
+      const res = await axios.post('/api/scale-tickets/print-trigger', { weight, photo, test_offset_kg: takeTestLoad() });
       logSerial('>>> Ticket: ' + res.data.ticket_number + ' @ ' + weight + ' kg');
       openAssignModal(res.data.id, res.data.ticket_number, weight);
       loadOpenTickets(); loadStats();
@@ -3540,7 +3607,8 @@ export function renderScaleHouse(): string {
           source: 'agent',
           plate: (p.plate && p.plate.plate) || '',
           plate_confidence: (p.plate && p.plate.confidence) || 0,
-          appearance: (p.plate && p.plate.appearance) || null
+          appearance: (p.plate && p.plate.appearance) || null,
+          test_offset_kg: takeTestLoad()
         });
         agentLog('opened ' + res.data.ticket_number + ' at ' + p.weight.toFixed(1) + ' kg'
                  + (p.plate && p.plate.plate ? ' for plate ' + p.plate.plate
@@ -4544,6 +4612,7 @@ export function renderScaleHouse(): string {
     if (typeof axios !== 'undefined') {
       renderHistoryPeriods();
       restorePrintPhotos();
+      renderTestLoad();
       loadOpenTickets(); loadCompletedToday(); loadPricing(); loadStats(); loadSettlement();
       loadBridgePrinters();
       initCamera(); startAutoRefresh();
@@ -4555,6 +4624,10 @@ export function renderScaleHouse(): string {
       // (mirrors roleRequired('admin','manager') on POST/DELETE /api/pricing).
       if (['admin','manager'].includes(currentUserRole)) {
         document.getElementById('btn-manage-pricing')?.classList.remove('hidden');
+        // Writing a weight the scale never reported is not something a yard
+        // operator session should be able to do, even for a test.
+        const tl = document.getElementById('test-load-box');
+        if (tl) tl.style.display = 'block';
       }
     } else setTimeout(init, 500);
   })();
