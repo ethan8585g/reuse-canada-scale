@@ -74,6 +74,12 @@ let lastByteAt = 0;
 // no dialog ever, any browser, and the queue is named explicitly rather than
 // being "whatever is default" (which on this Mac is an office inkjet).
 
+// One definition, used both to preselect a queue in the UI and to refuse a raw
+// ESC/POS job aimed at something that cannot possibly interpret it.
+function isReceiptQueue(name) {
+  return /epson|tm.?t88|thermal|receipt|pos/i.test(String(name || ''));
+}
+
 function defaultPrinter() {
   try {
     const out = execSync('lpstat -d 2>/dev/null', { encoding: 'utf8' });
@@ -93,7 +99,7 @@ function listPrinters() {
   const dflt = defaultPrinter();
   // Surface the likely receipt printer so the UI can preselect it instead of
   // making the operator recognise a mangled CUPS queue name.
-  const receiptGuess = printers.find(p => /epson|tm.?t88|thermal|receipt|pos/i.test(p)) || null;
+  const receiptGuess = printers.find(isReceiptQueue) || null;
   return { printers, default: dflt, receiptGuess, configured: PRINTER_NAME };
 }
 
@@ -652,10 +658,23 @@ const server = http.createServer(async (req, res) => {
   // not care which browser is open or how Chrome was launched.
   if (url.pathname === '/print' && req.method === 'POST') {
     const body = await readBody(req);
-    const printer = body.printer || PRINTER_NAME || defaultPrinter();
+    // Falling back to the SYSTEM default used to be unconditional, and on a
+    // station whose default is an office inkjet that was a silent disaster:
+    // `lp -o raw` happily accepts ESC/POS, exits 0, and the page then reports
+    // a printed receipt that the customer never got. An explicit choice is
+    // still honoured as-is -- the operator may have a thermal queue with an
+    // unrecognisable CUPS name -- but an unchosen default has to look like a
+    // receipt printer before raw bytes are aimed at it.
+    const chosen = body.printer || PRINTER_NAME;
+    const fallback = defaultPrinter();
+    const printer = chosen || (isReceiptQueue(fallback) ? fallback : null);
     if (!printer) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'No printer selected, no PRINTER env var, and no system default' }));
+      return res.end(JSON.stringify({
+        error: fallback
+          ? `No receipt printer selected. The system default is "${fallback}", which does not look like a thermal receipt printer — raw ESC/POS would print as garbage on it. Pick the receipt queue in the Scale House sidebar, or leave it on "Use browser print dialog".`
+          : 'No printer selected, no PRINTER env var, and no system default',
+      }));
     }
     try {
       const images = Array.isArray(body.images) ? body.images : [];

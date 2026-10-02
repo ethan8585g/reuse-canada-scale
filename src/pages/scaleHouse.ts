@@ -857,9 +857,14 @@ export function renderScaleHouse(): string {
   <style>
     @media print {
       @page { size: 80mm auto; margin: 0; }
-      body * { visibility: hidden !important; }
-      #print-area, #print-area * { visibility: visible !important; }
-      #print-area { position: fixed; top: 0; left: 0; width: 76mm; font-family: 'Menlo','Courier New',monospace; font-size: 11px; line-height: 1.35; color: #000; padding: 2mm 2mm 8mm 2mm; display: block !important; }
+      /* display:none, NOT visibility:hidden. Hidden elements still occupy
+         layout, so on continuous thermal paper that was invisible but on a
+         sheet printer every receipt came out as three pages with two blank.
+         browserPrintReceipt() promotes #print-area to a direct child of
+         <body> so this can be one selector. */
+      body > *:not(#print-area) { display: none !important; }
+      #print-area { position: static; width: 76mm; font-family: 'Menlo','Courier New',monospace; font-size: 11px; line-height: 1.35; color: #000; padding: 2mm 2mm 8mm 2mm; display: block !important; }
+      #print-area img { max-width: 100%; filter: grayscale(1) contrast(1.4); page-break-inside: avoid; }
       #print-area .print-divider { border-top: 1px dashed #000; margin: 2mm 0; }
       #print-area .print-row { display: flex; justify-content: space-between; }
       #print-area .print-center { text-align: center; }
@@ -2723,6 +2728,12 @@ export function renderScaleHouse(): string {
   // Returns the printer name on success, or '' if the bridge could not do it
   // (not running, no queue, lp error) so the caller can fall back.
   async function printViaBridge(receipt) {
+    // An empty picker is not "no preference" -- it is the operator choosing
+    // "Use browser print dialog", which is the first option in the list. The
+    // bridge used to be called anyway and would then aim raw ESC/POS at
+    // whatever the OS default happened to be, which on a station with an
+    // office inkjet meant a receipt that silently never existed.
+    if (!receiptPrinterName()) return '';
     try {
       // Rasterizing two frames takes a few hundred ms, so it happens before
       // the request opens rather than inside its timeout budget.
@@ -4378,7 +4389,13 @@ export function renderScaleHouse(): string {
     const fmt = (v, d) => v != null && v !== '' ? parseFloat(v).toFixed(d) : '—';
     const row = (l, v) => '<div class="print-row"><span>' + l + '</span><span>' + v + '</span></div>';
     const rowB = (l, v) => '<div class="print-row print-bold"><span>' + l + '</span><span>' + v + '</span></div>';
-    document.getElementById('print-area').innerHTML =
+    // #print-area is nested inside the page wrapper, so "hide everything but
+    // this" cannot be written as a CSS selector from where it sits. Promoting
+    // it to a direct child of <body> once makes the print rule trivial, and
+    // moving a node does not disturb anything else on the page.
+    const printArea = document.getElementById('print-area');
+    if (printArea.parentNode !== document.body) document.body.appendChild(printArea);
+    printArea.innerHTML =
       '<div class="print-center print-bold" style="font-size:15px;letter-spacing:2px">REUSE CANADA</div>' +
       '<div class="print-center" style="font-size:9px">Waste-to-Value Recycling &middot; Alberta</div>' +
       '<div class="print-center" style="font-size:9px">www.reusecanadascale.com</div>' +
