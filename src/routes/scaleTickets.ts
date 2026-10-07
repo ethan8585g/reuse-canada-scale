@@ -5,8 +5,9 @@ import { GST_RATE, cents, billableKg } from '../utils/money'
 import { todayEdmonton } from '../utils/date'
 import { hashPassword } from '../utils/passwords'
 import { normalizeAppearance } from './scaleAgent'
+import { SquareEnv, resyncTicketCharge, cancelTicketCharge } from '../utils/squareTerminal'
 
-type Bindings = { DB: D1Database }
+type Bindings = SquareEnv
 
 export const scaleTicketRoutes = new Hono<{ Bindings: Bindings }>()
 
@@ -760,6 +761,9 @@ scaleTicketRoutes.post('/:id/finalize', async (c) => {
     ).bind(cents(price_per_kg), cents(total_amount), GST_RATE, cents(tax_amount), cents(grand_total), id).run()
 
     await auditLog(c.env.DB, parseInt(id), 'finalized', employeeId, { grand_total: cents(grand_total) })
+    // A charge already on the Square Terminal for the old total is swapped
+    // for the new one -- the driver must never be shown a stale amount.
+    await resyncTicketCharge(c.env, parseInt(id), employeeId)
 
     return c.json({ success: true })
   } catch (err: any) {
@@ -830,6 +834,10 @@ scaleTicketRoutes.post('/:id/assign', async (c) => {
         price_per_kg: ppk, grand_total: grandTotal,
       })
       repriced = { price_per_kg: ppk, subtotal, tax_amount: tax, grand_total: grandTotal }
+      // The scale agent sends the charge to the Square Terminal right after
+      // close, which is BEFORE this form is filled in. A new material means a
+      // new total, so the amount on the Terminal is swapped for it.
+      await resyncTicketCharge(c.env, parseInt(id), employeeId)
     }
 
     return c.json({ success: true, repriced })
@@ -871,6 +879,9 @@ scaleTicketRoutes.post('/:id/void', async (c) => {
       prev_grand_total: existing.grand_total,
       prev_payment_status: existing.payment_status,
     })
+
+    // A voided ticket must not still be waiting for a card on the Terminal.
+    try { await cancelTicketCharge(c.env, parseInt(id), 'ticket voided') } catch (e) { console.error('square cancel on void failed:', e) }
 
     return c.json({ success: true })
   } catch (err: any) {
@@ -1125,6 +1136,7 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
 
     // Check for anomalies on new values
     await detectAnomalies(c.env.DB, parseInt(id), weightIn, weightOut, netWeight)
+    await resyncTicketCharge(c.env, parseInt(id), employeeId)
 
     return c.json({ success: true, net_weight: netWeight, grand_total: grandTotal })
   } catch (err: any) {

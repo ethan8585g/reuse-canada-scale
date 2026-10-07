@@ -246,6 +246,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     <button onclick="dismissPrintFailure()" class="text-red-400 hover:text-red-600 flex-shrink-0"><i class="fas fa-times"></i></button>
   </div>
 
+  <!-- ═══════ SQUARE PAYMENT CARD ═══════ -->
+  <div id="square-pay-card" class="hidden mb-4 space-y-2"></div>
+
   <!-- ═══════ PRINT TRIGGER CARD ═══════ -->
   <div id="print-trigger-card" class="hidden mb-4 bg-gradient-to-r from-orange-500 to-yellow-500 text-white rounded-xl shadow-xl ring-1 ring-orange-400/20 p-5">
     <div class="flex items-center justify-between flex-wrap gap-4">
@@ -651,11 +654,27 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
       <!-- Square Terminal -->
       <div class="bg-white rounded-xl shadow-card border border-gray-100">
-        <div class="p-3 border-b border-gray-100">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square</h3>
+        <div class="p-3 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square Terminal</h3>
+          <span id="sq-env-badge" class="hidden text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700">Sandbox</span>
         </div>
-        <div class="p-3">
-          <div class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i> Payment amounts sent to Square Reader.</div>
+        <div class="p-3 space-y-2">
+          <div id="sq-account" class="text-[11px] text-gray-500 leading-snug">Checking Square...</div>
+          <div class="grid grid-cols-2 gap-1">
+            <button onclick="setSquareAuto(0)" id="sq-auto-0" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Off</button>
+            <button onclick="setSquareAuto(1)" id="sq-auto-1" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Auto-charge</button>
+          </div>
+          <div id="sq-auto-hint" class="text-[10px] text-gray-400 leading-snug"></div>
+          <div>
+            <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Terminal</div>
+            <select id="sq-device" onchange="setSquareDevice()" class="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white"><option value="">Loading...</option></select>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="loadSquareDevices()" class="flex-1 px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"><i class="fas fa-sync-alt mr-1"></i>Refresh</button>
+            <button id="sq-pair-btn" onclick="pairSquareTerminal()" class="hidden flex-1 px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"><i class="fas fa-link mr-1"></i>Pair a Terminal</button>
+          </div>
+          <div id="sq-pair-code" class="hidden text-[11px] bg-blue-50 border border-blue-100 rounded-lg p-2 text-blue-800 leading-snug"></div>
+          <div id="sq-warn" class="hidden text-[10px] text-red-600 leading-snug"></div>
         </div>
       </div>
 
@@ -3465,7 +3484,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       closeAssignModal();
       loadTicketDetail(ticketId);
       loadOpenTickets(); loadCompletedToday(); loadStats();
-      autoPrintReceipt(ticketId);
+      autoPrintReceipt(ticketId).then(function () { squareChargeAfterClose(ticketId); });
     } catch (err) {
       alert(err.response?.data?.error || 'Failed');
     } finally {
@@ -3514,7 +3533,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     try {
       const photo = autoCapturePhoto('weigh-out');
       const res = await axios.post('/api/scale-tickets/' + pendingMergeTicketId + '/merge-out', { weight: lastPrintWeight, photo: photo || null });
-      loadTicketDetail(pendingMergeTicketId); autoPrintReceipt(pendingMergeTicketId);
+      const mergedId = pendingMergeTicketId;
+      loadTicketDetail(mergedId);
+      autoPrintReceipt(mergedId).then(function () { squareChargeAfterClose(mergedId); });
       loadOpenTickets(); loadCompletedToday(); loadStats();
       pendingMergeTicketId = null; pendingMergeTicket = null;
       // Reset weighbridge display
@@ -4012,6 +4033,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         // on_close mode -- after the assign modal had already opened on top
         // of it. Printing now finishes before the screen changes underneath.
         await autoPrintReceipt(d.ticket.id);
+        // Then the amount owed goes to the Square Terminal -- after the
+        // receipt, so the driver has the paper in hand when the Terminal
+        // asks for the card. Not awaited: the scale loop never waits on a tap.
+        squareChargeAfterClose(d.ticket.id);
         // Deliberately no ticket window here. In a hands-off yard a window
         // that opens by itself after every close is one more thing to dismiss
         // -- and its Print button is what got pressed into an empty tray. The
@@ -4077,6 +4102,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     return (agentState === 'idle' || agentState === 'cooldown')
       && !agentPending
       && !activeModalId
+      && !squareChargeLive()
       && (!card || card.classList.contains('hidden'))
       && (!banner || banner.style.display === 'none');
   }
@@ -4611,7 +4637,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         '<div class="bg-gray-50 rounded-xl p-4 space-y-2"><div class="flex justify-between text-sm"><span class="text-gray-500">Customer</span><span class="font-semibold">'+escHtml(t.company_name||'Walk-in')+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Material</span><span class="font-semibold">'+escHtml(getMaterialLabel(t.tire_type))+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Status</span><span class="font-bold '+(t.status==='voided'?'text-red-600':'text-green-600')+'">'+escHtml((t.status||'').replace(/_/g,' ').toUpperCase())+'</span></div>'+(t.vehicle_tare_used?'<div class="flex justify-between text-sm"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>':'')+'</div>' +
         '<div class="grid grid-cols-3 gap-3"><div class="bg-indigo-50 rounded-xl p-3 text-center"><div class="text-xs text-indigo-500 font-semibold">GROSS</div><div class="text-lg font-bold font-mono text-indigo-700">'+(t.weight_in?parseFloat(t.weight_in).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-orange-50 rounded-xl p-3 text-center"><div class="text-xs text-orange-500 font-semibold">TARE</div><div class="text-lg font-bold font-mono text-orange-700">'+(t.weight_out?parseFloat(t.weight_out).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-xs text-green-500 font-semibold">NET</div><div class="text-lg font-bold font-mono text-green-700">'+parseFloat(netW).toLocaleString('en-CA',{minimumFractionDigits:1})+' kg</div></div></div>' +
         (t.grand_total ? '<div class="bg-gradient-to-r from-rc-green/10 to-green-50 rounded-xl p-4"><div class="grid grid-cols-2 gap-2 text-sm"><div class="flex justify-between"><span class="text-gray-500">Rate</span><span class="font-mono">$'+parseFloat(t.price_per_kg||0).toFixed(2)+'/kg</span></div><div class="flex justify-between"><span class="text-gray-500">Subtotal</span><span class="font-mono">$'+parseFloat(t.total_amount||0).toFixed(2)+'</span></div><div class="flex justify-between"><span class="text-gray-500">GST 5%</span><span class="font-mono">$'+parseFloat(t.tax_amount||0).toFixed(2)+'</span></div><div class="flex justify-between border-t pt-1"><span class="font-bold">TOTAL</span><span class="font-bold text-lg text-rc-green font-mono">$'+parseFloat(t.grand_total).toFixed(2)+'</span></div></div></div>' : '') +
-        (t.status === 'completed' ? '<div class="flex gap-3"><button onclick="sendToSquare('+t.id+')" class="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-credit-card"></i> Square</button><button onclick="recordCash('+t.id+')" class="px-4 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-money-bill-wave"></i> Cash</button><button onclick="printReceipt('+t.id+')" class="px-4 py-3 bg-gray-700 text-white font-bold rounded-xl hover:bg-gray-800 btn-press flex items-center justify-center gap-2"><i class="fas fa-print"></i></button>'+editBtn+'</div>' : '') +
+        (t.status === 'completed' ? '<div class="flex gap-3">'+(t.payment_status !== 'paid' ? '<button onclick="sendToSquare('+t.id+')" class="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-credit-card"></i> Square</button><button onclick="recordCash('+t.id+')" class="px-4 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-money-bill-wave"></i> Cash</button>' : '<div class="flex-1 px-4 py-3 bg-green-50 text-green-700 font-bold rounded-xl flex items-center justify-center gap-2"><i class="fas fa-check-circle"></i> Paid'+(t.payment_method ? ' by '+escHtml(t.payment_method) : '')+'</div>')+'<button onclick="printReceipt('+t.id+')" class="px-4 py-3 bg-gray-700 text-white font-bold rounded-xl hover:bg-gray-800 btn-press flex items-center justify-center gap-2"><i class="fas fa-print"></i></button>'+editBtn+'</div>' : '') +
         auditHtml + '</div>';
       openModal('detail-modal');
     } catch(err) { alert('Failed to load ticket'); }
@@ -4825,60 +4851,261 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     finally { hideLoading(); }
   }
 
-  // Payments. After dispatching to Square Terminal we poll the checkout
-  // until it resolves to COMPLETED/CANCELED/CANCEL_REQUESTED, with a 90s
-  // overall timeout — otherwise the operator has no signal whether the tap
-  // succeeded.
-  async function sendToSquare(ticketId) {
-    try {
-      const res = await axios.get('/api/scale-tickets/'+ticketId);
-      const t = res.data.ticket, total = parseFloat(t.grand_total)||0;
-      if (total <= 0) { alert('No amount'); return; }
-      showLoading('Sending to Square...');
-      const sqRes = await axios.post('/api/square/terminal-checkout', { amount_cents: Math.round(total*100), ticket_number: t.ticket_number, customer_name: t.company_name||'Walk-in', note: 'Scale Ticket '+t.ticket_number });
-      if (!sqRes.data.success) { hideLoading(); alert('Square failed to accept the checkout'); return; }
-      const checkoutId = sqRes.data.checkout_id;
-      await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'pending', payment_method:'card', square_checkout_id: checkoutId });
+  // ══════════════════════════════════════════
+  // SQUARE TERMINAL
+  // ══════════════════════════════════════════
+  // The server decides the amount (the ticket's grand_total) and Square tells
+  // the server when the card goes through. This page only asks for a charge
+  // and shows where it stands -- so a reload, or a tap long after the page
+  // stopped looking, can never lose a payment.
+  let squareSettings = null;
+  let squareCharges = [];
+  let squareNotices = {};     // ticket id -> why nothing was sent to the Terminal
+  let squareDismissed = {};   // checkout row id -> hidden by the operator
+  let squareLastStatus = {};  // checkout row id -> status last seen
+  let squarePollTimer = null;
+  const SQUARE_LIVE = ['PENDING', 'IN_PROGRESS', 'CANCEL_REQUESTED'];
 
-      const result = await pollSquareCheckout(checkoutId, total);
-      hideLoading();
-      if (result.status === 'COMPLETED') {
-        const paymentId = (result.payment_ids && result.payment_ids[0]) || null;
-        await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'paid', payment_method:'card', square_checkout_id: checkoutId, square_payment_id: paymentId });
-        // Deliberately NO print here. The receipt is printed once, when the
-        // truck weighs out and leaves -- payment is taken seconds later at the
-        // same window, so printing again just hands the driver a second copy of
-        // a ticket they are already holding. The Print button on the ticket is
-        // still there when somebody actually wants another one.
-        closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement();
-      } else if (result.status === 'CANCELED' || result.status === 'CANCEL_REQUESTED') {
-        alert('Square checkout was cancelled. Ticket left unpaid.');
-      } else if (result.status === 'TIMED_OUT') {
-        if (confirm('Square has not confirmed the tap after 90s. Cancel the checkout?')) {
-          try { await axios.post('/api/square/terminal-checkout/'+checkoutId+'/cancel'); } catch(e) {}
-        }
-      } else {
-        alert('Square ended in status: ' + result.status);
-      }
-    } catch(err) { hideLoading(); alert(err.response?.data?.error || 'Square failed'); }
+  function money(n) { return '$' + (Number(n) || 0).toFixed(2); }
+  function squareChargeLive() { return squareCharges.some(function (c) { return SQUARE_LIVE.indexOf(c.status) >= 0; }); }
+
+  async function loadSquareSettings() {
+    try {
+      const res = await axios.get('/api/square/settings');
+      squareSettings = res.data;
+      applySquareSettingsToUI();
+      if (squareSettings.token_ready) { loadSquareAccount(); loadSquareDevices(); }
+    } catch (e) {
+      const acct = document.getElementById('sq-account');
+      if (acct) acct.textContent = 'Square settings unavailable.';
+    }
+    refreshSquareCharges();
   }
 
-  async function pollSquareCheckout(checkoutId, total) {
-    const startedAt = Date.now();
-    const TIMEOUT_MS = 90_000;
-    const POLL_MS = 2_000;
-    showLoading('Waiting for tap... ($'+total.toFixed(2)+')');
-    while (Date.now() - startedAt < TIMEOUT_MS) {
-      try {
-        const r = await axios.get('/api/square/terminal-checkout/'+checkoutId);
-        const status = r.data.status;
-        if (status && status !== 'PENDING' && status !== 'IN_PROGRESS') {
-          return { status, payment_ids: r.data.payment_ids };
-        }
-      } catch (e) { /* keep polling — transient errors are common during tap */ }
-      await new Promise(r => setTimeout(r, POLL_MS));
+  function applySquareSettingsToUI() {
+    if (!squareSettings) return;
+    const st = squareSettings.settings || {};
+    const on = Number(st.auto_charge) ? 1 : 0;
+    [0, 1].forEach(function (n) {
+      const b = document.getElementById('sq-auto-' + n);
+      if (b) b.className = 'px-1 py-1.5 text-[10px] font-semibold rounded-lg border ' +
+        (n === on ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50');
+    });
+    const min = money((Number(st.min_charge_cents) || 0) / 100);
+    const hint = document.getElementById('sq-auto-hint');
+    if (hint) hint.textContent = on
+      ? 'Every closed ticket of ' + min + ' or more goes to the Terminal as soon as its receipt prints. Under ' + min + ', take cash.'
+      : 'Off. Use the Square button on a ticket to send it to the Terminal by hand.';
+    const badge = document.getElementById('sq-env-badge');
+    if (badge) badge.classList.toggle('hidden', squareSettings.environment !== 'sandbox');
+    if (['admin', 'manager'].includes(currentUserRole)) document.getElementById('sq-pair-btn')?.classList.remove('hidden');
+    const warn = document.getElementById('sq-warn');
+    const problems = [];
+    if (!squareSettings.token_ready) problems.push('SQUARE_ACCESS_TOKEN is not set on the Cloudflare Pages project, so nothing can reach Square.');
+    if (squareSettings.token_ready && !st.device_id) problems.push('No Terminal chosen.');
+    if (!squareSettings.webhook_ready) problems.push('Webhook not set up (SQUARE_WEBHOOK_SIGNATURE_KEY). Payments still record while this page is open; set it up so a tap is never missed.');
+    if (warn) { warn.innerHTML = problems.map(escHtml).join('<br>'); warn.classList.toggle('hidden', !problems.length); }
+  }
+
+  async function loadSquareAccount() {
+    const el = document.getElementById('sq-account');
+    try {
+      const res = await axios.get('/api/square/account');
+      const locs = (res.data.locations || []).map(function (l) { return l.name; }).join(', ');
+      // Shown so anyone at the station can see the money goes to the right
+      // business before it is turned on.
+      el.innerHTML = 'Charging to <b class="text-gray-700">' + escHtml(res.data.business_name || 'unknown account') + '</b>' +
+        (locs ? ' &middot; ' + escHtml(locs) : '');
+    } catch (e) {
+      el.innerHTML = '<span class="text-red-600">Square rejected the access token: ' +
+        escHtml((e.response && e.response.data && e.response.data.error) || e.message) + '</span>';
     }
-    return { status: 'TIMED_OUT' };
+  }
+
+  async function loadSquareDevices() {
+    const sel = document.getElementById('sq-device');
+    if (!sel) return;
+    const cur = squareSettings && squareSettings.settings ? squareSettings.settings.device_id : null;
+    const curName = squareSettings && squareSettings.settings ? squareSettings.settings.device_name : null;
+    try {
+      const res = await axios.get('/api/square/devices');
+      const devs = res.data.devices || [];
+      let html = '<option value="">' + (devs.length ? 'Choose a Terminal...' : 'No paired Terminal yet') + '</option>';
+      let found = false;
+      devs.forEach(function (d) {
+        if (d.device_id === cur) found = true;
+        html += '<option value="' + escAttr(d.device_id) + '"' + (d.device_id === cur ? ' selected' : '') + '>' + escHtml(d.name) + '</option>';
+      });
+      if (cur && !found) html += '<option value="' + escAttr(cur) + '" selected>' + escHtml(curName || 'Saved Terminal') + ' (not found)</option>';
+      sel.innerHTML = html;
+    } catch (e) {
+      sel.innerHTML = '<option value="">Could not list Terminals</option>';
+    }
+  }
+
+  async function saveSquareSettings(patch) {
+    try {
+      const res = await axios.put('/api/square/settings', patch);
+      squareSettings.settings = res.data.settings;
+      applySquareSettingsToUI();
+      return true;
+    } catch (e) {
+      alert('Could not change the Square setting: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      applySquareSettingsToUI(); loadSquareDevices();
+      return false;
+    }
+  }
+
+  async function setSquareAuto(on) {
+    if (await saveSquareSettings({ auto_charge: on ? 1 : 0 })) agentLog('Square auto-charge ' + (on ? 'on' : 'off'));
+  }
+
+  async function setSquareDevice() {
+    const sel = document.getElementById('sq-device');
+    const id = sel.value;
+    const name = id ? sel.options[sel.selectedIndex].text : null;
+    const patch = { device_id: id || null, device_name: name };
+    // A Terminal cannot be unselected while auto-charge is on.
+    if (!id) patch.auto_charge = 0;
+    if (await saveSquareSettings(patch)) agentLog('Square Terminal: ' + (name || 'none'));
+  }
+
+  async function pairSquareTerminal() {
+    const box = document.getElementById('sq-pair-code');
+    try {
+      const res = await axios.post('/api/square/device-code', { name: 'Scale House Terminal' });
+      box.innerHTML = 'On the Square Terminal choose <b>Sign in</b> then <b>Use a device code</b> and enter:' +
+        '<div class="text-xl font-mono font-bold tracking-widest text-center my-1">' + escHtml(res.data.code || '?') + '</div>' +
+        'Then press Refresh and pick it from the list. The code expires in 5 minutes.';
+      box.classList.remove('hidden');
+    } catch (e) {
+      alert('Could not create a pairing code: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+    }
+  }
+
+  // Called once a ticket has closed and its receipt has printed.
+  async function squareChargeAfterClose(ticketId) {
+    if (!squareSettings || !squareSettings.settings || !Number(squareSettings.settings.auto_charge)) return;
+    await requestSquareCharge(ticketId, 'auto');
+  }
+
+  async function requestSquareCharge(ticketId, source) {
+    try {
+      const res = await axios.post('/api/square/charge/' + ticketId, { source: source });
+      const d = res.data;
+      delete squareNotices[ticketId];
+      if (d.ok) {
+        agentLog('sent ' + money(d.checkout.amount) + ' to the Square Terminal' + (d.reused ? ' (already on it)' : ''));
+      } else if (d.reason !== 'auto_off') {
+        agentLog('Square: ' + d.message);
+        squareNotices[ticketId] = { text: d.message, reason: d.reason };
+      }
+      return d;
+    } catch (e) {
+      const msg = (e.response && e.response.data && (e.response.data.message || e.response.data.error)) || e.message;
+      agentLog('Square charge failed: ' + msg);
+      squareNotices[ticketId] = { text: 'Could not send to the Square Terminal: ' + msg, reason: 'error' };
+      return null;
+    } finally {
+      refreshSquareCharges();
+    }
+  }
+
+  // The hand-pressed Square button on a ticket.
+  async function sendToSquare(ticketId) {
+    const d = await requestSquareCharge(ticketId, 'manual');
+    if (d && d.ok) closeDetailModal();
+    else if (d && d.message) alert(d.message);
+  }
+
+  async function cancelSquareCharge(ticketId) {
+    try { await axios.post('/api/square/charge/' + ticketId + '/cancel'); }
+    catch (e) { alert('Could not cancel: ' + ((e.response && e.response.data && e.response.data.error) || e.message)); }
+    refreshSquareCharges();
+  }
+
+  function dismissSquare(key) {
+    if (String(key).indexOf('n') === 0) delete squareNotices[String(key).slice(1)];
+    else squareDismissed[key] = true;
+    renderSquareCard();
+  }
+
+  async function refreshSquareCharges() {
+    if (squarePollTimer) { clearTimeout(squarePollTimer); squarePollTimer = null; }
+    try {
+      const res = await axios.get('/api/square/charges/recent');
+      squareCharges = res.data.charges || [];
+      let paidNow = false;
+      squareCharges.forEach(function (c) {
+        const before = squareLastStatus[c.id];
+        if (c.status === 'COMPLETED' && before && before !== 'COMPLETED') {
+          paidNow = true;
+          agentLog(c.ticket_number + ' paid ' + money(c.amount) + ' by card');
+          // A paid card fades on its own; anything else waits for the operator.
+          setTimeout(function () { squareDismissed[c.id] = true; renderSquareCard(); }, 20000);
+        }
+        squareLastStatus[c.id] = c.status;
+        // A charge that went out supersedes an older "not sent" note.
+        if (SQUARE_LIVE.indexOf(c.status) >= 0 || c.status === 'COMPLETED') delete squareNotices[c.scale_ticket_id];
+      });
+      if (paidNow) { loadCompletedToday(); loadStats(); loadSettlement(); }
+    } catch (e) { /* keep the last known state */ }
+    renderSquareCard();
+    squarePollTimer = setTimeout(refreshSquareCharges, squareChargeLive() ? 3000 : 20000);
+  }
+
+  function renderSquareCard() {
+    const box = document.getElementById('square-pay-card');
+    if (!box) return;
+    let html = '';
+    squareCharges.forEach(function (c) {
+      if (squareDismissed[c.id]) return;
+      const who = escHtml(c.ticket_number) + (c.company_name && c.company_name !== 'Walk-In' ? ' &middot; ' + escHtml(c.company_name) : '');
+      const live = SQUARE_LIVE.indexOf(c.status) >= 0;
+      let tone, icon, title, sub, buttons = '';
+      if (live) {
+        tone = 'blue'; icon = 'fa-credit-card fa-beat-fade';
+        title = 'Waiting for card &mdash; ' + money(c.amount);
+        sub = who + ' &middot; on the Square Terminal';
+        buttons = '<button onclick="recordCash(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg btn-press">Cash instead</button>' +
+                  '<button onclick="cancelSquareCharge(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-white border border-blue-200 hover:bg-blue-50 text-blue-700 text-xs font-bold rounded-lg btn-press">Cancel</button>';
+      } else if (c.status === 'COMPLETED') {
+        tone = 'green'; icon = 'fa-check-circle';
+        title = 'Paid ' + money(c.amount) + ' by card';
+        sub = who;
+      } else {
+        tone = 'red'; icon = 'fa-exclamation-triangle';
+        title = 'Not paid &mdash; ' + money(c.amount);
+        sub = who + ' &middot; ' + escHtml(c.status === 'FAILED'
+          ? ('Square refused it: ' + (c.error || 'unknown error'))
+          : (c.cancel_reason ? 'cancelled (' + String(c.cancel_reason).toLowerCase().replace(/_/g, ' ') + ')' : 'cancelled on the Terminal'));
+        buttons = '<button onclick="sendToSquare(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg btn-press">Send again</button>' +
+                  '<button onclick="recordCash(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg btn-press">Cash</button>';
+      }
+      html += squareCardRow(tone, icon, title, sub, buttons, c.id);
+    });
+    Object.keys(squareNotices).forEach(function (tid) {
+      const n = squareNotices[tid];
+      html += squareCardRow('amber', 'fa-info-circle', 'Nothing sent to the Square Terminal', escHtml(n.text),
+        '<button onclick="recordCash(' + tid + ')" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg btn-press">Cash</button>', 'n' + tid);
+    });
+    box.innerHTML = html;
+    box.classList.toggle('hidden', !html);
+  }
+
+  function squareCardRow(tone, icon, title, sub, buttons, key) {
+    const t = {
+      blue:  ['bg-blue-50 border-blue-300',   'bg-blue-100 text-blue-600',   'text-blue-800',  'text-blue-600'],
+      green: ['bg-green-50 border-green-300', 'bg-green-100 text-green-600', 'text-green-800', 'text-green-600'],
+      red:   ['bg-red-50 border-red-300',     'bg-red-100 text-red-500',     'text-red-700',   'text-red-600'],
+      amber: ['bg-amber-50 border-amber-300', 'bg-amber-100 text-amber-600', 'text-amber-800', 'text-amber-700'],
+    }[tone];
+    return '<div class="' + t[0] + ' border-2 rounded-xl p-4 flex items-center gap-3">' +
+      '<div class="w-10 h-10 ' + t[1] + ' rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas ' + icon + ' text-xl"></i></div>' +
+      '<div class="flex-1 min-w-0"><div class="text-sm font-bold ' + t[2] + '">' + title + '</div><div class="text-xs ' + t[3] + ' leading-snug">' + sub + '</div></div>' +
+      buttons +
+      '<button onclick="dismissSquare(&quot;' + key + '&quot;)" class="text-gray-400 hover:text-gray-600 flex-shrink-0" title="Hide"><i class="fas fa-times"></i></button>' +
+      '</div>';
   }
 
   async function recordCash(ticketId) {
@@ -4887,13 +5114,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const total = parseFloat(res.data.ticket.grand_total)||0;
       if (!confirm('Record cash payment of $'+total.toFixed(2)+'?')) return;
       showLoading('Recording...'); await axios.post('/api/square/cash-payment', { scale_ticket_id: ticketId, amount: total });
+      delete squareNotices[ticketId]; refreshSquareCharges();
       // Deliberately NO print here. The receipt is printed once, when the
       // truck weighs out and leaves -- payment is taken seconds later at the
       // same window, so printing again just hands the driver a second copy of
       // a ticket they are already holding. The Print button on the ticket is
       // still there when somebody actually wants another one.
       closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement();
-    } catch(err) { alert('Failed'); }
+    } catch(err) { alert((err.response && err.response.data && err.response.data.error) || 'Failed'); }
     finally { hideLoading(); }
   }
 
@@ -5064,6 +5292,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       loadBridgePrinters();
       initCamera(); startAutoRefresh();
       loadAgentSettings();
+      loadSquareSettings();
       startVerifySweep();
       bootstrapScale();
       startStaleWatchdog();

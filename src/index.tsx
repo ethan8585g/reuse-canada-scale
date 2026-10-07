@@ -38,6 +38,9 @@ type Bindings = {
   GOOGLE_MAPS_API_KEY: string
   SQUARE_APP_ID: string
   SQUARE_ACCESS_TOKEN: string
+  SQUARE_ENV?: string
+  SQUARE_WEBHOOK_SIGNATURE_KEY?: string
+  SQUARE_WEBHOOK_URL?: string
   open_ai: string
 }
 
