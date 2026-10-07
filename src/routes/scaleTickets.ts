@@ -417,12 +417,21 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
     const walkInId = await getWalkInCustomerId(c.env.DB)
     const now = new Date().toISOString()
 
-    // Material is optional and defaults to the historical 'mixed'. The scale
-    // agent passes its configured tire material so the automated path never
-    // has to ask; the manual capture path sends nothing and is unaffected.
+    // Material is optional. Without one the ticket takes the yard material
+    // set on the Scale House page (scale_agent_settings.material), so the
+    // manual capture button follows the same switch as the agent; 'mixed' is
+    // the fallback when that setting is missing or no longer priced.
     // Validated against the pricing table so a bad value can't produce a
     // ticket that later prices at the 0.14 fallback without anyone noticing.
     let tireType = 'mixed'
+    try {
+      const yard = await c.env.DB.prepare(
+        `SELECT s.material FROM scale_agent_settings s
+           JOIN pricing p ON p.material_type = s.material AND p.is_active = 1
+          WHERE s.id = 1`
+      ).first<any>()
+      if (yard?.material) tireType = yard.material
+    } catch (e) { /* settings table missing: keep 'mixed' */ }
     if (typeof material === 'string' && material.trim()) {
       const known = await c.env.DB.prepare(
         'SELECT material_type FROM pricing WHERE material_type = ? AND is_active = 1'

@@ -724,6 +724,16 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
       return n
     }
 
+    // A material that is not an active price would make every agent ticket
+    // fail at print-trigger, which validates against the same table.
+    if (typeof body.material === 'string' && body.material.trim()) {
+      const known = await c.env.DB.prepare(
+        'SELECT material_type FROM pricing WHERE material_type = ? AND is_active = 1'
+      ).bind(body.material.trim()).first()
+      if (!known) return c.json({ error: `Unknown or inactive material: ${body.material}` }, 400)
+      cur.material = body.material.trim()
+    }
+
     const next = {
       mode,
       wake_threshold_kg: num(body.wake_threshold_kg, cur.wake_threshold_kg, 1, 5000),
@@ -732,7 +742,7 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
       cancel_seconds: Math.round(num(body.cancel_seconds, cur.cancel_seconds, 0, 60)),
       min_net_kg: num(body.min_net_kg, cur.min_net_kg, 0, 10000),
       max_net_kg: num(body.max_net_kg, cur.max_net_kg, 100, 200000),
-      material: typeof body.material === 'string' && body.material ? body.material.slice(0, 40) : cur.material,
+      material: cur.material,
       single_truck_mode: body.single_truck_mode === undefined ? cur.single_truck_mode : (body.single_truck_mode ? 1 : 0),
       max_open_age_hours: num(body.max_open_age_hours, cur.max_open_age_hours, 0.25, 720),
       customer_prompt: ['on_close', 'off'].includes(body.customer_prompt) ? body.customer_prompt : cur.customer_prompt,
@@ -779,6 +789,55 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
     return c.json({ success: true, settings: await getSettings(c.env.DB) })
   } catch (err: any) {
     return c.json({ error: err?.message || 'Failed to save settings' }, 500)
+  }
+})
+
+// ─── PUT /material ───
+// The material the yard is taking right now. Every new ticket -- opened by the
+// agent or by the manual capture button -- is written with it, so switching
+// from tires to scrap metal for an afternoon is one tap rather than a re-assign
+// on every ticket. Open to yard operators (unlike the rest of the settings)
+// because they are the ones standing at the scale when the load type changes.
+// apply_to_open also moves trucks already weighed in; they are not priced
+// until they weigh out, so nothing has to be re-priced.
+scaleAgentRoutes.put('/material', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as any
+    const material = typeof body.material === 'string' ? body.material.trim() : ''
+    if (!material) return c.json({ error: 'material is required' }, 400)
+    const known = await c.env.DB.prepare(
+      'SELECT material_type FROM pricing WHERE material_type = ? AND is_active = 1'
+    ).bind(material).first()
+    if (!known) return c.json({ error: `Unknown or inactive material: ${material}` }, 400)
+
+    const cur = await getSettings(c.env.DB)
+    await c.env.DB.prepare('UPDATE scale_agent_settings SET material = ? WHERE id = 1').bind(material).run()
+
+    let updatedOpen = 0
+    if (body.apply_to_open) {
+      const open = await c.env.DB.prepare(
+        `SELECT id, tire_type FROM scale_tickets
+          WHERE status = 'weighed_in' AND weight_out IS NULL AND COALESCE(tire_type, 'mixed') != ?`
+      ).bind(material).all<any>()
+      for (const t of open.results || []) {
+        await c.env.DB.prepare(
+          "UPDATE scale_tickets SET tire_type = ?, updated_at = datetime('now') WHERE id = ? AND status = 'weighed_in'"
+        ).bind(material, t.id).run()
+        try {
+          await c.env.DB.prepare(
+            'INSERT INTO scale_audit_log (scale_ticket_id, action, employee_id, details) VALUES (?, ?, ?, ?)'
+          ).bind(t.id, 'assigned', c.get('userId'), JSON.stringify({
+            tire_type: material, prev_tire_type: t.tire_type, reason: 'yard material changed',
+          })).run()
+        } catch (e) { /* non-critical */ }
+        updatedOpen++
+      }
+    }
+
+    return c.json({ success: true, settings: await getSettings(c.env.DB), prev_material: cur.material, updated_open: updatedOpen })
+  } catch (err: any) {
+    console.error('scale agent material error:', err)
+    return c.json({ error: 'Failed to change the yard material' }, 500)
   }
 })
 

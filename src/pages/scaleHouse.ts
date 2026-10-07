@@ -191,6 +191,18 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     </div>
   </div>
 
+  <!-- ═══════ YARD MATERIAL ═══════ -->
+  <div id="yard-material-bar" class="mb-4 bg-white rounded-xl shadow-card border border-gray-100 px-4 py-3 flex items-center gap-3 flex-wrap">
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="w-8 h-8 rounded-lg bg-rc-green/10 flex items-center justify-center"><i class="fas fa-layer-group text-rc-green"></i></div>
+      <div>
+        <div class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Yard material</div>
+        <div class="text-[10px] text-gray-400">every new ticket is written as</div>
+      </div>
+    </div>
+    <div id="yard-material-pills" class="flex flex-wrap gap-1.5 flex-1"><span class="text-xs text-gray-400">Loading...</span></div>
+  </div>
+
   <!-- ═══════ AUTO-CAPTURE PROMPT (non-modal banner) ═══════ -->
   <div id="auto-capture-prompt" class="hidden mb-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl shadow-lg p-4 flex items-center justify-between flex-wrap gap-3">
     <div class="flex items-center gap-3">
@@ -3661,7 +3673,70 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       b.className = 'px-1 py-1.5 text-[10px] font-semibold rounded-lg border ' +
         (m === mode ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50');
     });
+    renderYardMaterial();
   }
+
+  // ── Yard material ──
+  // The material the yard is taking right now. It lives in the agent's
+  // settings row on the server, so every station and both ticket paths (the
+  // agent and the manual capture button) write new tickets with it.
+  function yardMaterial() { return (agentSettings && agentSettings.material) || 'mixed'; }
+
+  function renderYardMaterial() {
+    const box = document.getElementById('yard-material-pills');
+    if (!box) return;
+    const list = (pricingData || []).filter(function (p) { return p.is_active === undefined || Number(p.is_active) === 1; });
+    if (!list.length) { box.innerHTML = '<span class="text-xs text-gray-400">No materials priced</span>'; return; }
+    const cur = yardMaterial();
+    box.innerHTML = list.map(function (p) {
+      const on = p.material_type === cur;
+      return '<button onclick="setYardMaterial(&quot;' + escAttr(p.material_type) + '&quot;)" ' +
+        'class="px-3.5 py-2 rounded-full text-xs font-semibold border-2 btn-press transition-colors ' +
+        (on ? 'border-rc-green bg-rc-green text-white shadow-sm' : 'border-gray-200 text-gray-600 hover:border-rc-green hover:text-rc-green') + '">' +
+        (on ? '<i class="fas fa-check mr-1"></i>' : '') + escHtml(getMaterialLabel(p.material_type)) +
+        ' <span class="font-mono ' + (on ? 'text-white/80' : 'text-gray-400') + '">$' + parseFloat(p.price_per_kg).toFixed(2) + '/kg</span></button>';
+    }).join('');
+  }
+
+  async function setYardMaterial(type) {
+    if (!type || type === yardMaterial()) return;
+    const label = getMaterialLabel(type);
+    // Trucks already weighed in were written with the old material. They are
+    // not priced until they weigh out, so moving them over is safe -- but it is
+    // the operator's call, because one of them may really be the old load.
+    const others = (openTickets || []).filter(function (t) { return (t.tire_type || 'mixed') !== type; });
+    let applyOpen = false;
+    if (others.length) {
+      applyOpen = confirm('Switch the yard to ' + label + '.' +
+        ' There ' + (others.length === 1 ? 'is 1 truck' : 'are ' + others.length + ' trucks') + ' already in the yard on another material' +
+        ' (' + others.map(function (t) { return t.ticket_number; }).join(', ') + ').' +
+        ' OK = change ' + (others.length === 1 ? 'it' : 'them') + ' to ' + label + ' too.' +
+        ' Cancel = only new tickets.');
+    }
+    try {
+      const res = await axios.put('/api/scale-agent/material', { material: type, apply_to_open: applyOpen });
+      agentSettings = res.data.settings;
+      renderYardMaterial();
+      agentLog('yard material: ' + label + (res.data.updated_open ? ' (' + res.data.updated_open + ' open ticket' + (res.data.updated_open === 1 ? '' : 's') + ' moved too)' : ''));
+      if (res.data.updated_open) loadOpenTickets();
+    } catch (e) {
+      const status = e.response && e.response.status;
+      alert(status === 403
+        ? 'Only an admin, manager or yard operator can change the yard material.'
+        : 'Could not change the yard material: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      renderYardMaterial();
+    }
+  }
+
+  // Another station (or a phone) may change the yard material; keep this
+  // tab's bar honest without touching the rest of the agent's state.
+  setInterval(async function () {
+    try {
+      const res = await axios.get('/api/scale-agent/settings');
+      const m = res.data && res.data.settings && res.data.settings.material;
+      if (m && agentSettings && m !== agentSettings.material) { agentSettings.material = m; renderYardMaterial(); }
+    } catch (e) { /* next tick */ }
+  }, 60000);
 
   async function loadAgentSettings() {
     try {
@@ -4000,7 +4075,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         const res = await axios.post('/api/scale-tickets/print-trigger', {
           weight: p.weight,
           photo: p.photo || null,
-          material: (agentSettings && agentSettings.material) || 'mixed',
+          // No material: the server writes the yard material, which is the
+          // one source of truth even if this tab's copy of it is stale.
           source: 'agent',
           plate: (p.plate && p.plate.plate) || '',
           plate_confidence: (p.plate && p.plate.confidence) || 0,
@@ -4709,6 +4785,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       else div.innerHTML = '<div class="space-y-1">' + pricingData.map(p => '<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span class="text-gray-600">'+escHtml(getMaterialLabel(p.material_type))+'</span><span class="font-mono font-semibold text-gray-800">$'+parseFloat(p.price_per_kg).toFixed(2)+'/kg</span></div>').join('') + '</div>';
       // Keep ticket-creation dropdowns in sync with the current material list.
       refreshMaterialDropdowns();
+      renderYardMaterial();
     } catch(err) {}
   }
 
