@@ -69,6 +69,14 @@ squareRoutes.get('/settings', async (c) => {
       min_charge_cents: Number(s.min_charge_cents) || 0,
     },
     token_ready: !!c.env.SQUARE_ACCESS_TOKEN,
+    // The shape of the token, never the token: a Square production access
+    // token starts with EAAA and is about 64 characters. Anything else means
+    // the wrong value was pasted into the Cloudflare secret.
+    token_shape: c.env.SQUARE_ACCESS_TOKEN ? {
+      length: c.env.SQUARE_ACCESS_TOKEN.length,
+      looks_right: /^EAAA[A-Za-z0-9_-]{40,}$/.test(c.env.SQUARE_ACCESS_TOKEN),
+      has_whitespace: /\s/.test(c.env.SQUARE_ACCESS_TOKEN),
+    } : null,
     webhook_ready: !!c.env.SQUARE_WEBHOOK_SIGNATURE_KEY,
     environment: c.env.SQUARE_ENV === 'sandbox' ? 'sandbox' : 'production',
   })
@@ -108,7 +116,7 @@ squareRoutes.get('/account', async (c) => {
       squareFetch(c.env, 'GET', '/merchants/me'),
       squareFetch(c.env, 'GET', '/locations'),
     ])
-    if (!m.ok) return c.json({ error: m.error || 'Square rejected the access token' }, 502)
+    if (!m.ok) return c.json({ error: `Square answered ${m.status}: ${m.error || 'rejected the access token'}` }, 400)
     return c.json({
       business_name: m.data.merchant?.business_name || null,
       country: m.data.merchant?.country || null,
@@ -127,7 +135,7 @@ squareRoutes.get('/devices', async (c) => {
   if (!c.env.SQUARE_ACCESS_TOKEN) return c.json({ error: 'SQUARE_ACCESS_TOKEN is not set' }, 503)
   try {
     const r = await squareFetch(c.env, 'GET', '/devices/codes?product_type=TERMINAL_API')
-    if (!r.ok) return c.json({ error: r.error || 'Failed to list Terminals' }, 502)
+    if (!r.ok) return c.json({ error: `Square answered ${r.status}: ${r.error || 'could not list Terminals'}` }, 400)
     const codes = r.data.device_codes || []
     return c.json({
       devices: codes.filter((d: any) => d.status === 'PAIRED' && d.device_id)
@@ -151,7 +159,7 @@ squareRoutes.post('/device-code', roleRequired('admin', 'manager'), async (c) =>
       ...(location_id ? { location_id: String(location_id) } : {}),
     },
   })
-  if (!r.ok) return c.json({ error: r.error || 'Square refused to create a pairing code' }, 502)
+  if (!r.ok) return c.json({ error: `Square answered ${r.status}: ${r.error || 'refused to create a pairing code'}` }, 400)
   return c.json({ code: r.data.device_code?.code, pair_by: r.data.device_code?.pair_by })
 })
 

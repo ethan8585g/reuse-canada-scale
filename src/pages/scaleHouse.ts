@@ -4979,6 +4979,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const warn = document.getElementById('sq-warn');
     const problems = [];
     if (!squareSettings.token_ready) problems.push('SQUARE_ACCESS_TOKEN is not set on the Cloudflare Pages project, so nothing can reach Square.');
+    const shape = squareSettings.token_shape;
+    if (shape && !shape.looks_right) problems.push('The SQUARE_ACCESS_TOKEN saved in Cloudflare does not look like a Square production access token (it is ' + shape.length + ' characters' + (shape.has_whitespace ? ' and contains spaces or line breaks' : '') + '; a real one starts with EAAA and is about 64). Save it again with wrangler pages secret put, then redeploy.');
     if (squareSettings.token_ready && !st.device_id) problems.push('No Terminal chosen.');
     if (!squareSettings.webhook_ready) problems.push('Webhook not set up (SQUARE_WEBHOOK_SIGNATURE_KEY). Payments still record while this page is open; set it up so a tap is never missed.');
     if (warn) { warn.innerHTML = problems.map(escHtml).join('<br>'); warn.classList.toggle('hidden', !problems.length); }
