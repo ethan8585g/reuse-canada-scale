@@ -752,6 +752,17 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     </div>
   </div>
 
+  <!-- Merge two live tickets (one truck that ended up with two weigh-ins) -->
+  <div id="live-merge-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-object-group mr-2 text-rc-orange"></i>Merge live tickets</h3>
+        <button onclick="closeModal('live-merge-modal')" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div class="p-6 space-y-4" id="live-merge-body"></div>
+    </div>
+  </div>
+
   <!-- Void Reason Modal -->
   <div id="void-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;">
     <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-md">
@@ -4359,10 +4370,94 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           '<button onclick="connectToTruckOnScale(' + t.id + ')" class="w-full bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl btn-press flex items-center justify-center gap-2 mb-2 text-sm"><i class="fas fa-truck"></i> Connect to Truck on Scale</button>' +
           '<div class="flex gap-2">' +
             '<button onclick="loadTicketDetail(' + t.id + ')" class="flex-1 px-2 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg"><i class="fas fa-eye mr-1"></i>View</button>' +
+            (openTickets.length > 1 ? '<button onclick="openLiveMerge(' + t.id + ')" class="flex-1 px-2 py-1.5 bg-orange-50 hover:bg-orange-100 text-rc-orange text-xs font-semibold rounded-lg" title="This truck has two live tickets: merge them into one"><i class="fas fa-object-group mr-1"></i>Merge</button>' : '') +
             '<button onclick="openVoidModal(' + t.id + ',\\'' + safeNum + '\\')" class="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-lg" title="Void ticket"><i class="fas fa-ban"></i></button>' +
           '</div>' +
         '</div>';
     });
+  }
+
+  // ── Merge two live tickets ──
+  // When one truck ends up with two live tickets (its weigh-out was taken as
+  // a second weigh-in), the earlier one is the weigh-in and the later one's
+  // weight is the weigh-out. The operator can swap them before confirming.
+  let liveMerge = null; // { inId, outId }
+
+  function openLiveMerge(ticketId) {
+    const others = openTickets.filter(function (t) { return t.id !== ticketId; });
+    if (!others.length) { alert('There is no other live ticket to merge with.'); return; }
+    liveMerge = { from: ticketId, partner: others.length === 1 ? others[0].id : null };
+    if (liveMerge.partner) orientLiveMerge();
+    renderLiveMerge();
+    openModal('live-merge-modal');
+  }
+
+  function orientLiveMerge() {
+    const a = openTickets.find(function (t) { return t.id === liveMerge.from; });
+    const b = openTickets.find(function (t) { return t.id === liveMerge.partner; });
+    if (!a || !b) return;
+    const aFirst = new Date(a.weight_in_at || a.created_at).getTime() <= new Date(b.weight_in_at || b.created_at).getTime();
+    liveMerge.inId = aFirst ? a.id : b.id;
+    liveMerge.outId = aFirst ? b.id : a.id;
+  }
+
+  function pickLiveMergePartner(id) { liveMerge.partner = id; orientLiveMerge(); renderLiveMerge(); }
+  function swapLiveMerge() { const x = liveMerge.inId; liveMerge.inId = liveMerge.outId; liveMerge.outId = x; renderLiveMerge(); }
+
+  function renderLiveMerge() {
+    const body = document.getElementById('live-merge-body');
+    const kg = function (v) { return parseFloat(v || 0).toLocaleString('en-CA', { minimumFractionDigits: 1 }) + ' kg'; };
+    const when = function (t) { return new Date(t.weight_in_at || t.created_at).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }); };
+    if (!liveMerge.partner) {
+      body.innerHTML = '<p class="text-sm text-gray-600">Which ticket is the same truck?</p>' +
+        openTickets.filter(function (t) { return t.id !== liveMerge.from; }).map(function (t) {
+          return '<div onclick="pickLiveMergePartner(' + t.id + ')" class="border-2 border-gray-200 rounded-xl p-3 hover:border-rc-orange cursor-pointer flex items-center justify-between">' +
+            '<div><div class="font-mono font-bold text-rc-green">' + escHtml(t.ticket_number) + '</div><div class="text-xs text-gray-500">' + escHtml(t.company_name || 'Unassigned') + ' &middot; in at ' + when(t) + '</div></div>' +
+            '<div class="font-mono font-bold text-sm">' + kg(t.weight_in) + '</div></div>';
+        }).join('');
+      return;
+    }
+    const a = openTickets.find(function (t) { return t.id === liveMerge.inId; });
+    const b = openTickets.find(function (t) { return t.id === liveMerge.outId; });
+    if (!a || !b) { body.innerHTML = '<p class="text-sm text-red-600">One of these tickets is no longer live. Close this and look again.</p>'; return; }
+    const net = parseFloat(a.weight_in) - parseFloat(b.weight_in);
+    const pm = pricingData.find(function (p) { return p.material_type === (a.tire_type || 'mixed'); });
+    const ppk = pm ? parseFloat(pm.price_per_kg) : 0.14;
+    const sub = Math.round(Math.max(net, 0) * ppk * 100) / 100;
+    const total = Math.round((sub + Math.round(sub * 0.05 * 100) / 100) * 100) / 100;
+    body.innerHTML =
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div class="bg-indigo-50 rounded-xl p-3"><div class="text-[10px] font-bold text-indigo-500 uppercase">Weigh-in (kept)</div><div class="font-mono font-bold text-rc-green">' + escHtml(a.ticket_number) + '</div><div class="text-lg font-bold font-mono text-indigo-700">' + kg(a.weight_in) + '</div><div class="text-xs text-indigo-500">at ' + when(a) + '</div></div>' +
+        '<div class="bg-orange-50 rounded-xl p-3"><div class="text-[10px] font-bold text-orange-500 uppercase">Weigh-out (from)</div><div class="font-mono font-bold text-gray-600">' + escHtml(b.ticket_number) + '</div><div class="text-lg font-bold font-mono text-orange-700">' + kg(b.weight_in) + '</div><div class="text-xs text-orange-500">at ' + when(b) + '</div></div>' +
+      '</div>' +
+      '<button onclick="swapLiveMerge()" class="w-full py-2 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"><i class="fas fa-right-left mr-1"></i>Swap weigh-in and weigh-out</button>' +
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-[10px] font-bold text-green-600 uppercase">Net</div><div class="text-xl font-bold font-mono text-green-700">' + kg(net) + '</div></div>' +
+        '<div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-[10px] font-bold text-green-600 uppercase">Total (' + escHtml(getMaterialLabel(a.tire_type)) + ')</div><div class="text-xl font-bold font-mono text-green-700">$' + total.toFixed(2) + '</div></div>' +
+      '</div>' +
+      (net < 0 ? '<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2"><i class="fas fa-triangle-exclamation mr-1"></i>The weigh-out is heavier than the weigh-in, so this bills $0. If the order is backwards, press Swap.</div>' : '') +
+      '<p class="text-xs text-gray-500">' + escHtml(a.ticket_number) + ' is closed and printed; ' + escHtml(b.ticket_number) + ' is voided as merged into it.</p>' +
+      '<div class="flex gap-3"><button onclick="confirmLiveMerge()" class="flex-1 bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-object-group mr-1"></i>Merge and close</button>' +
+      '<button onclick="closeModal(&quot;live-merge-modal&quot;)" class="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Cancel</button></div>';
+  }
+
+  async function confirmLiveMerge() {
+    if (!liveMerge || !liveMerge.inId || !liveMerge.outId) return;
+    const m = liveMerge;
+    closeModal('live-merge-modal'); showLoading('Merging...');
+    try {
+      const res = await axios.post('/api/scale-tickets/merge-live', { in_id: m.inId, out_id: m.outId });
+      liveMerge = null;
+      agentLog('merged ' + res.data.voided_ticket_number + ' into ' + res.data.ticket_number + ', net ' + Number(res.data.net_weight).toFixed(1) + ' kg');
+      hideLoading();
+      loadOpenTickets(); loadCompletedToday(); loadStats();
+      // Same finish as any other close: receipt first, then the Terminal.
+      autoPrintReceipt(res.data.id).then(function () { squareChargeAfterClose(res.data.id); });
+    } catch (err) {
+      hideLoading();
+      alert((err.response && err.response.data && err.response.data.error) || 'Merge failed');
+      loadOpenTickets();
+    }
   }
 
   function toggleLiveCardCollapse(ticketId) {

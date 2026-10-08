@@ -687,6 +687,108 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
   }
 })
 
+// Merge two LIVE tickets that turn out to be one visit: the truck's weigh-out
+// was recorded as a second weigh-in (two arrivals the agent or an operator
+// could not tell apart). The `in_id` ticket keeps its weigh-in; the `out_id`
+// ticket's weigh-in becomes its weigh-out -- with that ticket's own time,
+// photo, plate and look, so the record says when the truck actually left --
+// and the `out_id` ticket is voided with a reason pointing at the survivor.
+// Priced exactly like merge-out. Both updates go in one D1 batch, and each is
+// conditional on the ticket still being live, so a double press or a ticket
+// closed meanwhile can't half-apply.
+scaleTicketRoutes.post('/merge-live', async (c) => {
+  try {
+    const { in_id, out_id } = await c.req.json()
+    const inId = Number(in_id), outId = Number(out_id)
+    const employeeId = c.get('userId')
+    if (!Number.isInteger(inId) || !Number.isInteger(outId) || inId <= 0 || outId <= 0) {
+      return c.json({ error: 'Two ticket ids are required' }, 400)
+    }
+    if (inId === outId) return c.json({ error: 'Pick two different tickets' }, 400)
+
+    const a = await c.env.DB.prepare('SELECT * FROM scale_tickets WHERE id = ?').bind(inId).first<any>()
+    const b = await c.env.DB.prepare('SELECT * FROM scale_tickets WHERE id = ?').bind(outId).first<any>()
+    if (!a || !b) return c.json({ error: 'Ticket not found' }, 404)
+    for (const t of [a, b]) {
+      if (t.status !== 'weighed_in' || t.weight_out != null) {
+        return c.json({ error: `${t.ticket_number} is not a live ticket any more` }, 409)
+      }
+      if (!t.weight_in || t.weight_in <= 0) return c.json({ error: `${t.ticket_number} has no weight-in` }, 400)
+    }
+
+    const weightOut = Number(b.weight_in)
+    const netWeight = Number(a.weight_in) - weightOut
+    const outAt = b.weight_in_at || new Date().toISOString()
+
+    // Whichever half was attributed wins over the walk-in placeholder.
+    const walkInId = await getWalkInCustomerId(c.env.DB)
+    const customerId = a.customer_id === walkInId && b.customer_id && b.customer_id !== walkInId
+      ? b.customer_id : a.customer_id
+
+    const pricing = await c.env.DB.prepare(
+      'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
+    ).bind(a.tire_type || 'mixed').first()
+    const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
+    const subtotal = cents(billableKg(netWeight) * pricePerKg)
+    const tax = cents(subtotal * GST_RATE)
+    const grandTotal = cents(subtotal + tax)
+
+    const reason = `Merged into ${a.ticket_number}: this weigh-in was that truck's weigh-out`
+    const results = await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE scale_tickets SET
+           weight_out = ?, weight_out_at = ?, net_weight = ?,
+           photo_out = ?, photo_out_at = ?,
+           plate_out = ?, vehicle_plate = COALESCE(vehicle_plate, ?),
+           appearance_out = ?, appearance_in = COALESCE(appearance_in, ?),
+           customer_id = ?,
+           driver_name = COALESCE(driver_name, ?), driver_phone = COALESCE(driver_phone, ?),
+           price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
+           completed_by = ?, status = 'completed', updated_at = datetime('now')
+         WHERE id = ? AND status = 'weighed_in' AND weight_out IS NULL`
+      ).bind(weightOut, outAt, netWeight,
+             b.photo_in || null, b.photo_in ? (b.photo_in_at || outAt) : null,
+             b.vehicle_plate || null, b.vehicle_plate || null,
+             b.appearance_in || null, b.appearance_in || null,
+             customerId, b.driver_name || null, b.driver_phone || null,
+             pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, inId),
+      c.env.DB.prepare(
+        `UPDATE scale_tickets SET status = 'voided', voided_by = ?, void_reason = ?, updated_at = datetime('now')
+         WHERE id = ? AND status = 'weighed_in' AND weight_out IS NULL`
+      ).bind(employeeId, reason, outId),
+    ])
+    const changed = results.map((r: any) => Number(r?.meta?.changes ?? 0))
+    if (changed[0] !== 1 || changed[1] !== 1) {
+      // Lost a race with another close. Say so; the operator can look again.
+      return c.json({ error: 'One of these tickets changed while merging -- refresh and check both' }, 409)
+    }
+
+    await auditLog(c.env.DB, inId, 'weighed_out', employeeId, {
+      weight_out: weightOut, net_weight: netWeight, price_per_kg: pricePerKg, grand_total: grandTotal,
+      merged_from: { id: outId, ticket_number: b.ticket_number },
+    })
+    await auditLog(c.env.DB, outId, 'voided', employeeId, {
+      reason, merged_into: { id: inId, ticket_number: a.ticket_number }, prev_status: b.status,
+      prev_weight_in: b.weight_in,
+    })
+    await detectAnomalies(c.env.DB, inId, Number(a.weight_in), weightOut, netWeight)
+    if (a.pickup_request_id) {
+      await c.env.DB.prepare(
+        "UPDATE pickup_requests SET status = 'completed', updated_at = datetime('now') WHERE id = ?"
+      ).bind(a.pickup_request_id).run()
+    }
+
+    return c.json({
+      success: true, id: inId, ticket_number: a.ticket_number, voided_id: outId,
+      voided_ticket_number: b.ticket_number,
+      weight_in: Number(a.weight_in), weight_out: weightOut, net_weight: netWeight,
+      price_per_kg: pricePerKg, subtotal, tax, grand_total: grandTotal,
+    })
+  } catch (err: any) {
+    console.error('merge-live error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 // Single-weigh using stored vehicle tare
 scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
   const id = c.req.param('id')
