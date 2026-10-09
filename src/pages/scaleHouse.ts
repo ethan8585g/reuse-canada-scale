@@ -364,6 +364,18 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
                drive a truck onto the scale. -->
           <div id="plate-test-result" class="hidden mt-1 px-2 py-1.5 rounded-lg text-[10px] leading-snug"></div>
 
+          <!-- Shown when this Mac has no scale-bridge. A new station has no
+               copy of the repo, so the site serves the installer itself, and
+               the page notices on its own when the bridge comes up. -->
+          <div id="bridge-setup" class="hidden mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
+            <p class="text-[10px] text-amber-800 font-semibold leading-snug"><i class="fas fa-screwdriver-wrench mr-1"></i>Set up this Mac (once): open Terminal, paste this, press Return.</p>
+            <div class="mt-1 flex gap-1 items-start">
+              <code id="bridge-setup-cmd" class="flex-1 min-w-0 text-[9px] font-mono bg-white border border-amber-200 rounded px-1.5 py-1 select-all break-all"></code>
+              <button onclick="copyBridgeSetup()" id="bridge-setup-copy" class="shrink-0 px-2 py-1 text-[10px] font-semibold rounded bg-amber-600 text-white hover:bg-amber-700"><i class="fas fa-copy mr-0.5"></i>Copy</button>
+            </div>
+            <p class="text-[10px] text-amber-700 leading-snug mt-1">It installs scale-bridge so it starts with the Mac, then checks Agent DVR and lists anything left to do. This page picks it up by itself.</p>
+          </div>
+
           <!-- Settings. Station-scoped (localStorage), like the receipt printer:
                the camera belongs to the scale house, not to whoever logged in. -->
           <div id="camera-settings" class="hidden mt-2 pt-2 border-t border-gray-100 space-y-2">
@@ -1255,7 +1267,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     // Every network frame arrives through the bridge, so when it is down there
     // is nothing to show — and naming which piece is missing saves a lot of
     // guessing at 6am.
-    if (!(await camBridgeUp())) { camFail(bridgeUnreachableMsg('the yard camera cannot be reached'), true); return; }
+    if (!(await camBridgeUp())) { camFail(bridgeProblem('the yard camera cannot be reached'), true); return; }
     const img = document.getElementById('camera-net');
     // crossOrigin is what keeps the capture canvas untainted. Without it the
     // preview still works and every capture throws — the worst possible
@@ -1326,29 +1338,131 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (camCfg.user) q += '&user=' + encodeURIComponent(camCfg.user) + '&pass=' + encodeURIComponent(camCfg.pass || '');
     return BRIDGE_URL + path + q;
   }
+  // ─── reaching this Mac ───
   // A blocked local-network request and a bridge that is simply not running
-  // both surface as the same failed fetch, so the message has to name both —
-  // and Chrome first. Since Chrome 142 a public https page cannot reach
-  // 127.0.0.1 until the operator allows it, and nothing on screen says so: the
-  // scale feed, receipt printing and the yard camera all just stop, with only
-  // a CORS line in a console nobody has open.
+  // both surface as the same failed fetch, and they need opposite fixes: one
+  // is a Chrome setting, the other is software missing from the Mac. Telling
+  // the operator "either of these" sent a new station's operator round in
+  // circles, so ask Chrome which it is. Since Chrome 145 the permission a
+  // public page needs to reach this Mac's own apps is "loopback-network",
+  // shown in site settings as "Apps on device"; 142-144 called it
+  // "local-network-access", still accepted as an alias. A browser without
+  // the gate rejects both names, which reads as 'unknown'.
+  let lnaPromise = null, lnaStatusObj = null;
+  function lnaPermission() {
+    if (!lnaPromise) lnaPromise = (async function () {
+      if (!navigator.permissions || !navigator.permissions.query) return null;
+      const names = ['loopback-network', 'local-network-access'];
+      for (let i = 0; i < names.length; i++) {
+        try {
+          const st = await navigator.permissions.query({ name: names[i] });
+          lnaStatusObj = st;
+          // Allowing it in site settings should be the end of the matter --
+          // no reload, no hunting for the camera's Start button.
+          st.onchange = function () { if (st.state === 'granted') onBridgeReachable(); };
+          return st;
+        } catch (e) {}
+      }
+      return null;
+    })();
+    return lnaPromise;
+  }
+  async function lnaState() { const st = await lnaPermission(); return st ? st.state : 'unknown'; }
+  function lnaNow() { return lnaStatusObj ? lnaStatusObj.state : 'unknown'; }
+
+  let bridgeLastFail = null;   // 'blocked' (Chrome said no) | 'down' (nothing answering) | null
   function bridgeUnreachableMsg(what) {
+    const so = what ? ', so ' + what : '';
+    if (bridgeLastFail === 'blocked' || lnaNow() === 'denied') {
+      return 'Chrome is blocking this page from reaching this computer' + so + '. Click the icon at the left of the address bar, open Site settings, set "Apps on device" (older Chrome: "Local network access") to Allow, then come back.';
+    }
     const h = location.hostname;
     const publicSite = location.protocol === 'https:' && h !== 'localhost' && h !== '127.0.0.1';
-    if (publicSite) {
-      return 'Cannot reach this computer' + (what ? ', so ' + what : '') + '. Chrome blocks a public site from using the local network until it is allowed — open this page with scale-house.command, or click Allow if Chrome asks. If that is already done, the scale-bridge is not running.';
-    }
-    return 'Scale-bridge is not running on this computer' + (what ? ', so ' + what : '') + '.';
+    // 'prompt' is also what Chrome reports when the check is switched off, so
+    // it cannot rule Chrome out -- but it is the less likely cause by far once
+    // the request has failed outright.
+    const ask = publicSite && lnaNow() !== 'granted' ? ' (If Chrome asks to let this site use apps on this device, click Allow.)' : '';
+    return 'scale-bridge is not running on this computer' + so + '. A new Mac needs it set up once.' + ask;
+  }
+  // The same message, plus the setup box -- for the paths that cannot work at
+  // all without the bridge (the yard camera). Pointless when Chrome is the
+  // blocker: installing the bridge again would change nothing.
+  function bridgeProblem(what) {
+    if (bridgeLastFail !== 'blocked' && lnaNow() !== 'denied') showBridgeSetup();
+    return bridgeUnreachableMsg(what);
   }
 
-  async function camBridgeUp() {
+  async function camBridgeUp(onAsk) {
+    const state = await lnaState();
+    // Denied stays denied until someone changes it in site settings (which
+    // fires onchange above), so there is nothing to gain by asking again.
+    if (state === 'denied') { bridgeLastFail = 'blocked'; return false; }
+    if (state === 'prompt' && onAsk) onAsk();
     try {
       const ctrl = new AbortController();
-      const t = setTimeout(function () { ctrl.abort(); }, 1500);
+      // While Chrome's prompt is up the request waits on the operator, and
+      // aborting it at 1.5s would discard their Allow click and report the
+      // bridge missing while they were clicking it. A bridge that is really
+      // absent still fails at once (connection refused), so the long wait
+      // only ever applies to a request someone is being asked about.
+      const t = setTimeout(function () { ctrl.abort(); }, state === 'prompt' ? 60000 : 1500);
       const r = await fetch(BRIDGE_URL + '/status', { signal: ctrl.signal, cache: 'no-store' });
       clearTimeout(t);
+      if (r.ok) { bridgeLastFail = null; hideBridgeSetup(); }
       return r.ok;
-    } catch (e) { return false; }
+    } catch (e) {
+      bridgeLastFail = (await lnaState()) === 'denied' ? 'blocked' : 'down';
+      return false;
+    }
+  }
+
+  function bridgeSetupCommand() { return 'curl -fsSL ' + location.origin + '/station/install.sh | bash'; }
+  let bridgeSetupTimer = null;
+  function showBridgeSetup() {
+    const box = document.getElementById('bridge-setup');
+    if (!box) return;
+    document.getElementById('bridge-setup-cmd').textContent = bridgeSetupCommand();
+    box.classList.remove('hidden');
+    // Keep looking, so running the installer is all it takes: the camera and
+    // the printer picker come up on their own, with no reload.
+    if (!bridgeSetupTimer) bridgeSetupTimer = setTimeout(bridgeSetupPoll, 5000);
+  }
+  function hideBridgeSetup() {
+    const box = document.getElementById('bridge-setup');
+    if (box) box.classList.add('hidden');
+    if (bridgeSetupTimer) { clearTimeout(bridgeSetupTimer); bridgeSetupTimer = null; }
+  }
+  // Self-clocking, like the snapshot poller: the next check is scheduled only
+  // once this one settles, so a pending Chrome prompt cannot stack requests.
+  async function bridgeSetupPoll() {
+    bridgeSetupTimer = null;
+    if (await camBridgeUp()) { onBridgeReachable(); return; }
+    if (bridgeLastFail === 'blocked') { hideBridgeSetup(); return; }
+    const box = document.getElementById('bridge-setup');
+    if (box && !box.classList.contains('hidden') && !bridgeSetupTimer) bridgeSetupTimer = setTimeout(bridgeSetupPoll, 5000);
+  }
+  function onBridgeReachable() {
+    hideBridgeSetup();
+    bridgeLastFail = null;
+    // Only a camera that was meant to be running: one the operator switched
+    // off stays off. One already retrying comes back by itself.
+    if (camCfg.source === 'network' && camCfg.autoStart && !camActive) startCamera();
+    loadBridgePrinters();
+  }
+  async function copyBridgeSetup() {
+    const btn = document.getElementById('bridge-setup-copy');
+    try {
+      await navigator.clipboard.writeText(bridgeSetupCommand());
+      btn.innerHTML = '<i class="fas fa-check mr-0.5"></i>Copied';
+    } catch (e) {
+      // Clipboard refused: the command is select-all, so selecting it is the
+      // next best thing to copying it.
+      const r = document.createRange();
+      r.selectNodeContents(document.getElementById('bridge-setup-cmd'));
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      btn.innerHTML = 'Press ⌘C';
+    }
+    setTimeout(function () { btn.innerHTML = '<i class="fas fa-copy mr-0.5"></i>Copy'; }, 2500);
   }
 
   // Drops whatever is currently feeding the panel without deciding whether the
@@ -1668,7 +1782,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     if (!camCfg.url) { say('text-gray-500', 'No address yet — looking for Agent DVR…'); return findAgentDvr(); }
     say('text-gray-500', 'Testing…');
-    if (!(await camBridgeUp())) return say('text-red-600', bridgeUnreachableMsg(''));
+    if (!(await camBridgeUp(function () { say('text-amber-700', 'Chrome is asking whether this page may use apps on this device — click Allow.'); }))) return say('text-red-600', bridgeProblem(''));
     try {
       const r = await fetch(camProxyUrl('/camera/probe'), { cache: 'no-store' });
       const d = await r.json();
@@ -1707,14 +1821,47 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       msg.textContent = text;
       msg.classList.remove('hidden');
     };
+    // A dead end has to reach the camera box too. Otherwise it keeps saying
+    // "Looking for Agent DVR…" long after the answer came back, and the
+    // answer sits in small print further down the panel.
+    const fail = function (cls, text) {
+      say(cls, text);
+      if (!camActive && camCfg.source === 'network') camSetIdle('fa-triangle-exclamation', escHtml(text), true);
+    };
     list.classList.add('hidden'); list.innerHTML = '';
     say('text-gray-500', 'Looking for Agent DVR…');
-    if (!(await camBridgeUp())) { say('text-red-600', bridgeUnreachableMsg('')); return; }
+    if (!(await camBridgeUp(function () { say('text-amber-700', 'Chrome is asking whether this page may use apps on this device — click Allow.'); }))) { fail('text-red-600', bridgeProblem('the yard camera cannot be reached')); return; }
+    // The camera's own address is the one thing the operator will need to
+    // type into Agent DVR, and it is usually already sitting in the box as
+    // the rtsp:// URL that brought us here.
+    // Taken apart by hand: older Chrome parses no host out of a non-http URL,
+    // so new URL('rtsp://…').hostname comes back empty there.
+    let camIp = '';
+    if (looksLikeRtsp(camCfg.url)) {
+      let rest = camCfg.url.trim();
+      rest = rest.slice(rest.indexOf('://') + 3);
+      if (rest.indexOf('/') !== -1) rest = rest.slice(0, rest.indexOf('/'));
+      if (rest.lastIndexOf('@') !== -1) rest = rest.slice(rest.lastIndexOf('@') + 1);
+      if (rest.indexOf(':') !== -1) rest = rest.slice(0, rest.indexOf(':'));
+      camIp = rest;
+    }
     try {
       const r = await fetch(BRIDGE_URL + '/camera/agentdvr', { cache: 'no-store' });
       const d = await r.json();
-      if (!d.ok) { say('text-red-600', d.error || 'Could not reach Agent DVR.'); return; }
-      if (!d.cameras || !d.cameras.length) { say('text-amber-600', 'Agent DVR is running, but no cameras are set up in it yet.'); return; }
+      if (!d.ok) {
+        // "No Agent DVR on 127.0.0.1:8090 (connect ECONNREFUSED ...)" is the
+        // bridge's wording for nothing listening -- on a new Mac, because it
+        // was never installed; on an old one, because it was quit.
+        const notRunning = String(d.error || '').indexOf('No Agent DVR') === 0;
+        fail('text-red-600', notRunning
+          ? 'Agent DVR is not running on this Mac. Open AgentDVR from Applications; on a new Mac, install it first from ispyconnect.com (Download, macOS). Then press Find Agent DVR cameras.'
+          : (d.error || 'Could not reach Agent DVR.'));
+        return;
+      }
+      if (!d.cameras || !d.cameras.length) {
+        fail('text-amber-600', 'Agent DVR is running but has no camera yet. Open localhost:8090, click +, choose IP Camera Wizard, pick Reolink and enter ' + (camIp ? 'the camera IP ' + camIp : 'the camera IP address') + ' with its username and password. Then press Find Agent DVR cameras.');
+        return;
+      }
       agentDvrAt = { host: d.host, port: d.port };
       // Nothing usable configured yet (blank, or an RTSP address that cannot
       // work) and exactly one camera to choose from — there is no decision to
@@ -1836,6 +1983,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
 
   function initCamera() {
+    // Learn up front whether Chrome is letting this page reach the Mac, so the
+    // first failure message can already say which of the two problems it is.
+    lnaPermission();
     camCfg = loadCamCfg();
     // One-time upgrade of stations configured before plate reading existed:
     // 720p demonstrably cannot resolve a plate on the deck.
@@ -3051,7 +3201,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     } catch (e) {
       sel.innerHTML = '<option value="">No bridge — using browser print dialog</option>';
       const hint = document.getElementById('receipt-printer-hint');
-      if (hint) hint.textContent = bridgeUnreachableMsg('receipts cannot print silently');
+      // A station that had a printer chosen was relying on the bridge, so
+      // point at the setup box; one that never used it just gets the reason.
+      if (hint) hint.textContent = receiptPrinterPref() ? bridgeProblem('receipts cannot print silently') : bridgeUnreachableMsg('receipts cannot print silently');
     }
   }
 

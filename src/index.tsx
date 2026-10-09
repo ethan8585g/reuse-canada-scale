@@ -14,6 +14,7 @@ import { pricingRoutes } from './routes/pricing'
 import { invoiceRoutes } from './routes/invoices'
 import { junkRemovalRoutes } from './routes/junkRemoval'
 import { fleetRoutes } from './routes/fleet'
+import { stationRoutes } from './routes/station'
 import { renderLogin } from './pages/login'
 import { renderCustomerDashboard } from './pages/customerDashboard'
 import { renderEmployeeDashboard } from './pages/employeeDashboard'
@@ -64,6 +65,10 @@ app.route('/api/fleet', fleetRoutes)
 // ── Which build is live. The Scale House page polls this and reloads itself
 // when a newer build is deployed, because that tab stays open for days. ──
 app.get('/api/version', (c) => c.json({ build: BUILD_ID }))
+
+// ── Scale-house station setup (installer + scale-bridge), fetched by curl on
+// the Mac at the scale. Public: see src/routes/station.ts. ──
+app.route('/station', stationRoutes)
 
 // ── Config endpoint (serves safe public keys) ──
 app.get('/api/config/maps-key', (c) => {

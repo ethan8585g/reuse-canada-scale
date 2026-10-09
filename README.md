@@ -278,6 +278,22 @@ Full-featured scale house ticketing station:
 - Polls for card tap/insert completion
 - Records payment IDs and status in our database
 
+### Setting up a scale-house Mac (scale-bridge + yard camera)
+The page reaches the Mac's own hardware (yard camera via Agent DVR, silent receipt
+printing, a USB scale) through **scale-bridge** on `http://localhost:5555`. A new
+Mac has none of it; set it up once from Terminal:
+
+```
+curl -fsSL https://www.reusecanadascale.com/station/install.sh | bash
+```
+
+It installs a private Node.js, downloads scale-bridge from the site and runs it as a
+launchd service (starts at login, restarts itself), then checks Agent DVR on port
+8090 and lists anything left to do. Re-run it to update; add `-s -- --uninstall` after
+`bash` to remove it. Source: `install-scale-station.sh`. Chrome must also be allowed
+to reach the Mac: when it asks to let the site use apps on this device, click Allow
+(site settings: "Apps on device").
+
 ### Receipt Printer
 - Uses browser's native print dialog
 - Formatted for 80mm thermal receipt paper
