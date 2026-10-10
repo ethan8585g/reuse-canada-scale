@@ -1266,6 +1266,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   // ─── relay: every other screen views ───
   let camRelaySeq = -1, camRelayTimer = null, camRelayInfo = null, camRelayLast = null;
+  // Set when this computer HAS a bridge but the yard camera did not come
+  // through it -- a bridge installed for printing, or Agent DVR not set up
+  // here yet. Such a screen shows the relay, and keeps checking for its own
+  // camera so it switches over by itself once Agent DVR is running.
+  let camRelayViaBridge = false, camRelayProbeAt = 0;
   async function camFetchRelay() {
     const r = await axios.get('/api/scale-camera/frame', { params: { have: camRelaySeq, station: camStationId() }, timeout: 8000 });
     camRelayLast = r.data || {};
@@ -1313,6 +1318,34 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (camRelayTimer) clearTimeout(camRelayTimer);
     camRelayTimer = setTimeout(camRelayTick, 2000);
   }
+  // The yard camera did not come through this computer's bridge. If the scale
+  // house is sending its picture, show that rather than retrying a camera
+  // this computer may not have. False leaves the caller to retry as before.
+  async function camFallBackToRelay(why) {
+    if (camCfg.source !== 'network') return false;
+    camTeardownSource();
+    if (!(await startRelayCamera())) return false;
+    camRelayViaBridge = true;
+    camRelayProbeAt = Date.now();
+    try { logSerial('[cam] ' + why + ' Showing the scale house camera instead.'); } catch (e) {}
+    return true;
+  }
+  // Once a minute while falling back: has this computer's own camera come up?
+  async function camProbeOwnCamera() {
+    camRelayProbeAt = Date.now();
+    if (!(camCfg.url || '').trim()) return;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(function () { ctrl.abort(); }, 10000);
+      const r = await fetch(camProxyUrl('/camera/probe'), { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(t);
+      const d = await r.json();
+      if (d && d.ok && camActive && camKind === 'relay' && camRelayViaBridge) {
+        try { logSerial('[cam] yard camera now reachable on this computer -- switching to it'); } catch (e) {}
+        startCamera();
+      }
+    } catch (e) {}
+  }
   // Self-clocking like the snapshot poller, for the same reason.
   async function camRelayTick() {
     camRelayTimer = null;
@@ -1322,6 +1355,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       if (!camActive || camKind !== 'relay') return;
       camRelayShow(d);
     } catch (e) { /* one failed poll is not an outage -- the watchdog decides */ }
+    if (camRelayViaBridge && Date.now() - camRelayProbeAt > 60000) camProbeOwnCamera();
     camRelaySchedule();
   }
   function camRelayWeightText() {
@@ -1467,7 +1501,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       document.getElementById('camera-src-label').textContent = 'YARD CAM';
       // A stream that drops is a real outage; a single failed poll is not, so
       // only this mode treats onerror as a failure.
-      img.onerror = function () { if (camActive) camFail('Lost the yard camera stream.', true); };
+      img.onerror = function () {
+        if (!camActive) return;
+        // Never got a single frame: ask why (and fall back to the scale
+        // house's relay) instead of retrying blind.
+        if (!camLastFrameAt) camFailWithDiagnosis('No picture has come back from that address yet.');
+        else camFail('Lost the yard camera stream.', true);
+      };
       img.src = camProxyUrl('/camera/mjpeg');
     } else {
       camKind = 'snapshot';
@@ -1557,7 +1597,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (camRelayTimer) { clearTimeout(camRelayTimer); camRelayTimer = null; }
     // Forget the last relayed frame number, so a restart asks for a picture
     // rather than "unchanged" into an emptied buffer.
-    camRelaySeq = -1; camRelayInfo = null;
+    camRelaySeq = -1; camRelayInfo = null; camRelayViaBridge = false;
     camBufferReady = false;
     if (cameraStream) { try { cameraStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} cameraStream = null; }
     const v = document.getElementById('camera-preview');
@@ -1627,6 +1667,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     camDiagnosing = false;
     if (!camActive) return;   // operator pressed Stop while we were asking
+    if (await camFallBackToRelay(msg)) return;
+    if (!camActive) return;
     camFail(msg, true);
   }
 
