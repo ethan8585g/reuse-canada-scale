@@ -2976,46 +2976,56 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // Render the receipt as a real PDF and let CUPS print it. Built here rather
   // than in the bridge because the receipt and its photo are already in this
   // page, and scale-bridge.js is deliberately a single dependency-free file.
+  // Only sheet printers reach this path -- a thermal queue goes to ESC/POS --
+  // so the PDF is a Letter page. It used to be exactly 80mm wide and as tall
+  // as its content, and an office printer reads that as a paper size it does
+  // not have loaded: the HP stopped on every ticket with a paper-size alarm
+  // somebody had to dismiss, which is the opposite of automatic printing. A
+  // page that matches the tray gives the printer nothing to ask about.
+  const RECEIPT_SHEET = { w: 215.9, h: 279.4, margin: 12.7 };
   async function buildReceiptPdf(receipt) {
     await loadJsPdf();
-    // 80mm wide, roll-shaped. On a sheet printer that prints as a narrow strip,
-    // which is what a receipt should look like, on one sheet rather than
-    // scaled up to fill A4.
-    //
-    // Drawn TWICE: jsPDF fixes a page's height when the page is created and
-    // resizing it afterwards does not retroactively trim it, so the first pass
-    // only measures how tall the content actually came out -- the photo's
-    // aspect ratio is the part that cannot be known up front -- and the second
-    // draws it on a page cut to that height. Without this every receipt
-    // carried a hand's width of blank paper.
+    // The receipt keeps its 80mm design, drawn 1.5x so it reads comfortably
+    // on a sheet, and smaller only if a tall photo would push it onto a
+    // second page. Measured first: the photo's aspect ratio cannot be known
+    // until it has been decoded.
     const W = 80, M = 5;
-    const measured = await renderReceiptPdf(receipt, W, M, null);
-    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: [W, Math.max(60, measured + M)] });
-    await renderReceiptPdf(receipt, W, M, doc);
+    const measured = await renderReceiptPdf(receipt, W, M, null, null);
+    const sh = RECEIPT_SHEET;
+    const s = Math.min(1.5, (sh.w - sh.margin * 2) / W, (sh.h - sh.margin * 2) / (measured + M));
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'letter', orientation: 'portrait' });
+    await renderReceiptPdf(receipt, W, M, doc, { s: s, x: (sh.w - W * s) / 2, y: sh.margin });
     return doc.output('datauristring').split(',')[1];
   }
 
-  // Returns the Y the content ended at. With doc === null it measures only.
-  async function renderReceiptPdf(receipt, W, M, doc) {
+  // Lays the receipt out in its own 80mm coordinates and returns the Y it
+  // ended at; with doc === null it only measures. at = { s, x, y } places it
+  // on the page: positions, font sizes and line widths all scale together, so
+  // wrapping and right-alignment come out exactly as on the 80mm design.
+  async function renderReceiptPdf(receipt, W, M, doc, at) {
     const scratch = doc || new window.jspdf.jsPDF({ unit: 'mm', format: [W, 400] });
     const d = scratch;
+    const t = at || { s: 1, x: 0, y: 0 };
+    const X = function (v) { return t.x + v * t.s; };
+    const Y = function (v) { return t.y + v * t.s; };
+    const F = function (pt) { d.setFontSize(pt * t.s); };
     const money = function (v) { return '$' + (Number(v) || 0).toFixed(2); };
     const kg = function (v) { return (v === null || v === undefined || v === '') ? '—' : (Number(v).toFixed(1) + ' kg'); };
     let y = M + 3;
 
     const centre = function (text, size, bold) {
-      d.setFont('courier', bold ? 'bold' : 'normal'); d.setFontSize(size);
-      d.text(String(text), W / 2, y, { align: 'center' }); y += size * 0.45 + 1.2;
+      d.setFont('courier', bold ? 'bold' : 'normal'); F(size);
+      d.text(String(text), X(W / 2), Y(y), { align: 'center' }); y += size * 0.45 + 1.2;
     };
     const row = function (l, r, size, bold) {
-      d.setFont('courier', bold ? 'bold' : 'normal'); d.setFontSize(size || 8);
-      d.text(String(l), M, y);
-      d.text(String(r), W - M, y, { align: 'right' });
+      d.setFont('courier', bold ? 'bold' : 'normal'); F(size || 8);
+      d.text(String(l), X(M), Y(y));
+      d.text(String(r), X(W - M), Y(y), { align: 'right' });
       y += (size || 8) * 0.45 + 1.2;
     };
     const rule = function () {
-      d.setLineWidth(0.15); d.setLineDashPattern([0.6, 0.6], 0);
-      d.line(M, y - 1.5, W - M, y - 1.5); d.setLineDashPattern([], 0); y += 1.5;
+      d.setLineWidth(0.15 * t.s); d.setLineDashPattern([0.6 * t.s, 0.6 * t.s], 0);
+      d.line(X(M), Y(y - 1.5), X(W - M), Y(y - 1.5)); d.setLineDashPattern([], 0); y += 1.5;
     };
 
     centre('REUSE CANADA', 13, true);
@@ -3035,11 +3045,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       // Plate, colour, make and body together overflow one 80mm line, and a
       // slice() produced "White Nissan Sed" on the real receipt. Wrapping keeps
       // every part readable, which is the whole point of printing it.
-      d.setFont('courier', 'normal'); d.setFontSize(8);
-      const lines = d.splitTextToSize(veh, W - M * 2 - 18);
-      d.text('Vehicle', M, y);
+      d.setFont('courier', 'normal'); F(8);
+      const lines = d.splitTextToSize(veh, (W - M * 2 - 18) * t.s);
+      d.text('Vehicle', X(M), Y(y));
       lines.forEach(function (ln, i) {
-        d.text(ln, W - M, y + i * 3.8, { align: 'right' });
+        d.text(ln, X(W - M), Y(y + i * 3.8), { align: 'right' });
       });
       y += lines.length * 3.8 + 0.8;
     }
@@ -3069,9 +3079,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         });
         const iw = W - M * 2;
         const ih = Math.round(dims.h * (iw / dims.w));
-        d.setFont('courier', 'normal'); d.setFontSize(6);
-        d.text('TRUCK AT WEIGH-IN', W / 2, y, { align: 'center' }); y += 2.5;
-        d.addImage(receipt.photo_in, 'JPEG', M, y, iw, ih);
+        d.setFont('courier', 'normal'); F(6);
+        d.text('TRUCK AT WEIGH-IN', X(W / 2), Y(y), { align: 'center' }); y += 2.5;
+        d.addImage(receipt.photo_in, 'JPEG', X(M), Y(y), iw * t.s, ih * t.s);
         y += ih + 2;
       } catch (e) {
         agentLog('receipt photo skipped: ' + e.message);
