@@ -4,6 +4,11 @@
 // raw bytes to the browser over Server-Sent Events. Lets the Scale House page
 // work in any browser (Safari, Chrome, Firefox) — not just ones with Web Serial.
 //
+// On a scale-house Mac this is normally not run by hand: install-scale-station.sh
+// (served by the site at /station/install.sh, this file at
+// /station/scale-bridge.mjs) installs it as a launchd service that starts at
+// login and restarts itself. Logs: ~/Library/Logs/ReuseCanada/scale-bridge.log
+//
 // Usage:
 //   node scale-bridge.js                          # auto-detect port, 9600 8N1
 //   PORT_PATH=/dev/cu.usbserial-1410 node scale-bridge.js
@@ -359,14 +364,22 @@ function closeStream() {
 // one more thread. The real fix is to stop reopening a device that has never
 // produced a byte (or to talk to the port without fs), which is a change to the
 // scale path and wants its own testing.
+// Said once per stretch without a device, not on every 3s poll. The installer
+// runs this as an always-on launchd service whose output goes to a log file,
+// and a station whose scale is on Web Bluetooth never has a serial device at
+// all: repeating the line would add ~29,000 lines a day and bury anything that
+// actually matters.
+let saidNoDevice = false;
 function startReading() {
   closeStream();
   const path = chooseDefaultPort();
   if (!path) {
-    console.log('[bridge] No serial device found. Plug in your USB-RS232 adapter.');
+    if (!saidNoDevice) console.log('[bridge] No serial device found. Plug in your USB-RS232 adapter (not needed if the scale connects over Bluetooth in Chrome).');
+    saidNoDevice = true;
     setTimeout(startReading, 3000);
     return;
   }
+  saidNoDevice = false;
   configurePort(path);
   try {
     stream = fs.createReadStream(path, { highWaterMark: 256 });
@@ -892,6 +905,20 @@ const server = http.createServer(async (req, res) => {
 
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
+});
+
+// A second copy is the usual cause: one left running in a Terminal window from
+// before this Mac had the installed service, or the other way round. Say so in
+// words instead of a stack trace. Exiting is right either way -- under launchd
+// the service is restarted a few seconds later and takes the port as soon as
+// the other copy is closed.
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`[bridge] Port ${HTTP_PORT} is already in use -- another scale-bridge is probably running (check for an open Terminal window). Exiting.`);
+  } else {
+    console.error('[bridge] server error:', err && err.message);
+  }
+  process.exit(1);
 });
 
 server.listen(HTTP_PORT, '127.0.0.1', () => {
