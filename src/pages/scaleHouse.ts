@@ -191,6 +191,18 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     </div>
   </div>
 
+  <!-- ═══════ YARD MATERIAL ═══════ -->
+  <div id="yard-material-bar" class="mb-4 bg-white rounded-xl shadow-card border border-gray-100 px-4 py-3 flex items-center gap-3 flex-wrap">
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="w-8 h-8 rounded-lg bg-rc-green/10 flex items-center justify-center"><i class="fas fa-layer-group text-rc-green"></i></div>
+      <div>
+        <div class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Yard material</div>
+        <div class="text-[10px] text-gray-400">every new ticket is written as</div>
+      </div>
+    </div>
+    <div id="yard-material-pills" class="flex flex-wrap gap-1.5 flex-1"><span class="text-xs text-gray-400">Loading...</span></div>
+  </div>
+
   <!-- ═══════ AUTO-CAPTURE PROMPT (non-modal banner) ═══════ -->
   <div id="auto-capture-prompt" class="hidden mb-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl shadow-lg p-4 flex items-center justify-between flex-wrap gap-3">
     <div class="flex items-center gap-3">
@@ -245,6 +257,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     <button id="print-failed-retry" onclick="retryFailedPrint()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg btn-press flex-shrink-0"><i class="fas fa-redo mr-1"></i> Reprint</button>
     <button onclick="dismissPrintFailure()" class="text-red-400 hover:text-red-600 flex-shrink-0"><i class="fas fa-times"></i></button>
   </div>
+
+  <!-- ═══════ SQUARE PAYMENT CARD ═══════ -->
+  <div id="square-pay-card" class="hidden mb-4 space-y-2"></div>
 
   <!-- ═══════ PRINT TRIGGER CARD ═══════ -->
   <div id="print-trigger-card" class="hidden mb-4 bg-gradient-to-r from-orange-500 to-yellow-500 text-white rounded-xl shadow-xl ring-1 ring-orange-400/20 p-5">
@@ -664,11 +679,27 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
       <!-- Square Terminal -->
       <div class="bg-white rounded-xl shadow-card border border-gray-100">
-        <div class="p-3 border-b border-gray-100">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square</h3>
+        <div class="p-3 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square Terminal</h3>
+          <span id="sq-env-badge" class="hidden text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700">Sandbox</span>
         </div>
-        <div class="p-3">
-          <div class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i> Payment amounts sent to Square Reader.</div>
+        <div class="p-3 space-y-2">
+          <div id="sq-account" class="text-[11px] text-gray-500 leading-snug">Checking Square...</div>
+          <div class="grid grid-cols-2 gap-1">
+            <button onclick="setSquareAuto(0)" id="sq-auto-0" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Off</button>
+            <button onclick="setSquareAuto(1)" id="sq-auto-1" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Auto-charge</button>
+          </div>
+          <div id="sq-auto-hint" class="text-[10px] text-gray-400 leading-snug"></div>
+          <div>
+            <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Terminal</div>
+            <select id="sq-device" onchange="setSquareDevice()" class="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white"><option value="">Loading...</option></select>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="loadSquareDevices()" class="flex-1 px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"><i class="fas fa-sync-alt mr-1"></i>Refresh</button>
+            <button id="sq-pair-btn" onclick="pairSquareTerminal()" class="hidden flex-1 px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"><i class="fas fa-link mr-1"></i>Pair a Terminal</button>
+          </div>
+          <div id="sq-pair-code" class="hidden text-[11px] bg-blue-50 border border-blue-100 rounded-lg p-2 text-blue-800 leading-snug"></div>
+          <div id="sq-warn" class="hidden text-[10px] text-red-600 leading-snug"></div>
         </div>
       </div>
 
@@ -731,6 +762,17 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <button onclick="cancelMerge()" class="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Cancel</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Merge two live tickets (one truck that ended up with two weigh-ins) -->
+  <div id="live-merge-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-object-group mr-2 text-rc-orange"></i>Merge live tickets</h3>
+        <button onclick="closeModal('live-merge-modal')" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div class="p-6 space-y-4" id="live-merge-body"></div>
     </div>
   </div>
 
@@ -3907,7 +3949,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       closeAssignModal();
       loadTicketDetail(ticketId);
       loadOpenTickets(); loadCompletedToday(); loadStats();
-      autoPrintReceipt(ticketId);
+      autoPrintReceipt(ticketId).then(function () { squareChargeAfterClose(ticketId); });
     } catch (err) {
       alert(err.response?.data?.error || 'Failed');
     } finally {
@@ -3956,7 +3998,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     try {
       const photo = autoCapturePhoto('weigh-out');
       const res = await axios.post('/api/scale-tickets/' + pendingMergeTicketId + '/merge-out', { weight: lastPrintWeight, photo: photo || null });
-      loadTicketDetail(pendingMergeTicketId); autoPrintReceipt(pendingMergeTicketId);
+      const mergedId = pendingMergeTicketId;
+      loadTicketDetail(mergedId);
+      autoPrintReceipt(mergedId).then(function () { squareChargeAfterClose(mergedId); });
       loadOpenTickets(); loadCompletedToday(); loadStats();
       pendingMergeTicketId = null; pendingMergeTicket = null;
       // Reset weighbridge display
@@ -4082,7 +4126,70 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       b.className = 'px-1 py-1.5 text-[10px] font-semibold rounded-lg border ' +
         (m === mode ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50');
     });
+    renderYardMaterial();
   }
+
+  // ── Yard material ──
+  // The material the yard is taking right now. It lives in the agent's
+  // settings row on the server, so every station and both ticket paths (the
+  // agent and the manual capture button) write new tickets with it.
+  function yardMaterial() { return (agentSettings && agentSettings.material) || 'mixed'; }
+
+  function renderYardMaterial() {
+    const box = document.getElementById('yard-material-pills');
+    if (!box) return;
+    const list = (pricingData || []).filter(function (p) { return p.is_active === undefined || Number(p.is_active) === 1; });
+    if (!list.length) { box.innerHTML = '<span class="text-xs text-gray-400">No materials priced</span>'; return; }
+    const cur = yardMaterial();
+    box.innerHTML = list.map(function (p) {
+      const on = p.material_type === cur;
+      return '<button onclick="setYardMaterial(&quot;' + escAttr(p.material_type) + '&quot;)" ' +
+        'class="px-3.5 py-2 rounded-full text-xs font-semibold border-2 btn-press transition-colors ' +
+        (on ? 'border-rc-green bg-rc-green text-white shadow-sm' : 'border-gray-200 text-gray-600 hover:border-rc-green hover:text-rc-green') + '">' +
+        (on ? '<i class="fas fa-check mr-1"></i>' : '') + escHtml(getMaterialLabel(p.material_type)) +
+        ' <span class="font-mono ' + (on ? 'text-white/80' : 'text-gray-400') + '">$' + parseFloat(p.price_per_kg).toFixed(2) + '/kg</span></button>';
+    }).join('');
+  }
+
+  async function setYardMaterial(type) {
+    if (!type || type === yardMaterial()) return;
+    const label = getMaterialLabel(type);
+    // Trucks already weighed in were written with the old material. They are
+    // not priced until they weigh out, so moving them over is safe -- but it is
+    // the operator's call, because one of them may really be the old load.
+    const others = (openTickets || []).filter(function (t) { return (t.tire_type || 'mixed') !== type; });
+    let applyOpen = false;
+    if (others.length) {
+      applyOpen = confirm('Switch the yard to ' + label + '.' +
+        ' There ' + (others.length === 1 ? 'is 1 truck' : 'are ' + others.length + ' trucks') + ' already in the yard on another material' +
+        ' (' + others.map(function (t) { return t.ticket_number; }).join(', ') + ').' +
+        ' OK = change ' + (others.length === 1 ? 'it' : 'them') + ' to ' + label + ' too.' +
+        ' Cancel = only new tickets.');
+    }
+    try {
+      const res = await axios.put('/api/scale-agent/material', { material: type, apply_to_open: applyOpen });
+      agentSettings = res.data.settings;
+      renderYardMaterial();
+      agentLog('yard material: ' + label + (res.data.updated_open ? ' (' + res.data.updated_open + ' open ticket' + (res.data.updated_open === 1 ? '' : 's') + ' moved too)' : ''));
+      if (res.data.updated_open) loadOpenTickets();
+    } catch (e) {
+      const status = e.response && e.response.status;
+      alert(status === 403
+        ? 'Only an admin, manager or yard operator can change the yard material.'
+        : 'Could not change the yard material: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      renderYardMaterial();
+    }
+  }
+
+  // Another station (or a phone) may change the yard material; keep this
+  // tab's bar honest without touching the rest of the agent's state.
+  setInterval(async function () {
+    try {
+      const res = await axios.get('/api/scale-agent/settings');
+      const m = res.data && res.data.settings && res.data.settings.material;
+      if (m && agentSettings && m !== agentSettings.material) { agentSettings.material = m; renderYardMaterial(); }
+    } catch (e) { /* next tick */ }
+  }, 60000);
 
   async function loadAgentSettings() {
     try {
@@ -4421,7 +4528,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         const res = await axios.post('/api/scale-tickets/print-trigger', {
           weight: p.weight,
           photo: p.photo || null,
-          material: (agentSettings && agentSettings.material) || 'mixed',
+          // No material: the server writes the yard material, which is the
+          // one source of truth even if this tab's copy of it is stale.
           source: 'agent',
           plate: (p.plate && p.plate.plate) || '',
           plate_confidence: (p.plate && p.plate.confidence) || 0,
@@ -4454,6 +4562,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         // on_close mode -- after the assign modal had already opened on top
         // of it. Printing now finishes before the screen changes underneath.
         await autoPrintReceipt(d.ticket.id);
+        // Then the amount owed goes to the Square Terminal -- after the
+        // receipt, so the driver has the paper in hand when the Terminal
+        // asks for the card. Not awaited: the scale loop never waits on a tap.
+        squareChargeAfterClose(d.ticket.id);
         // Deliberately no ticket window here. In a hands-off yard a window
         // that opens by itself after every close is one more thing to dismiss
         // -- and its Print button is what got pressed into an empty tray. The
@@ -4519,6 +4631,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     return (agentState === 'idle' || agentState === 'cooldown')
       && !agentPending
       && !activeModalId
+      && !squareChargeLive()
       && (!card || card.classList.contains('hidden'))
       && (!banner || banner.style.display === 'none');
   }
@@ -4699,10 +4812,94 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           '<button onclick="connectToTruckOnScale(' + t.id + ')" class="w-full bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl btn-press flex items-center justify-center gap-2 mb-2 text-sm"><i class="fas fa-truck"></i> Connect to Truck on Scale</button>' +
           '<div class="flex gap-2">' +
             '<button onclick="loadTicketDetail(' + t.id + ')" class="flex-1 px-2 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg"><i class="fas fa-eye mr-1"></i>View</button>' +
+            (openTickets.length > 1 ? '<button onclick="openLiveMerge(' + t.id + ')" class="flex-1 px-2 py-1.5 bg-orange-50 hover:bg-orange-100 text-rc-orange text-xs font-semibold rounded-lg" title="This truck has two live tickets: merge them into one"><i class="fas fa-object-group mr-1"></i>Merge</button>' : '') +
             '<button onclick="openVoidModal(' + t.id + ',\\'' + safeNum + '\\')" class="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-lg" title="Void ticket"><i class="fas fa-ban"></i></button>' +
           '</div>' +
         '</div>';
     });
+  }
+
+  // ── Merge two live tickets ──
+  // When one truck ends up with two live tickets (its weigh-out was taken as
+  // a second weigh-in), the earlier one is the weigh-in and the later one's
+  // weight is the weigh-out. The operator can swap them before confirming.
+  let liveMerge = null; // { inId, outId }
+
+  function openLiveMerge(ticketId) {
+    const others = openTickets.filter(function (t) { return t.id !== ticketId; });
+    if (!others.length) { alert('There is no other live ticket to merge with.'); return; }
+    liveMerge = { from: ticketId, partner: others.length === 1 ? others[0].id : null };
+    if (liveMerge.partner) orientLiveMerge();
+    renderLiveMerge();
+    openModal('live-merge-modal');
+  }
+
+  function orientLiveMerge() {
+    const a = openTickets.find(function (t) { return t.id === liveMerge.from; });
+    const b = openTickets.find(function (t) { return t.id === liveMerge.partner; });
+    if (!a || !b) return;
+    const aFirst = new Date(a.weight_in_at || a.created_at).getTime() <= new Date(b.weight_in_at || b.created_at).getTime();
+    liveMerge.inId = aFirst ? a.id : b.id;
+    liveMerge.outId = aFirst ? b.id : a.id;
+  }
+
+  function pickLiveMergePartner(id) { liveMerge.partner = id; orientLiveMerge(); renderLiveMerge(); }
+  function swapLiveMerge() { const x = liveMerge.inId; liveMerge.inId = liveMerge.outId; liveMerge.outId = x; renderLiveMerge(); }
+
+  function renderLiveMerge() {
+    const body = document.getElementById('live-merge-body');
+    const kg = function (v) { return parseFloat(v || 0).toLocaleString('en-CA', { minimumFractionDigits: 1 }) + ' kg'; };
+    const when = function (t) { return new Date(t.weight_in_at || t.created_at).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }); };
+    if (!liveMerge.partner) {
+      body.innerHTML = '<p class="text-sm text-gray-600">Which ticket is the same truck?</p>' +
+        openTickets.filter(function (t) { return t.id !== liveMerge.from; }).map(function (t) {
+          return '<div onclick="pickLiveMergePartner(' + t.id + ')" class="border-2 border-gray-200 rounded-xl p-3 hover:border-rc-orange cursor-pointer flex items-center justify-between">' +
+            '<div><div class="font-mono font-bold text-rc-green">' + escHtml(t.ticket_number) + '</div><div class="text-xs text-gray-500">' + escHtml(t.company_name || 'Unassigned') + ' &middot; in at ' + when(t) + '</div></div>' +
+            '<div class="font-mono font-bold text-sm">' + kg(t.weight_in) + '</div></div>';
+        }).join('');
+      return;
+    }
+    const a = openTickets.find(function (t) { return t.id === liveMerge.inId; });
+    const b = openTickets.find(function (t) { return t.id === liveMerge.outId; });
+    if (!a || !b) { body.innerHTML = '<p class="text-sm text-red-600">One of these tickets is no longer live. Close this and look again.</p>'; return; }
+    const net = parseFloat(a.weight_in) - parseFloat(b.weight_in);
+    const pm = pricingData.find(function (p) { return p.material_type === (a.tire_type || 'mixed'); });
+    const ppk = pm ? parseFloat(pm.price_per_kg) : 0.14;
+    const sub = Math.round(Math.max(net, 0) * ppk * 100) / 100;
+    const total = Math.round((sub + Math.round(sub * 0.05 * 100) / 100) * 100) / 100;
+    body.innerHTML =
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div class="bg-indigo-50 rounded-xl p-3"><div class="text-[10px] font-bold text-indigo-500 uppercase">Weigh-in (kept)</div><div class="font-mono font-bold text-rc-green">' + escHtml(a.ticket_number) + '</div><div class="text-lg font-bold font-mono text-indigo-700">' + kg(a.weight_in) + '</div><div class="text-xs text-indigo-500">at ' + when(a) + '</div></div>' +
+        '<div class="bg-orange-50 rounded-xl p-3"><div class="text-[10px] font-bold text-orange-500 uppercase">Weigh-out (from)</div><div class="font-mono font-bold text-gray-600">' + escHtml(b.ticket_number) + '</div><div class="text-lg font-bold font-mono text-orange-700">' + kg(b.weight_in) + '</div><div class="text-xs text-orange-500">at ' + when(b) + '</div></div>' +
+      '</div>' +
+      '<button onclick="swapLiveMerge()" class="w-full py-2 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"><i class="fas fa-right-left mr-1"></i>Swap weigh-in and weigh-out</button>' +
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-[10px] font-bold text-green-600 uppercase">Net</div><div class="text-xl font-bold font-mono text-green-700">' + kg(net) + '</div></div>' +
+        '<div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-[10px] font-bold text-green-600 uppercase">Total (' + escHtml(getMaterialLabel(a.tire_type)) + ')</div><div class="text-xl font-bold font-mono text-green-700">$' + total.toFixed(2) + '</div></div>' +
+      '</div>' +
+      (net < 0 ? '<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2"><i class="fas fa-triangle-exclamation mr-1"></i>The weigh-out is heavier than the weigh-in, so this bills $0. If the order is backwards, press Swap.</div>' : '') +
+      '<p class="text-xs text-gray-500">' + escHtml(a.ticket_number) + ' is closed and printed; ' + escHtml(b.ticket_number) + ' is voided as merged into it.</p>' +
+      '<div class="flex gap-3"><button onclick="confirmLiveMerge()" class="flex-1 bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-object-group mr-1"></i>Merge and close</button>' +
+      '<button onclick="closeModal(&quot;live-merge-modal&quot;)" class="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Cancel</button></div>';
+  }
+
+  async function confirmLiveMerge() {
+    if (!liveMerge || !liveMerge.inId || !liveMerge.outId) return;
+    const m = liveMerge;
+    closeModal('live-merge-modal'); showLoading('Merging...');
+    try {
+      const res = await axios.post('/api/scale-tickets/merge-live', { in_id: m.inId, out_id: m.outId });
+      liveMerge = null;
+      agentLog('merged ' + res.data.voided_ticket_number + ' into ' + res.data.ticket_number + ', net ' + Number(res.data.net_weight).toFixed(1) + ' kg');
+      hideLoading();
+      loadOpenTickets(); loadCompletedToday(); loadStats();
+      // Same finish as any other close: receipt first, then the Terminal.
+      autoPrintReceipt(res.data.id).then(function () { squareChargeAfterClose(res.data.id); });
+    } catch (err) {
+      hideLoading();
+      alert((err.response && err.response.data && err.response.data.error) || 'Merge failed');
+      loadOpenTickets();
+    }
   }
 
   function toggleLiveCardCollapse(ticketId) {
@@ -5053,7 +5250,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         '<div class="bg-gray-50 rounded-xl p-4 space-y-2"><div class="flex justify-between text-sm"><span class="text-gray-500">Customer</span><span class="font-semibold">'+escHtml(t.company_name||'Walk-in')+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Material</span><span class="font-semibold">'+escHtml(getMaterialLabel(t.tire_type))+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Status</span><span class="font-bold '+(t.status==='voided'?'text-red-600':'text-green-600')+'">'+escHtml((t.status||'').replace(/_/g,' ').toUpperCase())+'</span></div>'+(t.vehicle_tare_used?'<div class="flex justify-between text-sm"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>':'')+'</div>' +
         '<div class="grid grid-cols-3 gap-3"><div class="bg-indigo-50 rounded-xl p-3 text-center"><div class="text-xs text-indigo-500 font-semibold">GROSS</div><div class="text-lg font-bold font-mono text-indigo-700">'+(t.weight_in?parseFloat(t.weight_in).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-orange-50 rounded-xl p-3 text-center"><div class="text-xs text-orange-500 font-semibold">TARE</div><div class="text-lg font-bold font-mono text-orange-700">'+(t.weight_out?parseFloat(t.weight_out).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-xs text-green-500 font-semibold">NET</div><div class="text-lg font-bold font-mono text-green-700">'+parseFloat(netW).toLocaleString('en-CA',{minimumFractionDigits:1})+' kg</div></div></div>' +
         (t.grand_total ? '<div class="bg-gradient-to-r from-rc-green/10 to-green-50 rounded-xl p-4"><div class="grid grid-cols-2 gap-2 text-sm"><div class="flex justify-between"><span class="text-gray-500">Rate</span><span class="font-mono">$'+parseFloat(t.price_per_kg||0).toFixed(2)+'/kg</span></div><div class="flex justify-between"><span class="text-gray-500">Subtotal</span><span class="font-mono">$'+parseFloat(t.total_amount||0).toFixed(2)+'</span></div><div class="flex justify-between"><span class="text-gray-500">GST 5%</span><span class="font-mono">$'+parseFloat(t.tax_amount||0).toFixed(2)+'</span></div><div class="flex justify-between border-t pt-1"><span class="font-bold">TOTAL</span><span class="font-bold text-lg text-rc-green font-mono">$'+parseFloat(t.grand_total).toFixed(2)+'</span></div></div></div>' : '') +
-        (t.status === 'completed' ? '<div class="flex gap-3"><button onclick="sendToSquare('+t.id+')" class="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-credit-card"></i> Square</button><button onclick="recordCash('+t.id+')" class="px-4 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-money-bill-wave"></i> Cash</button><button onclick="printReceipt('+t.id+')" class="px-4 py-3 bg-gray-700 text-white font-bold rounded-xl hover:bg-gray-800 btn-press flex items-center justify-center gap-2"><i class="fas fa-print"></i></button>'+editBtn+'</div>' : '') +
+        (t.status === 'completed' ? '<div class="flex gap-3">'+(t.payment_status !== 'paid' ? '<button onclick="sendToSquare('+t.id+')" class="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-credit-card"></i> Square</button><button onclick="recordCash('+t.id+')" class="px-4 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-money-bill-wave"></i> Cash</button>' : '<div class="flex-1 px-4 py-3 bg-green-50 text-green-700 font-bold rounded-xl flex items-center justify-center gap-2"><i class="fas fa-check-circle"></i> Paid'+(t.payment_method ? ' by '+escHtml(t.payment_method) : '')+'</div>')+'<button onclick="printReceipt('+t.id+')" class="px-4 py-3 bg-gray-700 text-white font-bold rounded-xl hover:bg-gray-800 btn-press flex items-center justify-center gap-2"><i class="fas fa-print"></i></button>'+editBtn+'</div>' : '') +
         auditHtml + '</div>';
       openModal('detail-modal');
     } catch(err) { alert('Failed to load ticket'); }
@@ -5125,6 +5322,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       else div.innerHTML = '<div class="space-y-1">' + pricingData.map(p => '<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span class="text-gray-600">'+escHtml(getMaterialLabel(p.material_type))+'</span><span class="font-mono font-semibold text-gray-800">$'+parseFloat(p.price_per_kg).toFixed(2)+'/kg</span></div>').join('') + '</div>';
       // Keep ticket-creation dropdowns in sync with the current material list.
       refreshMaterialDropdowns();
+      renderYardMaterial();
     } catch(err) {}
   }
 
@@ -5267,60 +5465,263 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     finally { hideLoading(); }
   }
 
-  // Payments. After dispatching to Square Terminal we poll the checkout
-  // until it resolves to COMPLETED/CANCELED/CANCEL_REQUESTED, with a 90s
-  // overall timeout — otherwise the operator has no signal whether the tap
-  // succeeded.
-  async function sendToSquare(ticketId) {
-    try {
-      const res = await axios.get('/api/scale-tickets/'+ticketId);
-      const t = res.data.ticket, total = parseFloat(t.grand_total)||0;
-      if (total <= 0) { alert('No amount'); return; }
-      showLoading('Sending to Square...');
-      const sqRes = await axios.post('/api/square/terminal-checkout', { amount_cents: Math.round(total*100), ticket_number: t.ticket_number, customer_name: t.company_name||'Walk-in', note: 'Scale Ticket '+t.ticket_number });
-      if (!sqRes.data.success) { hideLoading(); alert('Square failed to accept the checkout'); return; }
-      const checkoutId = sqRes.data.checkout_id;
-      await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'pending', payment_method:'card', square_checkout_id: checkoutId });
+  // ══════════════════════════════════════════
+  // SQUARE TERMINAL
+  // ══════════════════════════════════════════
+  // The server decides the amount (the ticket's grand_total) and Square tells
+  // the server when the card goes through. This page only asks for a charge
+  // and shows where it stands -- so a reload, or a tap long after the page
+  // stopped looking, can never lose a payment.
+  let squareSettings = null;
+  let squareCharges = [];
+  let squareNotices = {};     // ticket id -> why nothing was sent to the Terminal
+  let squareDismissed = {};   // checkout row id -> hidden by the operator
+  let squareLastStatus = {};  // checkout row id -> status last seen
+  let squarePollTimer = null;
+  const SQUARE_LIVE = ['PENDING', 'IN_PROGRESS', 'CANCEL_REQUESTED'];
 
-      const result = await pollSquareCheckout(checkoutId, total);
-      hideLoading();
-      if (result.status === 'COMPLETED') {
-        const paymentId = (result.payment_ids && result.payment_ids[0]) || null;
-        await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'paid', payment_method:'card', square_checkout_id: checkoutId, square_payment_id: paymentId });
-        // Deliberately NO print here. The receipt is printed once, when the
-        // truck weighs out and leaves -- payment is taken seconds later at the
-        // same window, so printing again just hands the driver a second copy of
-        // a ticket they are already holding. The Print button on the ticket is
-        // still there when somebody actually wants another one.
-        closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement();
-      } else if (result.status === 'CANCELED' || result.status === 'CANCEL_REQUESTED') {
-        alert('Square checkout was cancelled. Ticket left unpaid.');
-      } else if (result.status === 'TIMED_OUT') {
-        if (confirm('Square has not confirmed the tap after 90s. Cancel the checkout?')) {
-          try { await axios.post('/api/square/terminal-checkout/'+checkoutId+'/cancel'); } catch(e) {}
-        }
-      } else {
-        alert('Square ended in status: ' + result.status);
-      }
-    } catch(err) { hideLoading(); alert(err.response?.data?.error || 'Square failed'); }
+  function money(n) { return '$' + (Number(n) || 0).toFixed(2); }
+  function squareChargeLive() { return squareCharges.some(function (c) { return SQUARE_LIVE.indexOf(c.status) >= 0; }); }
+
+  async function loadSquareSettings() {
+    try {
+      const res = await axios.get('/api/square/settings');
+      squareSettings = res.data;
+      applySquareSettingsToUI();
+      if (squareSettings.token_ready) { loadSquareAccount(); loadSquareDevices(); }
+    } catch (e) {
+      const acct = document.getElementById('sq-account');
+      if (acct) acct.textContent = 'Square settings unavailable.';
+    }
+    refreshSquareCharges();
   }
 
-  async function pollSquareCheckout(checkoutId, total) {
-    const startedAt = Date.now();
-    const TIMEOUT_MS = 90_000;
-    const POLL_MS = 2_000;
-    showLoading('Waiting for tap... ($'+total.toFixed(2)+')');
-    while (Date.now() - startedAt < TIMEOUT_MS) {
-      try {
-        const r = await axios.get('/api/square/terminal-checkout/'+checkoutId);
-        const status = r.data.status;
-        if (status && status !== 'PENDING' && status !== 'IN_PROGRESS') {
-          return { status, payment_ids: r.data.payment_ids };
-        }
-      } catch (e) { /* keep polling — transient errors are common during tap */ }
-      await new Promise(r => setTimeout(r, POLL_MS));
+  function applySquareSettingsToUI() {
+    if (!squareSettings) return;
+    const st = squareSettings.settings || {};
+    const on = Number(st.auto_charge) ? 1 : 0;
+    [0, 1].forEach(function (n) {
+      const b = document.getElementById('sq-auto-' + n);
+      if (b) b.className = 'px-1 py-1.5 text-[10px] font-semibold rounded-lg border ' +
+        (n === on ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50');
+    });
+    const min = money((Number(st.min_charge_cents) || 0) / 100);
+    const hint = document.getElementById('sq-auto-hint');
+    if (hint) hint.textContent = on
+      ? 'Every closed ticket of ' + min + ' or more goes to the Terminal as soon as its receipt prints. Under ' + min + ', take cash.'
+      : 'Off. Use the Square button on a ticket to send it to the Terminal by hand.';
+    const badge = document.getElementById('sq-env-badge');
+    if (badge) badge.classList.toggle('hidden', squareSettings.environment !== 'sandbox');
+    if (['admin', 'manager'].includes(currentUserRole)) document.getElementById('sq-pair-btn')?.classList.remove('hidden');
+    const warn = document.getElementById('sq-warn');
+    const problems = [];
+    if (!squareSettings.token_ready) problems.push('SQUARE_ACCESS_TOKEN is not set on the Cloudflare Pages project, so nothing can reach Square.');
+    const shape = squareSettings.token_shape;
+    if (shape && !shape.looks_right) problems.push('The SQUARE_ACCESS_TOKEN saved in Cloudflare does not look like a Square production access token (it is ' + shape.length + ' characters' + (shape.has_whitespace ? ' and contains spaces or line breaks' : '') + '; a real one starts with EAAA and is about 64). Save it again with wrangler pages secret put, then redeploy.');
+    if (squareSettings.token_ready && !st.device_id) problems.push('No Terminal chosen.');
+    if (!squareSettings.webhook_ready) problems.push('Webhook not set up (SQUARE_WEBHOOK_SIGNATURE_KEY). Payments still record while this page is open; set it up so a tap is never missed.');
+    if (warn) { warn.innerHTML = problems.map(escHtml).join('<br>'); warn.classList.toggle('hidden', !problems.length); }
+  }
+
+  async function loadSquareAccount() {
+    const el = document.getElementById('sq-account');
+    try {
+      const res = await axios.get('/api/square/account');
+      const locs = (res.data.locations || []).map(function (l) { return l.name; }).join(', ');
+      // Shown so anyone at the station can see the money goes to the right
+      // business before it is turned on.
+      el.innerHTML = 'Charging to <b class="text-gray-700">' + escHtml(res.data.business_name || 'unknown account') + '</b>' +
+        (locs ? ' &middot; ' + escHtml(locs) : '');
+    } catch (e) {
+      el.innerHTML = '<span class="text-red-600">Square rejected the access token: ' +
+        escHtml((e.response && e.response.data && e.response.data.error) || e.message) + '</span>';
     }
-    return { status: 'TIMED_OUT' };
+  }
+
+  async function loadSquareDevices() {
+    const sel = document.getElementById('sq-device');
+    if (!sel) return;
+    const cur = squareSettings && squareSettings.settings ? squareSettings.settings.device_id : null;
+    const curName = squareSettings && squareSettings.settings ? squareSettings.settings.device_name : null;
+    try {
+      const res = await axios.get('/api/square/devices');
+      const devs = res.data.devices || [];
+      let html = '<option value="">' + (devs.length ? 'Choose a Terminal...' : 'No paired Terminal yet') + '</option>';
+      let found = false;
+      devs.forEach(function (d) {
+        if (d.device_id === cur) found = true;
+        html += '<option value="' + escAttr(d.device_id) + '"' + (d.device_id === cur ? ' selected' : '') + '>' + escHtml(d.name) + '</option>';
+      });
+      if (cur && !found) html += '<option value="' + escAttr(cur) + '" selected>' + escHtml(curName || 'Saved Terminal') + ' (not found)</option>';
+      sel.innerHTML = html;
+    } catch (e) {
+      sel.innerHTML = '<option value="">Could not list Terminals</option>';
+    }
+  }
+
+  async function saveSquareSettings(patch) {
+    try {
+      const res = await axios.put('/api/square/settings', patch);
+      squareSettings.settings = res.data.settings;
+      applySquareSettingsToUI();
+      return true;
+    } catch (e) {
+      alert('Could not change the Square setting: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      applySquareSettingsToUI(); loadSquareDevices();
+      return false;
+    }
+  }
+
+  async function setSquareAuto(on) {
+    if (await saveSquareSettings({ auto_charge: on ? 1 : 0 })) agentLog('Square auto-charge ' + (on ? 'on' : 'off'));
+  }
+
+  async function setSquareDevice() {
+    const sel = document.getElementById('sq-device');
+    const id = sel.value;
+    const name = id ? sel.options[sel.selectedIndex].text : null;
+    const patch = { device_id: id || null, device_name: name };
+    // A Terminal cannot be unselected while auto-charge is on.
+    if (!id) patch.auto_charge = 0;
+    if (await saveSquareSettings(patch)) agentLog('Square Terminal: ' + (name || 'none'));
+  }
+
+  async function pairSquareTerminal() {
+    const box = document.getElementById('sq-pair-code');
+    try {
+      const res = await axios.post('/api/square/device-code', { name: 'Scale House Terminal' });
+      box.innerHTML = 'On the Square Terminal choose <b>Sign in</b> then <b>Use a device code</b> and enter:' +
+        '<div class="text-xl font-mono font-bold tracking-widest text-center my-1">' + escHtml(res.data.code || '?') + '</div>' +
+        'Then press Refresh and pick it from the list. The code expires in 5 minutes.';
+      box.classList.remove('hidden');
+    } catch (e) {
+      alert('Could not create a pairing code: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+    }
+  }
+
+  // Called once a ticket has closed and its receipt has printed.
+  async function squareChargeAfterClose(ticketId) {
+    if (!squareSettings || !squareSettings.settings || !Number(squareSettings.settings.auto_charge)) return;
+    await requestSquareCharge(ticketId, 'auto');
+  }
+
+  async function requestSquareCharge(ticketId, source) {
+    try {
+      const res = await axios.post('/api/square/charge/' + ticketId, { source: source });
+      const d = res.data;
+      delete squareNotices[ticketId];
+      if (d.ok) {
+        agentLog('sent ' + money(d.checkout.amount) + ' to the Square Terminal' + (d.reused ? ' (already on it)' : ''));
+      } else if (d.reason !== 'auto_off') {
+        agentLog('Square: ' + d.message);
+        squareNotices[ticketId] = { text: d.message, reason: d.reason };
+      }
+      return d;
+    } catch (e) {
+      const msg = (e.response && e.response.data && (e.response.data.message || e.response.data.error)) || e.message;
+      agentLog('Square charge failed: ' + msg);
+      squareNotices[ticketId] = { text: 'Could not send to the Square Terminal: ' + msg, reason: 'error' };
+      return null;
+    } finally {
+      refreshSquareCharges();
+    }
+  }
+
+  // The hand-pressed Square button on a ticket.
+  async function sendToSquare(ticketId) {
+    const d = await requestSquareCharge(ticketId, 'manual');
+    if (d && d.ok) closeDetailModal();
+    else if (d && d.message) alert(d.message);
+  }
+
+  async function cancelSquareCharge(ticketId) {
+    try { await axios.post('/api/square/charge/' + ticketId + '/cancel'); }
+    catch (e) { alert('Could not cancel: ' + ((e.response && e.response.data && e.response.data.error) || e.message)); }
+    refreshSquareCharges();
+  }
+
+  function dismissSquare(key) {
+    if (String(key).indexOf('n') === 0) delete squareNotices[String(key).slice(1)];
+    else squareDismissed[key] = true;
+    renderSquareCard();
+  }
+
+  async function refreshSquareCharges() {
+    if (squarePollTimer) { clearTimeout(squarePollTimer); squarePollTimer = null; }
+    try {
+      const res = await axios.get('/api/square/charges/recent');
+      squareCharges = res.data.charges || [];
+      let paidNow = false;
+      squareCharges.forEach(function (c) {
+        const before = squareLastStatus[c.id];
+        if (c.status === 'COMPLETED' && before && before !== 'COMPLETED') {
+          paidNow = true;
+          agentLog(c.ticket_number + ' paid ' + money(c.amount) + ' by card');
+          // A paid card fades on its own; anything else waits for the operator.
+          setTimeout(function () { squareDismissed[c.id] = true; renderSquareCard(); }, 20000);
+        }
+        squareLastStatus[c.id] = c.status;
+        // A charge that went out supersedes an older "not sent" note.
+        if (SQUARE_LIVE.indexOf(c.status) >= 0 || c.status === 'COMPLETED') delete squareNotices[c.scale_ticket_id];
+      });
+      if (paidNow) { loadCompletedToday(); loadStats(); loadSettlement(); }
+    } catch (e) { /* keep the last known state */ }
+    renderSquareCard();
+    squarePollTimer = setTimeout(refreshSquareCharges, squareChargeLive() ? 3000 : 20000);
+  }
+
+  function renderSquareCard() {
+    const box = document.getElementById('square-pay-card');
+    if (!box) return;
+    let html = '';
+    squareCharges.forEach(function (c) {
+      if (squareDismissed[c.id]) return;
+      const who = escHtml(c.ticket_number) + (c.company_name && c.company_name !== 'Walk-In' ? ' &middot; ' + escHtml(c.company_name) : '');
+      const live = SQUARE_LIVE.indexOf(c.status) >= 0;
+      let tone, icon, title, sub, buttons = '';
+      if (live) {
+        tone = 'blue'; icon = 'fa-credit-card fa-beat-fade';
+        title = 'Waiting for card &mdash; ' + money(c.amount);
+        sub = who + ' &middot; on the Square Terminal';
+        buttons = '<button onclick="recordCash(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg btn-press">Cash instead</button>' +
+                  '<button onclick="cancelSquareCharge(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-white border border-blue-200 hover:bg-blue-50 text-blue-700 text-xs font-bold rounded-lg btn-press">Cancel</button>';
+      } else if (c.status === 'COMPLETED') {
+        tone = 'green'; icon = 'fa-check-circle';
+        title = 'Paid ' + money(c.amount) + ' by card';
+        sub = who;
+      } else {
+        tone = 'red'; icon = 'fa-exclamation-triangle';
+        title = 'Not paid &mdash; ' + money(c.amount);
+        sub = who + ' &middot; ' + escHtml(c.status === 'FAILED'
+          ? ('Square refused it: ' + (c.error || 'unknown error'))
+          : (c.cancel_reason ? 'cancelled (' + String(c.cancel_reason).toLowerCase().replace(/_/g, ' ') + ')' : 'cancelled on the Terminal'));
+        buttons = '<button onclick="sendToSquare(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg btn-press">Send again</button>' +
+                  '<button onclick="recordCash(' + c.scale_ticket_id + ')" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg btn-press">Cash</button>';
+      }
+      html += squareCardRow(tone, icon, title, sub, buttons, c.id);
+    });
+    Object.keys(squareNotices).forEach(function (tid) {
+      const n = squareNotices[tid];
+      html += squareCardRow('amber', 'fa-info-circle', 'Nothing sent to the Square Terminal', escHtml(n.text),
+        '<button onclick="recordCash(' + tid + ')" class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg btn-press">Cash</button>', 'n' + tid);
+    });
+    box.innerHTML = html;
+    box.classList.toggle('hidden', !html);
+  }
+
+  function squareCardRow(tone, icon, title, sub, buttons, key) {
+    const t = {
+      blue:  ['bg-blue-50 border-blue-300',   'bg-blue-100 text-blue-600',   'text-blue-800',  'text-blue-600'],
+      green: ['bg-green-50 border-green-300', 'bg-green-100 text-green-600', 'text-green-800', 'text-green-600'],
+      red:   ['bg-red-50 border-red-300',     'bg-red-100 text-red-500',     'text-red-700',   'text-red-600'],
+      amber: ['bg-amber-50 border-amber-300', 'bg-amber-100 text-amber-600', 'text-amber-800', 'text-amber-700'],
+    }[tone];
+    return '<div class="' + t[0] + ' border-2 rounded-xl p-4 flex items-center gap-3">' +
+      '<div class="w-10 h-10 ' + t[1] + ' rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas ' + icon + ' text-xl"></i></div>' +
+      '<div class="flex-1 min-w-0"><div class="text-sm font-bold ' + t[2] + '">' + title + '</div><div class="text-xs ' + t[3] + ' leading-snug">' + sub + '</div></div>' +
+      buttons +
+      '<button onclick="dismissSquare(&quot;' + key + '&quot;)" class="text-gray-400 hover:text-gray-600 flex-shrink-0" title="Hide"><i class="fas fa-times"></i></button>' +
+      '</div>';
   }
 
   async function recordCash(ticketId) {
@@ -5329,13 +5730,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const total = parseFloat(res.data.ticket.grand_total)||0;
       if (!confirm('Record cash payment of $'+total.toFixed(2)+'?')) return;
       showLoading('Recording...'); await axios.post('/api/square/cash-payment', { scale_ticket_id: ticketId, amount: total });
+      delete squareNotices[ticketId]; refreshSquareCharges();
       // Deliberately NO print here. The receipt is printed once, when the
       // truck weighs out and leaves -- payment is taken seconds later at the
       // same window, so printing again just hands the driver a second copy of
       // a ticket they are already holding. The Print button on the ticket is
       // still there when somebody actually wants another one.
       closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement();
-    } catch(err) { alert('Failed'); }
+    } catch(err) { alert((err.response && err.response.data && err.response.data.error) || 'Failed'); }
     finally { hideLoading(); }
   }
 
@@ -5506,6 +5908,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       loadBridgePrinters();
       initCamera(); startAutoRefresh();
       loadAgentSettings();
+      loadSquareSettings();
       startVerifySweep();
       bootstrapScale();
       startStaleWatchdog();
