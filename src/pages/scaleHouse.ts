@@ -364,8 +364,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
                drive a truck onto the scale. -->
           <div id="plate-test-result" class="hidden mt-1 px-2 py-1.5 rounded-lg text-[10px] leading-snug"></div>
 
-          <!-- Settings. Station-scoped (localStorage), like the receipt printer:
-               the camera belongs to the scale house, not to whoever logged in. -->
+          <!-- Settings. The yard camera setup is shared through the CRM once it
+               goes live at the scale house, so every Scale House screen lands
+               on it; credentials and the webcam pick stay in this browser. -->
           <div id="camera-settings" class="hidden mt-2 pt-2 border-t border-gray-100 space-y-2">
             <div>
               <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Source</label>
@@ -1139,8 +1140,19 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // capture canvas, so toDataURL() throws and every photo silently disappears.
   // Coming through the bridge the frames are same-scheme and CORS-clean. See
   // scale-bridge.js for what that proxy will and will not fetch.
+  //
+  // Only the scale-house Mac can reach the yard camera, so the setup is also
+  // shared through the CRM (/api/scale-camera): every browser that opens this
+  // page loads the yard camera the scale house last had LIVE, and a computer
+  // with no bridge shows the stills the scale house relays instead. Camera
+  // credentials and the webcam deviceId stay in this browser only.
   const CAM_CFG_KEY = 'rc_camera_cfg';
-  const CAM_DEFAULTS = { source: 'webcam', deviceId: '', url: '', netMode: 'snapshot', fps: 2, user: '', pass: '', autoStart: true, stamp: true, mirror: false, rotate: 0 };
+  // Yard camera by default: it is the real scale camera now, and a browser
+  // that never set anything up should land on it, not on its own webcam.
+  // sourceChosen marks a source picked by hand, which the shared setup never
+  // overrides.
+  const CAM_DEFAULTS = { source: 'network', sourceChosen: false, deviceId: '', url: '', netMode: 'snapshot', fps: 2, user: '', pass: '', autoStart: true, stamp: true, mirror: false, rotate: 0, agentCamera: '' };
+  const CAM_SHARED_KEYS = ['url', 'netMode', 'fps', 'rotate', 'mirror', 'stamp', 'agentCamera'];
   let camCfg = Object.assign({}, CAM_DEFAULTS);
   let camActive = false;   // a source is running, or retrying its way back
   let camKind = null;      // webcam | mjpeg | snapshot
@@ -1157,6 +1169,212 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // house, not to whoever happens to be logged in.
   function saveCamCfg() { try { localStorage.setItem(CAM_CFG_KEY, JSON.stringify(camCfg)); } catch (e) {} }
 
+  // Identifies this browser to the relay, so the scale house never mistakes
+  // its own relayed frames for a camera after a reload.
+  let camStationFallback = 'st-' + Math.random().toString(36).slice(2, 12);
+  function camStationId() {
+    try {
+      let id = localStorage.getItem('rc_station_id');
+      if (!id) { id = camStationFallback; localStorage.setItem('rc_station_id', id); }
+      return id;
+    } catch (e) { return camStationFallback; }
+  }
+
+  // ─── shared setup ───
+  // Fixed key order, so two equal setups always serialise identically.
+  function camSharedPart(cfg) {
+    const o = {};
+    CAM_SHARED_KEYS.forEach(function (k) { if (cfg[k] !== undefined && cfg[k] !== '') o[k] = cfg[k]; });
+    return o;
+  }
+  let camSharedJson = null, camSharing = false, camShareFailedAt = 0;
+  async function camLoadShared() {
+    try {
+      const r = await axios.get('/api/scale-camera/config', { timeout: 4000 });
+      const s = (r.data && r.data.config) || {};
+      if (!s.url) return false;
+      CAM_SHARED_KEYS.forEach(function (k) { camCfg[k] = s[k] !== undefined ? s[k] : CAM_DEFAULTS[k]; });
+      // A browser that never picked its webcam on purpose follows the scale
+      // house onto the yard camera. This is the "anyone who opens Scale House"
+      // half: no settings to find, no button to press.
+      if (camCfg.source !== 'network' && !camCfg.sourceChosen) camCfg.source = 'network';
+      camSharedJson = JSON.stringify(camSharedPart(camCfg));
+      saveCamCfg();
+      return true;
+    } catch (e) { return false; }
+  }
+  // Called every second by the health tick; cheap unless something changed.
+  // Only a yard camera that is LIVE through this computer's bridge is shared,
+  // so the stored setup is always one that demonstrably worked, and a screen
+  // that merely views the relay can never overwrite it.
+  function camShareCfg() {
+    if (camKind !== 'snapshot' && camKind !== 'mjpeg') return;
+    if (!camLastFrameAt || Date.now() - camLastFrameAt > 5000) return;
+    if (camSharing || Date.now() - camShareFailedAt < 60000) return;
+    const part = camSharedPart(camCfg);
+    if (!part.url) return;
+    const json = JSON.stringify(part);
+    if (json === camSharedJson) return;
+    camSharing = true;
+    axios.put('/api/scale-camera/config', part, { timeout: 8000 })
+      .then(function () { camSharedJson = json; try { logSerial('[cam] yard camera setup shared with every Scale House screen'); } catch (e) {} })
+      .catch(function () { camShareFailedAt = Date.now(); })
+      .then(function () { camSharing = false; });
+  }
+
+  // ─── relay: the scale house sends ───
+  // A downscaled still every 10s, or every 2s while another screen is
+  // watching (the server says so in its reply). Turned and mirrored the way
+  // the operator sees it; no stamp, because a relayed frame is never evidence.
+  const CAM_RELAY_IDLE_MS = 10000, CAM_RELAY_WATCHED_MS = 2000, CAM_RELAY_MAX_W = 960;
+  let camRelayLastAt = 0, camRelayBusy = false, camRelayWatched = false, camRelayBackoffUntil = 0, camRelayCanvas = null;
+  function camRelayPublish() {
+    if (camKind !== 'snapshot' && camKind !== 'mjpeg') return;
+    const now = Date.now();
+    if (camRelayBusy || now < camRelayBackoffUntil) return;
+    if (now - camRelayLastAt < (camRelayWatched ? CAM_RELAY_WATCHED_MS : CAM_RELAY_IDLE_MS)) return;
+    if (!camLastFrameAt || now - camLastFrameAt > 5000) return;
+    const size = camFrameSize();
+    if (!size) return;
+    const src = camKind === 'snapshot' ? document.getElementById('camera-buffer') : document.getElementById('camera-net');
+    const rot = ((camCfg.rotate || 0) % 360 + 360) % 360;
+    const swap = rot === 90 || rot === 270;
+    const scale = Math.min(1, CAM_RELAY_MAX_W / (swap ? size.h : size.w));
+    const w = Math.round(size.w * scale), h = Math.round(size.h * scale);
+    const cv = camRelayCanvas || (camRelayCanvas = document.createElement('canvas'));
+    cv.width = swap ? h : w;
+    cv.height = swap ? w : h;
+    const ctx = cv.getContext('2d');
+    ctx.save();
+    ctx.translate(cv.width / 2, cv.height / 2);
+    if (rot) ctx.rotate(rot * Math.PI / 180);
+    if (camCfg.mirror) ctx.scale(-1, 1);
+    ctx.drawImage(src, -w / 2, -h / 2, w, h);
+    ctx.restore();
+    let frame;
+    try { frame = cv.toDataURL('image/jpeg', 0.6); }
+    catch (e) { camRelayBackoffUntil = now + 60000; return; }
+    camRelayLastAt = now;
+    camRelayBusy = true;
+    axios.post('/api/scale-camera/frame', { frame: frame, width: cv.width, height: cv.height, weight: currentLiveWeight || 0, station: camStationId() }, { timeout: 15000 })
+      .then(function (r) { camRelayWatched = !!(r.data && r.data.watched); })
+      // An older deploy without the route, or a role that cannot publish:
+      // back off rather than retry every tick.
+      .catch(function () { camRelayBackoffUntil = Date.now() + 30000; })
+      .then(function () { camRelayBusy = false; });
+  }
+
+  // ─── relay: every other screen views ───
+  let camRelaySeq = -1, camRelayTimer = null, camRelayInfo = null, camRelayLast = null;
+  // Set when this computer HAS a bridge but the yard camera did not come
+  // through it -- a bridge installed for printing, or Agent DVR not set up
+  // here yet. Such a screen shows the relay, and keeps checking for its own
+  // camera so it switches over by itself once Agent DVR is running.
+  let camRelayViaBridge = false, camRelayProbeAt = 0;
+  async function camFetchRelay() {
+    const r = await axios.get('/api/scale-camera/frame', { params: { have: camRelaySeq, station: camStationId() }, timeout: 8000 });
+    camRelayLast = r.data || {};
+    return camRelayLast;
+  }
+  // True when this screen is now showing the scale house's relayed camera.
+  async function startRelayCamera() {
+    camRelayLast = null;
+    let d;
+    try { d = await camFetchRelay(); } catch (e) { return false; }
+    // self: these are this browser's own frames from before a reload -- this
+    // IS the scale house and its bridge is what is missing.
+    if (!d.fresh || d.self || !camActive) return false;
+    camKind = 'relay';
+    document.getElementById('camera-src-label').textContent = 'VIA SCALE HOUSE';
+    camApplyTransform();
+    camShowFrame('buffer');
+    camRelayShow(d);
+    camRelaySchedule();
+    return true;
+  }
+  function camRelayShow(d) {
+    camRelayInfo = d;
+    if (d.seq !== null && d.seq !== undefined) camRelaySeq = d.seq;
+    // Liveness is "the scale house is still sending", not "the picture
+    // changed": with nobody on the scale it only sends every 10s.
+    if (d.fresh) camOnFrame();
+    if (!d.frame) return;
+    const img = new Image();
+    img.onload = function () {
+      if (camKind !== 'relay') return;
+      const buf = document.getElementById('camera-buffer');
+      if (buf.width !== img.naturalWidth || buf.height !== img.naturalHeight) {
+        buf.width = img.naturalWidth;
+        buf.height = img.naturalHeight;
+      }
+      buf.getContext('2d').drawImage(img, 0, 0);
+      camBufferReady = true;
+      camRetries = 0;
+      camSetStatus('live');
+    };
+    img.src = d.frame;
+  }
+  function camRelaySchedule() {
+    if (camRelayTimer) clearTimeout(camRelayTimer);
+    camRelayTimer = setTimeout(camRelayTick, 2000);
+  }
+  // The yard camera did not come through this computer's bridge. If the scale
+  // house is sending its picture, show that rather than retrying a camera
+  // this computer may not have. False leaves the caller to retry as before.
+  async function camFallBackToRelay(why) {
+    if (camCfg.source !== 'network') return false;
+    camTeardownSource();
+    if (!(await startRelayCamera())) return false;
+    camRelayViaBridge = true;
+    camRelayProbeAt = Date.now();
+    try { logSerial('[cam] ' + why + ' Showing the scale house camera instead.'); } catch (e) {}
+    return true;
+  }
+  // Once a minute while falling back: has this computer's own camera come up?
+  async function camProbeOwnCamera() {
+    camRelayProbeAt = Date.now();
+    if (!(camCfg.url || '').trim()) return;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(function () { ctrl.abort(); }, 10000);
+      const r = await fetch(camProxyUrl('/camera/probe'), { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(t);
+      const d = await r.json();
+      if (d && d.ok && camActive && camKind === 'relay' && camRelayViaBridge) {
+        try { logSerial('[cam] yard camera now reachable on this computer -- switching to it'); } catch (e) {}
+        startCamera();
+      }
+    } catch (e) {}
+  }
+  // Self-clocking like the snapshot poller, for the same reason.
+  async function camRelayTick() {
+    camRelayTimer = null;
+    if (!camActive || camKind !== 'relay') return;
+    try {
+      const d = await camFetchRelay();
+      if (!camActive || camKind !== 'relay') return;
+      camRelayShow(d);
+    } catch (e) { /* one failed poll is not an outage -- the watchdog decides */ }
+    if (camRelayViaBridge && Date.now() - camRelayProbeAt > 60000) camProbeOwnCamera();
+    camRelaySchedule();
+  }
+  function camRelayWeightText() {
+    const w = camRelayInfo && Number(camRelayInfo.weight_kg);
+    return w > 0 ? w.toLocaleString('en-CA', { minimumFractionDigits: 1 }) + ' kg' : 'no weight';
+  }
+  // Why there is no picture, for a screen with no bridge. Which message is
+  // right depends on whether this browser is the scale house.
+  function camNoBridgeMsg() {
+    const d = camRelayLast;
+    if (d && d.self) return bridgeUnreachableMsg('the yard camera cannot be reached');
+    if (d && d.seq !== null && d.seq !== undefined && typeof d.age_seconds === 'number') {
+      const a = d.age_seconds;
+      const ago = a < 120 ? a + 's' : a < 7200 ? Math.round(a / 60) + ' min' : Math.round(a / 3600) + ' h';
+      return 'The yard camera comes from the scale-house computer, which last sent a picture ' + ago + ' ago. Scale House has to be open there for other screens to see it.';
+    }
+    return 'No yard camera yet. It comes from the scale-house computer, and Scale House has to be open there. On that computer: ' + bridgeUnreachableMsg('');
+  }
+
   // ─── panel state ───
   function camSetStatus(state) {
     const map = {
@@ -1171,12 +1389,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     pill.textContent = m[0];
     pill.className = 'px-1.5 py-0.5 text-[10px] font-semibold rounded-full ' + m[1];
     const live = state === 'live';
+    // A relayed picture can be watched, not captured: it is seconds old and
+    // belongs to the scale house's tickets, not this screen's.
+    const canCapture = live && camKind !== 'relay';
     document.getElementById('btn-start-cam').classList.toggle('hidden', camActive);
     document.getElementById('btn-stop-cam').classList.toggle('hidden', !camActive);
-    document.getElementById('btn-capture').classList.toggle('hidden', !live);
-    document.getElementById('btn-cam-test').classList.toggle('hidden', !live);
+    document.getElementById('btn-capture').classList.toggle('hidden', !canCapture);
+    document.getElementById('btn-cam-test').classList.toggle('hidden', !canCapture);
     const bpt = document.getElementById('btn-plate-test');
-    if (bpt) bpt.classList.toggle('hidden', !live);
+    if (bpt) bpt.classList.toggle('hidden', !canCapture);
     document.getElementById('camera-overlay').classList.toggle('hidden', !live);
     document.getElementById('camera-live-dot').classList.toggle('hidden', !live);
     document.getElementById('camera-idle').classList.toggle('hidden', live);
@@ -1192,7 +1413,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     document.getElementById('camera-buffer').classList.toggle('hidden', which !== 'buffer');
   }
   function camApplyTransform() {
-    const t = (camCfg.mirror ? 'scaleX(-1) ' : '') + (camCfg.rotate ? 'rotate(' + camCfg.rotate + 'deg)' : '');
+    // Relayed frames arrive already turned the way the scale house sees them.
+    const t = camKind === 'relay' ? '' : (camCfg.mirror ? 'scaleX(-1) ' : '') + (camCfg.rotate ? 'rotate(' + camCfg.rotate + 'deg)' : '');
     document.getElementById('camera-preview').style.transform = t;
     document.getElementById('camera-net').style.transform = t;
     document.getElementById('camera-buffer').style.transform = t;
@@ -1242,20 +1464,31 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   async function startNetworkCamera() {
     const u = (camCfg.url || '').trim();
-    if (looksLikeRtsp(u)) {
+    // Every yard-camera frame reaches a browser through scale-bridge.js on the
+    // scale-house computer. No bridge here means either this is another
+    // computer -- show what the scale house relays -- or this is the scale
+    // house with its bridge down. Retry either way: a bridge that starts at
+    // login, or a scale house that opens the page later, is picked up without
+    // anyone touching this screen.
+    if (!(await camBridgeUp())) {
+      if (!camActive) return;
+      if (await startRelayCamera()) return;
+      if (!camActive) return;
+      camFail(camNoBridgeMsg(), true);
+      return;
+    }
+    if (!camActive) return;
+    if (looksLikeRtsp(u) || !u) {
       // Go and fix it rather than explain it. One hop, not a loop: the lookup
-      // either rewrites the address to an http one and restarts, or stops with
-      // a message and leaves the camera off.
-      camFail('That is an RTSP address, which no browser can play. Looking for Agent DVR, which can…', false);
+      // either fills in an http address and restarts, or stops with a message
+      // and leaves the camera off.
+      camFail(u ? 'That is an RTSP address, which no browser can play. Looking for Agent DVR, which can…'
+                : 'No yard camera chosen yet. Looking for Agent DVR…', false);
       document.getElementById('camera-settings').classList.remove('hidden');
+      camApplyCfgToUI();
       findAgentDvr();
       return;
     }
-    if (!u) { document.getElementById('camera-settings').classList.remove('hidden'); camApplyCfgToUI(); camFail('No yard-camera address yet. Enter the camera snapshot or MJPEG path in the settings below, then press Apply.', false); return; }
-    // Every network frame arrives through the bridge, so when it is down there
-    // is nothing to show — and naming which piece is missing saves a lot of
-    // guessing at 6am.
-    if (!(await camBridgeUp())) { camFail(bridgeUnreachableMsg('the yard camera cannot be reached'), true); return; }
     const img = document.getElementById('camera-net');
     // crossOrigin is what keeps the capture canvas untainted. Without it the
     // preview still works and every capture throws — the worst possible
@@ -1268,7 +1501,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       document.getElementById('camera-src-label').textContent = 'YARD CAM';
       // A stream that drops is a real outage; a single failed poll is not, so
       // only this mode treats onerror as a failure.
-      img.onerror = function () { if (camActive) camFail('Lost the yard camera stream.', true); };
+      img.onerror = function () {
+        if (!camActive) return;
+        // Never got a single frame: ask why (and fall back to the scale
+        // house's relay) instead of retrying blind.
+        if (!camLastFrameAt) camFailWithDiagnosis('No picture has come back from that address yet.');
+        else camFail('Lost the yard camera stream.', true);
+      };
       img.src = camProxyUrl('/camera/mjpeg');
     } else {
       camKind = 'snapshot';
@@ -1355,6 +1594,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // camera should be running — startCamera and stopCamera own that.
   function camTeardownSource() {
     if (camSnapTimer) { clearTimeout(camSnapTimer); camSnapTimer = null; }
+    if (camRelayTimer) { clearTimeout(camRelayTimer); camRelayTimer = null; }
+    // Forget the last relayed frame number, so a restart asks for a picture
+    // rather than "unchanged" into an emptied buffer.
+    camRelaySeq = -1; camRelayInfo = null; camRelayViaBridge = false;
     camBufferReady = false;
     if (cameraStream) { try { cameraStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} cameraStream = null; }
     const v = document.getElementById('camera-preview');
@@ -1424,6 +1667,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     camDiagnosing = false;
     if (!camActive) return;   // operator pressed Stop while we were asking
+    if (await camFallBackToRelay(msg)) return;
+    if (!camActive) return;
     camFail(msg, true);
   }
 
@@ -1436,7 +1681,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const v = document.getElementById('camera-preview');
       return v.videoWidth ? { w: v.videoWidth, h: v.videoHeight } : null;
     }
-    if (camKind === 'snapshot') {
+    if (camKind === 'snapshot' || camKind === 'relay') {
       // camBufferReady, not b.width: a canvas nothing has been drawn into
       // still measures 300x150, and capturing it would attach a blank
       // rectangle to a ticket as though it were evidence.
@@ -1449,7 +1694,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
   function camTick() {
     document.getElementById('camera-overlay-left').textContent = camStampTime();
-    document.getElementById('camera-overlay-right').textContent = camStampWeight();
+    // On a relayed picture the weight that matters is the one on the scale,
+    // which this screen does not have -- the scale house sends it along.
+    document.getElementById('camera-overlay-right').textContent = camKind === 'relay' ? camRelayWeightText() : camStampWeight();
     if (!camActive) return;
     const now = Date.now();
     if (camKind === 'webcam') {
@@ -1463,7 +1710,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     } else if (camKind && camLastFrameAt && (now - camLastFrameAt) > 12000) {
       // A dead feed still *looks* fine — the last picture just sits there.
       // Without this the agent would keep stamping a stale frame onto tickets.
-      camFail('Camera stopped sending frames.', true);
+      camFail(camKind === 'relay' ? 'The scale house stopped sending the yard camera.' : 'Camera stopped sending frames.', true);
       return;
     } else if (camKind && !camLastFrameAt && (now - camStartedAt) > 12000) {
       // Nothing has ever arrived. Without this the panel sits on CONNECTING
@@ -1473,10 +1720,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     const size = camFrameSize();
     const age = camLastFrameAt ? now - camLastFrameAt : null;
-    const bits = [camKind === 'webcam' ? 'Webcam' : camKind === 'mjpeg' ? 'Yard camera (stream)' : camKind === 'snapshot' ? 'Yard camera (snapshot)' : 'Starting'];
+    const bits = [camKind === 'webcam' ? 'Webcam' : camKind === 'mjpeg' ? 'Yard camera (stream)' : camKind === 'snapshot' ? 'Yard camera (snapshot)' : camKind === 'relay' ? 'Yard camera, from the scale house' : 'Starting'];
     if (size) bits.push(size.w + ' x ' + size.h);
-    if (age !== null) bits.push(age < 2500 ? 'live' : Math.round(age / 1000) + 's since last frame');
+    if (camKind === 'relay') {
+      const ra = camRelayInfo && camRelayInfo.age_seconds;
+      if (typeof ra === 'number') bits.push(ra < 4 ? 'live' : ra + 's old');
+    } else if (age !== null) bits.push(age < 2500 ? 'live' : Math.round(age / 1000) + 's since last frame');
     document.getElementById('camera-health').textContent = bits.join(' · ');
+    camShareCfg();
+    camRelayPublish();
   }
   function camStampTime() {
     const d = new Date();
@@ -1507,6 +1759,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // opts.quiet: no flash and not added to the recent strip -- for a frame the
   // agent reads but does not keep, so one truck still means one thumbnail.
   function capturePhoto(label, opts) {
+    // A screen viewing the relay holds a seconds-old copy of someone else's
+    // camera. Attaching that to a ticket would be evidence of nothing.
+    if (camKind === 'relay') { try { logSerial('[cam] capture skipped — this screen is viewing the scale house camera, not connected to it'); } catch (e) {} return null; }
     const quiet = !!(opts && opts.quiet);
     const size = camFrameSize();
     if (!camActive || !camKind || !size) { try { logSerial('[cam] capture skipped — no live frame'); } catch (e) {} return null; }
@@ -1630,12 +1885,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // This is the swap-over moment the whole panel exists for: if the camera is
   // already running, land on the new source immediately.
   function setCameraSource(src) {
-    if (camCfg.source === src) return;
+    // Picked by hand: the shared setup must not flip it back on the next load.
+    camCfg.sourceChosen = true;
+    if (camCfg.source === src) { saveCamCfg(); return; }
     camCfg.source = src; saveCamCfg(); camPaintSourceButtons();
     // Choosing "Yard camera" with nothing configured used to leave the operator
     // staring at an empty address box, where the obvious thing to paste is the
-    // camera's RTSP URL. Go and find the recorder instead.
-    if (src === 'network' && (!camCfg.url || looksLikeRtsp(camCfg.url))) { findAgentDvr(); return; }
+    // camera's RTSP URL. startNetworkCamera finds the recorder instead -- or,
+    // on a computer without one, the scale house's relayed picture.
+    if (src === 'network' && (!camCfg.url || looksLikeRtsp(camCfg.url))) { startCamera(); return; }
     if (camActive) startCamera();
   }
   function onCameraDeviceChange(v) {
@@ -1698,7 +1956,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const v = String(u || '').trim().toLowerCase();
     return v.indexOf('rtsp://') === 0 || v.indexOf('rtsps://') === 0;
   }
-  let agentDvrAt = null;
+  let agentDvrAt = null, agentDvrNames = {};
   async function findAgentDvr() {
     const msg = document.getElementById('agent-find-msg');
     const list = document.getElementById('agent-cam-list');
@@ -1716,13 +1974,21 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       if (!d.ok) { say('text-red-600', d.error || 'Could not reach Agent DVR.'); return; }
       if (!d.cameras || !d.cameras.length) { say('text-amber-600', 'Agent DVR is running, but no cameras are set up in it yet.'); return; }
       agentDvrAt = { host: d.host, port: d.port };
+      agentDvrNames = {};
+      d.cameras.forEach(function (c) { agentDvrNames[c.id] = c.name; });
       // Nothing usable configured yet (blank, or an RTSP address that cannot
-      // work) and exactly one camera to choose from — there is no decision to
-      // put in front of the operator, so just use it.
-      if (d.cameras.length === 1 && (!camCfg.url || looksLikeRtsp(camCfg.url))) {
-        useAgentCamera(d.cameras[0].id);
-        say('text-green-700', 'Using ' + d.cameras[0].name + ' from Agent DVR.');
-        return;
+      // work): take the camera the scale house chose before, matched by NAME
+      // because Agent DVR renumbers cameras that are removed and re-added, or
+      // the only camera there is. Either way there is no decision to put in
+      // front of the operator.
+      if (!camCfg.url || looksLikeRtsp(camCfg.url)) {
+        const named = camCfg.agentCamera ? d.cameras.filter(function (c) { return c.name === camCfg.agentCamera; })[0] : null;
+        const pick = named || (d.cameras.length === 1 ? d.cameras[0] : null);
+        if (pick) {
+          useAgentCamera(pick.id);
+          say('text-green-700', 'Using ' + pick.name + ' from Agent DVR.');
+          return;
+        }
       }
       list.innerHTML = d.cameras.map(function (c) {
         return '<button onclick="useAgentCamera(' + c.id + ')" class="px-2.5 py-1 rounded-full text-[10px] font-semibold border-2 border-gray-200 bg-white text-gray-600 hover:border-rc-green hover:text-rc-green"><i class="fas fa-video mr-1"></i>' + escHtml(c.name) + '</button>';
@@ -1745,6 +2011,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     camCfg.url = 'http://' + at.host + ':' + at.port + '/grab.jpg?oid=' + oid + '&size=2560x1440';
     camCfg.netMode = 'snapshot';
     camCfg.source = 'network';
+    // Remembered by name and shared, so any browser on this Mac that starts
+    // from nothing lands on the same camera even if Agent DVR renumbers it.
+    camCfg.agentCamera = agentDvrNames[oid] || '';
     // Agent DVR on loopback wants no credentials, and the camera's own
     // username/password left in the boxes would be sent to it as Basic auth.
     camCfg.user = ''; camCfg.pass = '';
@@ -1835,8 +2104,16 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (stage.requestFullscreen) stage.requestFullscreen();
   }
 
-  function initCamera() {
+  async function initCamera() {
     camCfg = loadCamCfg();
+    camApplyCfgToUI();
+    camApplyTransform();
+    camSetStatus('off');
+    camSetIdle('fa-circle-notch fa-spin', 'Loading the scale camera…', false);
+    // The scale house's yard camera, before anything starts: this is what puts
+    // a browser that has never been set up straight onto the right camera.
+    // Without it (older deploy, offline) this browser's own copy is used.
+    await camLoadShared();
     // One-time upgrade of stations configured before plate reading existed:
     // 720p demonstrably cannot resolve a plate on the deck.
     if (camCfg.url && camCfg.url.indexOf('/grab.jpg?') !== -1 && camCfg.url.indexOf('size=1280x720') !== -1) {
@@ -1845,7 +2122,6 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     camApplyCfgToUI();
     camApplyTransform();
-    camSetStatus('off');
     camSetIdle('fa-video-slash', 'Camera off', true);
     if (camCfg.source === 'webcam') enumerateCameras(false);
     // Auto-start matters more than it sounds: in unattended agent mode nobody
@@ -2700,46 +2976,56 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // Render the receipt as a real PDF and let CUPS print it. Built here rather
   // than in the bridge because the receipt and its photo are already in this
   // page, and scale-bridge.js is deliberately a single dependency-free file.
+  // Only sheet printers reach this path -- a thermal queue goes to ESC/POS --
+  // so the PDF is a Letter page. It used to be exactly 80mm wide and as tall
+  // as its content, and an office printer reads that as a paper size it does
+  // not have loaded: the HP stopped on every ticket with a paper-size alarm
+  // somebody had to dismiss, which is the opposite of automatic printing. A
+  // page that matches the tray gives the printer nothing to ask about.
+  const RECEIPT_SHEET = { w: 215.9, h: 279.4, margin: 12.7 };
   async function buildReceiptPdf(receipt) {
     await loadJsPdf();
-    // 80mm wide, roll-shaped. On a sheet printer that prints as a narrow strip,
-    // which is what a receipt should look like, on one sheet rather than
-    // scaled up to fill A4.
-    //
-    // Drawn TWICE: jsPDF fixes a page's height when the page is created and
-    // resizing it afterwards does not retroactively trim it, so the first pass
-    // only measures how tall the content actually came out -- the photo's
-    // aspect ratio is the part that cannot be known up front -- and the second
-    // draws it on a page cut to that height. Without this every receipt
-    // carried a hand's width of blank paper.
+    // The receipt keeps its 80mm design, drawn 1.5x so it reads comfortably
+    // on a sheet, and smaller only if a tall photo would push it onto a
+    // second page. Measured first: the photo's aspect ratio cannot be known
+    // until it has been decoded.
     const W = 80, M = 5;
-    const measured = await renderReceiptPdf(receipt, W, M, null);
-    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: [W, Math.max(60, measured + M)] });
-    await renderReceiptPdf(receipt, W, M, doc);
+    const measured = await renderReceiptPdf(receipt, W, M, null, null);
+    const sh = RECEIPT_SHEET;
+    const s = Math.min(1.5, (sh.w - sh.margin * 2) / W, (sh.h - sh.margin * 2) / (measured + M));
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'letter', orientation: 'portrait' });
+    await renderReceiptPdf(receipt, W, M, doc, { s: s, x: (sh.w - W * s) / 2, y: sh.margin });
     return doc.output('datauristring').split(',')[1];
   }
 
-  // Returns the Y the content ended at. With doc === null it measures only.
-  async function renderReceiptPdf(receipt, W, M, doc) {
+  // Lays the receipt out in its own 80mm coordinates and returns the Y it
+  // ended at; with doc === null it only measures. at = { s, x, y } places it
+  // on the page: positions, font sizes and line widths all scale together, so
+  // wrapping and right-alignment come out exactly as on the 80mm design.
+  async function renderReceiptPdf(receipt, W, M, doc, at) {
     const scratch = doc || new window.jspdf.jsPDF({ unit: 'mm', format: [W, 400] });
     const d = scratch;
+    const t = at || { s: 1, x: 0, y: 0 };
+    const X = function (v) { return t.x + v * t.s; };
+    const Y = function (v) { return t.y + v * t.s; };
+    const F = function (pt) { d.setFontSize(pt * t.s); };
     const money = function (v) { return '$' + (Number(v) || 0).toFixed(2); };
     const kg = function (v) { return (v === null || v === undefined || v === '') ? '—' : (Number(v).toFixed(1) + ' kg'); };
     let y = M + 3;
 
     const centre = function (text, size, bold) {
-      d.setFont('courier', bold ? 'bold' : 'normal'); d.setFontSize(size);
-      d.text(String(text), W / 2, y, { align: 'center' }); y += size * 0.45 + 1.2;
+      d.setFont('courier', bold ? 'bold' : 'normal'); F(size);
+      d.text(String(text), X(W / 2), Y(y), { align: 'center' }); y += size * 0.45 + 1.2;
     };
     const row = function (l, r, size, bold) {
-      d.setFont('courier', bold ? 'bold' : 'normal'); d.setFontSize(size || 8);
-      d.text(String(l), M, y);
-      d.text(String(r), W - M, y, { align: 'right' });
+      d.setFont('courier', bold ? 'bold' : 'normal'); F(size || 8);
+      d.text(String(l), X(M), Y(y));
+      d.text(String(r), X(W - M), Y(y), { align: 'right' });
       y += (size || 8) * 0.45 + 1.2;
     };
     const rule = function () {
-      d.setLineWidth(0.15); d.setLineDashPattern([0.6, 0.6], 0);
-      d.line(M, y - 1.5, W - M, y - 1.5); d.setLineDashPattern([], 0); y += 1.5;
+      d.setLineWidth(0.15 * t.s); d.setLineDashPattern([0.6 * t.s, 0.6 * t.s], 0);
+      d.line(X(M), Y(y - 1.5), X(W - M), Y(y - 1.5)); d.setLineDashPattern([], 0); y += 1.5;
     };
 
     centre('REUSE CANADA', 13, true);
@@ -2759,11 +3045,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       // Plate, colour, make and body together overflow one 80mm line, and a
       // slice() produced "White Nissan Sed" on the real receipt. Wrapping keeps
       // every part readable, which is the whole point of printing it.
-      d.setFont('courier', 'normal'); d.setFontSize(8);
-      const lines = d.splitTextToSize(veh, W - M * 2 - 18);
-      d.text('Vehicle', M, y);
+      d.setFont('courier', 'normal'); F(8);
+      const lines = d.splitTextToSize(veh, (W - M * 2 - 18) * t.s);
+      d.text('Vehicle', X(M), Y(y));
       lines.forEach(function (ln, i) {
-        d.text(ln, W - M, y + i * 3.8, { align: 'right' });
+        d.text(ln, X(W - M), Y(y + i * 3.8), { align: 'right' });
       });
       y += lines.length * 3.8 + 0.8;
     }
@@ -2793,9 +3079,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         });
         const iw = W - M * 2;
         const ih = Math.round(dims.h * (iw / dims.w));
-        d.setFont('courier', 'normal'); d.setFontSize(6);
-        d.text('TRUCK AT WEIGH-IN', W / 2, y, { align: 'center' }); y += 2.5;
-        d.addImage(receipt.photo_in, 'JPEG', M, y, iw, ih);
+        d.setFont('courier', 'normal'); F(6);
+        d.text('TRUCK AT WEIGH-IN', X(W / 2), Y(y), { align: 'center' }); y += 2.5;
+        d.addImage(receipt.photo_in, 'JPEG', X(M), Y(y), iw * t.s, ih * t.s);
         y += ih + 2;
       } catch (e) {
         agentLog('receipt photo skipped: ' + e.message);
