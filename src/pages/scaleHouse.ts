@@ -1263,6 +1263,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // that merely views the relay can never overwrite it.
   function camShareCfg() {
     if (camKind !== 'snapshot' && camKind !== 'mjpeg') return;
+    if (camAgentOk === false) return;
     if (!camLastFrameAt || Date.now() - camLastFrameAt > 5000) return;
     if (camSharing || Date.now() - camShareFailedAt < 60000) return;
     const part = camSharedPart(camCfg);
@@ -1284,6 +1285,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   let camRelayLastAt = 0, camRelayBusy = false, camRelayWatched = false, camRelayBackoffUntil = 0, camRelayCanvas = null;
   function camRelayPublish() {
     if (camKind !== 'snapshot' && camKind !== 'mjpeg') return;
+    if (camAgentOk === false) return;
     const now = Date.now();
     if (camRelayBusy || now < camRelayBackoffUntil) return;
     if (now - camRelayLastAt < (camRelayWatched ? CAM_RELAY_WATCHED_MS : CAM_RELAY_IDLE_MS)) return;
@@ -1388,6 +1390,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   async function camProbeOwnCamera() {
     camRelayProbeAt = Date.now();
     if (!(camCfg.url || '').trim()) return;
+    // Agent DVR answers the probe with its placeholder picture even when its
+    // camera is dark; only a camera it reports connected is worth switching to.
+    const ref = agentDvrRef(camCfg.url);
+    if (ref) {
+      const cams = await agentDvrStatus(ref);
+      if (cams && !cams.some(function (c) { return c.connected === true; })) return;
+    }
     try {
       const ctrl = new AbortController();
       const t = setTimeout(function () { ctrl.abort(); }, 10000);
@@ -1521,7 +1530,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
 
   async function startNetworkCamera() {
-    const u = (camCfg.url || '').trim();
+    let u = (camCfg.url || '').trim();
     // Every yard-camera frame reaches a browser through scale-bridge.js on the
     // scale-house computer. No bridge here means either this is another
     // computer -- show what the scale house relays -- or this is the scale
@@ -1546,6 +1555,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       camApplyCfgToUI();
       findAgentDvr();
       return;
+    }
+    // Agent DVR answers /grab.jpg with a stock "not connected" picture when
+    // its camera is down, so a JPEG coming back proves nothing. Ask it which
+    // cameras are actually connected before trusting the address.
+    camAgentOk = null;
+    if (agentDvrRef(u)) {
+      if (!(await camEnsureAgentCamera())) return;
+      if (!camActive) return;
+      u = (camCfg.url || '').trim();
     }
     const img = document.getElementById('camera-net');
     // crossOrigin is what keeps the capture canvas untainted. Without it the
@@ -1887,6 +1905,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       if (typeof ra === 'number') bits.push(ra < 4 ? 'live' : ra + 's old');
     } else if (age !== null) bits.push(age < 2500 ? 'live' : Math.round(age / 1000) + 's since last frame');
     document.getElementById('camera-health').textContent = bits.join(' · ');
+    if ((camKind === 'snapshot' || camKind === 'mjpeg') && now - camAgentCheckAt > CAM_AGENT_RECHECK_MS) camRecheckAgent();
     camShareCfg();
     camRelayPublish();
   }
@@ -2117,6 +2136,105 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     return v.indexOf('rtsp://') === 0 || v.indexOf('rtsps://') === 0;
   }
   let agentDvrAt = null, agentDvrNames = {};
+
+  // ─── Agent DVR: is the camera behind this address really connected? ───
+  // When Agent DVR loses a camera (wrong address, wrong password, camera
+  // unplugged) it keeps answering /grab.jpg with a stock "disconnected"
+  // picture. To this page that looked like a working camera, so the scale
+  // house went LIVE on a blank frame, relayed it to every other screen and
+  // shared that camera as the one to use (2026-10-14). Agent DVR's own
+  // object list says which cameras are connected; read it before trusting an
+  // address, and again every 30s while live.
+  let camAgentOk = null, camAgentCheckAt = 0, camAgentChecking = false;
+  const CAM_AGENT_RECHECK_MS = 30000;
+  // { host, port, oid, url } for an Agent DVR still/stream address, else null.
+  function agentDvrRef(u) {
+    let p;
+    try { p = new URL(String(u || '').trim()); } catch (e) { return null; }
+    if (!/\\/(grab\\.jpg|video\\.mjpg)$/i.test(p.pathname)) return null;
+    const oid = parseInt(p.searchParams.get('oid') || '', 10);
+    if (isNaN(oid)) return null;
+    return { host: p.hostname, port: p.port || '80', oid: oid, url: p };
+  }
+  // [{ id, name, connected }] from Agent DVR, or null when it cannot be read.
+  // Fetched through the bridge's snapshot proxy, which passes any reply
+  // through, so a station running an older bridge needs no update.
+  async function agentDvrStatus(at) {
+    const target = 'http://' + at.host + ':' + at.port + '/command.cgi?cmd=getObjects';
+    const ctrl = new AbortController();
+    const t = setTimeout(function () { ctrl.abort(); }, 8000);
+    try {
+      const r = await fetch(BRIDGE_URL + '/camera/snapshot?url=' + encodeURIComponent(target) + '&t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal });
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (!d || !Array.isArray(d.objectList)) return null;
+      // typeID 2 is a camera; 1 is a microphone, which has no picture.
+      return d.objectList.filter(function (o) { return o && o.typeID === 2; }).map(function (o) {
+        const data = o.data || {};
+        return { id: o.id, name: o.name || ('Camera ' + o.id), connected: typeof data.connected === 'boolean' ? data.connected : null };
+      });
+    } catch (e) { return null; }
+    finally { clearTimeout(t); }
+  }
+  function agentNoPictureMsg(cams) {
+    const names = (cams || []).map(function (c) { return escHtml(c.name); }).join(', ');
+    return 'Agent DVR is running on this computer, but none of its cameras' + (names ? ' (' + names + ')' : '') + ' is getting a picture from the yard camera. Open localhost:8090 here, edit the camera, and set its address to the Reolink (rtsp://CAMERA-IP:554/h264Preview_01_main) with the camera username and password. This screen picks it up by itself once Agent DVR shows the picture.';
+  }
+  // True when camCfg.url names a connected Agent DVR camera, after moving it to
+  // the connected camera (by name, or the only one) if it was renumbered or
+  // went dark. False when there is none: this has already fallen back to the
+  // scale house's relay or scheduled a retry, and the caller just stops.
+  async function camEnsureAgentCamera() {
+    const ref = agentDvrRef(camCfg.url);
+    if (!ref) return true;
+    const cams = await agentDvrStatus(ref);
+    camAgentCheckAt = Date.now();
+    // No answer proves nothing either way: let the frames decide, as before.
+    if (!cams) { camAgentOk = null; return true; }
+    const cur = cams.filter(function (c) { return c.id === ref.oid; })[0];
+    if (cur && cur.connected !== false) { camAgentOk = true; return true; }
+    const live = cams.filter(function (c) { return c.connected === true; });
+    const named = camCfg.agentCamera ? live.filter(function (c) { return c.name === camCfg.agentCamera; })[0] : null;
+    const pick = named || (live.length === 1 ? live[0] : null);
+    if (pick) {
+      ref.url.searchParams.set('oid', String(pick.id));
+      camCfg.url = ref.url.toString();
+      camCfg.agentCamera = pick.name;
+      saveCamCfg();
+      camApplyCfgToUI();
+      camAgentOk = true;
+      try { logSerial('[cam] Agent DVR ' + (cur ? cur.name + ' has no picture' : 'camera ' + ref.oid + ' does not exist') + ' -- using ' + pick.name + ', which does'); } catch (e) {}
+      return true;
+    }
+    camAgentOk = false;
+    let msg;
+    if (live.length > 1) {
+      msg = 'Agent DVR has ' + live.length + ' cameras with a picture. Pick the one that watches the scale.';
+      document.getElementById('camera-settings').classList.remove('hidden');
+      findAgentDvr();
+    } else {
+      msg = agentNoPictureMsg(cams);
+    }
+    if (await camFallBackToRelay(msg)) return false;
+    if (camActive) camFail(msg, true);
+    return false;
+  }
+  // Every 30s while live: a camera that drops mid-shift keeps "working" as the
+  // placeholder picture otherwise, and gets relayed and stamped on tickets.
+  async function camRecheckAgent() {
+    camAgentCheckAt = Date.now();
+    const ref = agentDvrRef(camCfg.url);
+    if (!ref || camAgentChecking) return;
+    camAgentChecking = true;
+    const cams = await agentDvrStatus(ref);
+    camAgentChecking = false;
+    if (!cams || !camActive || (camKind !== 'snapshot' && camKind !== 'mjpeg')) return;
+    const cur = cams.filter(function (c) { return c.id === ref.oid; })[0];
+    if (cur && cur.connected !== false) { camAgentOk = true; return; }
+    camAgentOk = false;
+    camFail('Agent DVR lost the yard camera' + (cur ? ' (' + escHtml(cur.name) + ' has no picture).' : '.'), true);
+  }
+
   async function findAgentDvr() {
     const msg = document.getElementById('agent-find-msg');
     const list = document.getElementById('agent-cam-list');
@@ -2169,22 +2287,34 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       agentDvrAt = { host: d.host, port: d.port };
       agentDvrNames = {};
       d.cameras.forEach(function (c) { agentDvrNames[c.id] = c.name; });
+      // Which of them actually has a picture. The bridge's list does not say,
+      // so ask Agent DVR itself; no answer leaves every camera as a candidate.
+      const status = await agentDvrStatus({ host: d.host, port: d.port });
+      const conn = {};
+      (status || []).forEach(function (c) { conn[c.id] = c.connected; });
+      const usable = status ? d.cameras.filter(function (c) { return conn[c.id] !== false; }) : d.cameras;
       // Nothing usable configured yet (blank, or an RTSP address that cannot
       // work): take the camera the scale house chose before, matched by NAME
       // because Agent DVR renumbers cameras that are removed and re-added, or
       // the only camera there is. Either way there is no decision to put in
-      // front of the operator.
+      // front of the operator. A camera Agent DVR says is disconnected is
+      // never taken: its picture is Agent DVR's stock placeholder.
       if (!camCfg.url || looksLikeRtsp(camCfg.url)) {
-        const named = camCfg.agentCamera ? d.cameras.filter(function (c) { return c.name === camCfg.agentCamera; })[0] : null;
-        const pick = named || (d.cameras.length === 1 ? d.cameras[0] : null);
+        const named = camCfg.agentCamera ? usable.filter(function (c) { return c.name === camCfg.agentCamera; })[0] : null;
+        const pick = named || (usable.length === 1 ? usable[0] : null);
         if (pick) {
           useAgentCamera(pick.id);
           say('text-green-700', 'Using ' + pick.name + ' from Agent DVR.');
           return;
         }
       }
+      if (!usable.length) {
+        fail('text-red-600', agentNoPictureMsg(d.cameras));
+        return;
+      }
       list.innerHTML = d.cameras.map(function (c) {
-        return '<button onclick="useAgentCamera(' + c.id + ')" class="px-2.5 py-1 rounded-full text-[10px] font-semibold border-2 border-gray-200 bg-white text-gray-600 hover:border-rc-green hover:text-rc-green"><i class="fas fa-video mr-1"></i>' + escHtml(c.name) + '</button>';
+        const dark = conn[c.id] === false;
+        return '<button onclick="useAgentCamera(' + c.id + ')" class="px-2.5 py-1 rounded-full text-[10px] font-semibold border-2 border-gray-200 bg-white ' + (dark ? 'text-gray-400' : 'text-gray-600') + ' hover:border-rc-green hover:text-rc-green"><i class="fas fa-video' + (dark ? '-slash' : '') + ' mr-1"></i>' + escHtml(c.name) + (dark ? ' (no picture)' : '') + '</button>';
       }).join('');
       list.classList.remove('hidden');
       say('text-gray-500', 'Pick the camera that watches the scale.');
