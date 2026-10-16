@@ -28,6 +28,34 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     .sh-btn:disabled { opacity:.45; cursor:not-allowed; }
     .sh-btn-primary { background:var(--sh-ink); color:#fff; border-color:var(--sh-ink); }
     .sh-btn-primary:hover { background:var(--sh-ink2); }
+    #cf-modal { --sh-ink:#1f3a2f; --sh-ink2:#2b4b3d; --sh-line:#e6e4dc; --sh-muted:#6b7a72; color:#14241d; }
+    .cf-weight { background:#263a30; border-radius:16px; padding:26px 20px; text-align:center; color:#d6ecb0; margin-bottom:22px; }
+    .cf-weight .cf-label { font-size:13px; letter-spacing:.06em; text-transform:uppercase; }
+    .cf-weight strong { display:block; color:#fff; font-size:56px; font-weight:600; letter-spacing:-2px; line-height:1.15; margin:6px 0; font-variant-numeric:tabular-nums; }
+    .cf-weight strong small { font-size:16px; letter-spacing:0; margin-left:4px; }
+    .cf-choices { display:grid; gap:12px; }
+    .cf-choice { display:flex; align-items:center; gap:16px; width:100%; text-align:left; background:#fff; border:1px solid var(--sh-line); border-radius:14px; padding:18px 20px; }
+    .cf-choice:hover:not(:disabled) { background:#f0f5e9; border-color:#b7cf9c; }
+    .cf-choice:disabled { opacity:.5; cursor:not-allowed; }
+    .cf-choice .cf-ic { font-size:22px; color:#6f9a4f; width:26px; text-align:center; flex-shrink:0; }
+    .cf-choice strong { display:block; font-size:16px; }
+    .cf-choice small { display:block; font-size:13px; color:var(--sh-muted); margin-top:3px; }
+    .cf-choice .cf-arrow { margin-left:auto; font-size:18px; color:#14241d; }
+    .cf-intro { font-size:14px; color:var(--sh-muted); margin-bottom:16px; }
+    .cf-receipt { border:1px dashed #c7d2bd; background:#fcfdf8; padding:28px; font-family:Menlo,Consolas,monospace; font-size:13px; }
+    .cf-receipt h4 { text-align:center; font-weight:700; letter-spacing:.08em; font-size:15px; }
+    .cf-receipt .cf-sub { text-align:center; color:#6b7a72; margin:10px 0 22px; line-height:1.7; }
+    .cf-receipt .cf-row { display:flex; justify-content:space-between; gap:16px; padding:7px 0; }
+    .cf-receipt .cf-row span { color:#6b7a72; }
+    .cf-receipt .cf-row b { text-align:right; }
+    .cf-receipt hr { border:0; border-top:1px dashed #ccd5c2; margin:16px 0; }
+    .cf-receipt .cf-total { display:flex; justify-content:space-between; font-size:22px; }
+    .cf-receipt .cf-total b { font-size:26px; }
+    .cf-receipt .cf-foot { text-align:center; color:#6b7a72; margin-top:18px; line-height:1.7; }
+    .cf-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; padding-top:20px; margin-top:20px; border-top:1px solid var(--sh-line); }
+    .cf-pay-total { font-size:52px; font-weight:600; letter-spacing:-2px; text-align:center; color:#2f5f45; margin:8px 0 22px; }
+    .cf-note { font-size:13px; color:var(--sh-muted); text-align:center; margin-top:16px; }
+    .cf-status { background:#f0f5e9; border:1px solid #dce8ce; border-radius:12px; padding:14px; font-size:14px; color:#3d6331; margin-top:14px; }
     .mp-intro { font-size:13px; color:var(--sh-muted); margin-bottom:12px; }
     .mp-row { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 0; border-bottom:1px solid var(--sh-line); font-size:14px; }
     .mp-row .mp-name { min-width:0; }
@@ -292,7 +320,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
       <!-- Capture button + hotkey hint -->
       <div class="mt-4 flex items-center justify-center gap-3">
-        <button onclick="captureWeight()" id="btn-capture-weight" disabled class="px-8 py-3 bg-rc-green text-white font-bold rounded-xl hover:bg-rc-green-light btn-press transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2 text-lg">
+        <button onclick="openCaptureFlow()" id="btn-capture-weight" disabled class="px-8 py-3 bg-rc-green text-white font-bold rounded-xl hover:bg-rc-green-light btn-press transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2 text-lg">
           <i class="fas fa-camera"></i> Capture Weight
         </button>
         <span class="text-xs text-gray-600 hidden sm:inline">Press <kbd class="px-1.5 py-0.5 bg-gray-700 text-gray-300 rounded text-[10px] font-mono">Space</kbd></span>
@@ -639,7 +667,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         <button type="button" id="sh-cp-primary" class="w-full sh-btn sh-btn-primary justify-center" style="padding:.65rem;"></button>
         <div class="flex gap-2" role="group" aria-label="Steps">
           <button type="button" class="sh-step" disabled title="Driver self check-in is not set up yet">Check in</button>
-          <button type="button" class="sh-step" onclick="captureWeight()">Weigh</button>
+          <button type="button" class="sh-step" onclick="openCaptureFlow()">Weigh</button>
           <button type="button" class="sh-step" onclick="openPaymentsModal('unpaid')">Bill</button>
         </div>
         <div class="grid grid-cols-3 gap-2">
@@ -1166,6 +1194,19 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   <!-- Today's payments: category -> list -> one record. Read-only view of
        the tickets; collecting goes through the existing Square/cash paths. -->
+  <!-- Capture flow: Capture Weight walks through arriving / leaving, then the
+       receipt and payment. Every step uses the existing ticket, print and
+       Square paths; nothing here is a sample. -->
+  <div id="cf-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="cf-title">
+    <div class="bg-white rounded-3xl shadow-modal modal-enter w-full max-w-xl max-h-[90vh] overflow-y-auto">
+      <div class="px-7 py-6 border-b border-gray-100 flex items-center justify-between gap-3 sticky top-0 bg-white z-10">
+        <div><div id="cf-eyebrow" class="sh-eyebrow">Capture &amp; continue</div><h3 id="cf-title" class="text-2xl font-bold tracking-tight text-gray-800 mt-1">Weight captured</h3></div>
+        <button type="button" onclick="closeModal('cf-modal')" aria-label="Close" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div id="cf-body" class="px-7 py-6"></div>
+    </div>
+  </div>
+
   <div id="sh-pay-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="sh-pay-title">
     <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-3xl max-h-[90vh] overflow-y-auto">
       <div class="p-5 border-b border-gray-100 flex items-center justify-between">
@@ -1636,7 +1677,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     switch(e.key) {
       case ' ':
         e.preventDefault();
-        if (!activeModalId && currentLiveWeight > 0 && isLive()) captureWeight();
+        if (!activeModalId && currentLiveWeight > 0 && (isLive() || remoteScale)) openCaptureFlow();
         break;
       case 'Escape':
         if (activeModalId) closeModal(activeModalId);
@@ -1705,6 +1746,154 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   function dismissAutoPrompt() {
     document.getElementById('auto-capture-prompt').classList.add('hidden');
     autoPromptShown = true;
+  }
+
+  // ── Capture flow ──
+  // Capture Weight -> arriving or leaving -> (leaving) which truck -> the
+  // ticket closes, the receipt prints by itself and is shown here -> for a
+  // pickup with a bill, how the customer pays. Every step calls the paths the
+  // rest of the page already uses, so nothing here is a separate system.
+  let cfWeight = 0, cfTicketId = null;
+  function cfSet(eyebrow, title, html) {
+    shText('cf-eyebrow', eyebrow); shText('cf-title', title);
+    document.getElementById('cf-body').innerHTML = html;
+    if (activeModalId !== 'cf-modal') openModal('cf-modal');
+  }
+  function isWalkIn(t) { return !t || !t.company_name || t.company_name === 'Walk-In'; }
+  function cfKg(n) { return Math.round(Number(n) || 0).toLocaleString('en-CA'); }
+  function cfMoney(n) { return '$' + (Number(n) || 0).toFixed(2); }
+  function openCaptureFlow() {
+    if (!(currentLiveWeight > 0)) { alert('There is no weight on the scale.'); return; }
+    if (!isLive() && !remoteScale) { alert('Live weight is stale. Reconnect the scale or use Manual Entry.'); return; }
+    cfWeight = currentLiveWeight;
+    const open = openTickets.filter(function (t) { return t.status === 'weighed_in' && !t.weight_out; });
+    cfSet('Capture & continue', 'Weight captured',
+      '<div class="cf-weight"><div class="cf-label">' + (isWeightStable ? 'Stable scale reading' : 'Scale reading · still settling') + (remoteScale && !isLive() ? ' · from the yard' : '') + '</div>'
+      + '<strong>' + cfKg(cfWeight) + '<small>kg</small></strong><div>Choose how to use this reading.</div></div>'
+      + '<div class="cf-choices">'
+      + '<button type="button" class="cf-choice" onclick="cfArrive()"><span class="cf-ic">&#8601;</span><span><strong>Arriving load</strong><small>Open a ticket with this gross weight.</small></span><span class="cf-arrow">&#8594;</span></button>'
+      + '<button type="button" class="cf-choice" onclick="cfDepart()"' + (open.length ? '' : ' disabled') + '><span class="cf-ic">&#8599;</span><span><strong>Truck leaving the yard</strong><small>' + (open.length ? 'Use this weight to complete an open ticket.' : 'No loads in the yard to complete.') + '</small></span><span class="cf-arrow">&#8594;</span></button>'
+      + '</div>');
+  }
+  function cfArrive() {
+    closeModal('cf-modal');
+    captureWeight();
+  }
+  function cfDepart() {
+    const open = openTickets.filter(function (t) { return t.status === 'weighed_in' && !t.weight_out; })
+      .sort(function (a, b) { return String(a.weight_in_at || a.created_at).localeCompare(String(b.weight_in_at || b.created_at)); });
+    cfSet('Capture & continue', 'Which truck is leaving?',
+      '<p class="cf-intro">Match the truck on the scale with a load in the yard. It is weighed out at <b>' + cfKg(currentLiveWeight) + ' kg</b>.</p><div class="cf-choices">'
+      + open.map(function (t) {
+          const who = isWalkIn(t) ? 'Unknown · live ticket' : (t.company_name || 'Customer');
+          const kind = ticketKind(t) === 'pickup' ? 'Pickup' : 'Drop-off';
+          return '<button type="button" class="cf-choice" onclick="cfComplete(' + t.id + ')"><span class="cf-ic">&#8599;</span><span><strong>' + escHtml(who) + '</strong><small>'
+            + escHtml(t.ticket_number) + (t.vehicle_plate ? ' · ' + escHtml(t.vehicle_plate) : '') + ' · ' + cfKg(t.weight_in) + ' kg in · ' + kind + '</small></span><span class="cf-arrow">&#8594;</span></button>';
+        }).join('')
+      + '</div>');
+  }
+  async function cfComplete(ticketId) {
+    cfTicketId = ticketId;
+    if (remoteScale && !isLive()) {
+      closeModal('cf-modal');
+      const r = await sendRemoteCommand('weigh_out', Number(ticketId), 'weighing out');
+      if (!r) return;
+      loadOpenTickets(); loadCompletedToday(); loadStats();
+      return cfShowReceipt(ticketId, true);
+    }
+    if (!isLive()) { alert('Live weight is stale. Reconnect the scale.'); return; }
+    if (!(currentLiveWeight > 0)) { alert('There is no weight on the scale.'); return; }
+    if (Date.now() - lastPrintTrigger < 3000) return;
+    lastPrintTrigger = Date.now();
+    const w = currentLiveWeight;
+    lastPrintWeight = w;
+    showLoading('Completing...');
+    try {
+      const photo = autoCapturePhoto('weigh-out');
+      await axios.post('/api/scale-tickets/' + ticketId + '/merge-out', { weight: w, photo: photo || null });
+      markKindQuestionClosed(Number(ticketId));
+      autoChargeSquare(Number(ticketId));
+      hideLoading();
+      await autoPrintReceipt(Number(ticketId));
+      loadOpenTickets(); loadCompletedToday(); loadStats();
+      await cfShowReceipt(ticketId, false);
+    } catch (e) {
+      alert('Could not complete the ticket: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+    } finally { hideLoading(); }
+  }
+  async function cfShowReceipt(ticketId, remote) {
+    let r;
+    try { r = (await axios.get('/api/scale-tickets/' + ticketId + '/receipt')).data.receipt; }
+    catch (e) { alert('The ticket closed, but its receipt could not be loaded: ' + ((e.response && e.response.data && e.response.data.error) || e.message)); return; }
+    const pickup = r.ticket_type === 'pickup';
+    const paid = r.payment_status === 'paid';
+    const due = pickup && !paid && Number(r.grand_total) > 0;
+    const row = function (k, v) { return '<div class="cf-row"><span>' + k + '</span><b>' + escHtml(v === null || v === undefined || v === '' ? 'Not recorded' : String(v)) + '</b></div>'; };
+    const look = parseLook(r.appearance_in) || parseLook(r.appearance_out);
+    const gross = Math.max(Number(r.weight_in) || 0, Number(r.weight_out) || 0), tare = Math.min(Number(r.weight_in) || 0, Number(r.weight_out) || 0);
+    let money = '';
+    if (pickup) {
+      money = '<hr>' + row('Subtotal', cfMoney(r.subtotal)) + row('GST (' + Math.round((Number(r.tax_rate) || 0.05) * 100) + '%)', cfMoney(r.tax_amount))
+        + '<hr><div class="cf-total"><span>Total CAD</span><b>' + cfMoney(r.grand_total) + '</b></div>';
+    } else {
+      money = '<hr><div class="cf-total"><span>Drop-off</span><b>No charge</b></div>';
+    }
+    cfSet('Load complete', 'Receipt preview',
+      '<div class="cf-receipt"><h4>' + escHtml(r.company || 'REUSE CANADA') + '</h4>'
+      + '<div class="cf-sub">' + (pickup ? 'PICKUP' : 'DROP-OFF') + '<br>' + escHtml(r.ticket_number) + ' · ' + escHtml(String(r.date || '').slice(0, 10)) + '</div>'
+      + row('Customer', r.customer || 'Walk-in')
+      + row('Vehicle', look ? [look.make, look.body].filter(Boolean).map(titleCase).join(' ') : '')
+      + row('Colour', look && look.color ? titleCase(look.color) : '')
+      + row('Licence plate #', r.vehicle_plate)
+      + row('Driver name', r.driver_name)
+      + row('Material', getMaterialLabel(r.material))
+      + row('Gross / tare', cfKg(gross) + ' / ' + cfKg(tare) + ' kg')
+      + row('Net weight', cfKg(Math.abs(Number(r.net_weight) || 0)) + ' kg')
+      + (pickup ? row('Rate', cfMoney(r.price_per_kg) + ' / kg') : '')
+      + money
+      + '<div class="cf-foot">' + (pickup ? (paid ? 'PAID · ' + escHtml(String(r.payment_method || '').toUpperCase()) : (due ? 'PAYMENT DUE' : 'NO PAYMENT DUE')) : 'NO CHARGE') + '<br>Thank you for recycling with us.</div></div>'
+      + '<p class="cf-note">' + (remote ? 'The receipt printed at the yard.' : 'The receipt printed automatically.') + '</p>'
+      + '<div class="cf-actions">'
+      + (remote ? '' : '<button type="button" class="mp-btn" onclick="cfReprint(' + ticketId + ')"><i class="fas fa-print mr-1"></i> Print again</button>')
+      + (due ? '<button type="button" class="mp-btn mp-btn-primary" onclick="cfPayment(' + ticketId + ')">Take payment &#8594;</button>'
+             : '<button type="button" class="mp-btn mp-btn-primary" onclick="closeModal(&quot;cf-modal&quot;)">Done</button>')
+      + '</div>');
+  }
+  async function cfReprint(ticketId) { await autoPrintReceipt(Number(ticketId)); }
+  async function cfPayment(ticketId) {
+    let t;
+    try { t = (await axios.get('/api/scale-tickets/' + ticketId)).data.ticket; } catch (e) { alert('Could not load the ticket.'); return; }
+    const onTerminal = t.payment_status === 'pending';
+    cfSet('Payment', 'How is the customer paying?',
+      '<p class="cf-intro">' + escHtml(t.ticket_number) + ' · ' + escHtml(isWalkIn(t) ? 'Walk-in' : (t.company_name || 'Customer')) + '</p>'
+      + '<div class="cf-pay-total">' + cfMoney(t.grand_total) + '</div>'
+      + '<div class="cf-choices">'
+      + '<button type="button" class="cf-choice" onclick="cfPayCard(' + t.id + ')"><span class="cf-ic"><i class="fas fa-credit-card"></i></span><span><strong>Card · Square Terminal</strong><small>' + (onTerminal ? 'The bill is already on the Square Terminal at the scale. Press to send it again.' : 'Send the bill to the Square Terminal at the scale.') + '</small></span><span class="cf-arrow">&#8594;</span></button>'
+      + '<button type="button" class="cf-choice" onclick="cfPayCash(' + t.id + ')"><span class="cf-ic">$</span><span><strong>Cash</strong><small>Record ' + cfMoney(t.grand_total) + ' paid in cash.</small></span><span class="cf-arrow">&#8594;</span></button>'
+      + '<button type="button" class="cf-choice" onclick="closeModal(&quot;cf-modal&quot;)"><span class="cf-ic"><i class="far fa-clock"></i></span><span><strong>Pay later</strong><small>Keep this ticket unpaid for follow-up.</small></span><span class="cf-arrow">&#8594;</span></button>'
+      + '</div><div id="cf-pay-status"></div>');
+  }
+  async function cfPayCard(ticketId) {
+    const st = document.getElementById('cf-pay-status');
+    st.innerHTML = '<div class="cf-status">Sending to the Square Terminal…</div>';
+    await autoChargeSquare(Number(ticketId), { force: true });
+    try {
+      const t = (await axios.get('/api/scale-tickets/' + ticketId)).data.ticket;
+      st.innerHTML = '<div class="cf-status">' + (t.payment_status === 'paid' ? 'Paid by card.' : t.payment_status === 'pending' ? 'The bill is on the Square Terminal. The customer can tap their card now. This window can be closed; the payment is recorded when they pay.' : 'The Square Terminal did not take the bill. Check the Square card on the station, or take cash.') + '</div>';
+    } catch (e) { st.innerHTML = ''; }
+  }
+  async function cfPayCash(ticketId) {
+    const st = document.getElementById('cf-pay-status');
+    try {
+      const t = (await axios.get('/api/scale-tickets/' + ticketId)).data.ticket;
+      if (t.payment_status === 'paid') { st.innerHTML = '<div class="cf-status">This ticket is already paid.</div>'; return; }
+      if (!confirm('Record cash payment of ' + cfMoney(t.grand_total) + '?')) return;
+      await axios.post('/api/square/cash-payment', { scale_ticket_id: Number(ticketId), amount: Number(t.grand_total) || 0 });
+      loadCompletedToday(); loadStats(); try { loadSettlement(); } catch (e) {}
+      st.innerHTML = '<div class="cf-status">Paid in cash: ' + cfMoney(t.grand_total) + '.</div><div class="cf-actions"><button type="button" class="mp-btn mp-btn-primary" onclick="closeModal(&quot;cf-modal&quot;)">Done</button></div>';
+    } catch (e) {
+      st.innerHTML = '<div class="cf-status" style="background:#fff4f2;border-color:#efd2cd;color:#a63e37;">Could not record cash: ' + escHtml((e.response && e.response.data && e.response.data.error) || e.message) + '</div>';
+    }
   }
 
   async function captureWeight() {
@@ -5906,7 +6095,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const btn = document.getElementById('sh-cp-primary');
     if (btn) {
       if (mode === 'live') { btn.innerHTML = '<i class="fas fa-eye"></i> Show what it is doing'; btn.onclick = function () { openSettings('agent'); const l = document.getElementById('agent-log'); if (l) l.scrollIntoView({ block: 'center' }); }; btn.disabled = false; }
-      else { btn.innerHTML = '<i class="fas fa-camera"></i> Capture weight'; btn.onclick = function () { captureWeight(); }; btn.disabled = !live; btn.title = live ? '' : 'Connect the scale first'; }
+      else { btn.innerHTML = '<i class="fas fa-camera"></i> Capture weight'; btn.onclick = function () { openCaptureFlow(); }; btn.disabled = !live; btn.title = live ? '' : 'Connect the scale first'; }
     }
     shText('sh-cp-yard', String((openTickets || []).length));
     shText('sh-cp-questions', String((typeof kindPromptQueue !== 'undefined' ? kindPromptQueue : []).length));
