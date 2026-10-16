@@ -917,11 +917,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </label>
           <label class="block text-xs text-gray-600 mt-2">Pickup receipts print on
             <select id="pickup-receipt-dest" onchange="savePickupReceiptDest(this.value)" class="mt-1 w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs">
-              <option value="square">Square Terminal, after payment</option>
-              <option value="printer">This receipt printer</option>
-              <option value="both">Both</option>
+              <option value="both">Scale ticket here at close + Square receipt after payment</option>
+              <option value="printer">Scale ticket here only</option>
             </select>
-            <span class="block text-[10px] text-gray-400 mt-1 leading-snug">The Square Terminal can only print a receipt for a payment, so drop-offs always print here. A pickup that is not paid prints here instead.</span>
+            <span class="block text-[10px] text-gray-400 mt-1 leading-snug">Every ticket prints here the moment it closes. For a paid pickup the Square Terminal then prints its own receipt.</span>
           </label>
           <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer mt-1.5">
             <input type="checkbox" id="print-photos" checked onchange="savePrintPhotos(this.checked)" class="rounded"> Print scale photos on the receipt
@@ -4047,7 +4046,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // the payment lands (card or cash), so with 'square' the yard printer skips
   // pickups at close and is only the fallback when nothing gets paid.
   function pickupReceiptDest() {
-    try { const v = localStorage.getItem('rc_pickup_receipt'); return v === 'printer' || v === 'both' ? v : 'square'; } catch (e) { return 'square'; }
+    // Owner, 2026-10-16: the scale ticket prints the moment a ticket closes,
+    // pickups included, and Square's receipt follows on the Terminal once
+    // paid. 'square' (Terminal only) is retired and reads as 'both'.
+    try { return localStorage.getItem('rc_pickup_receipt') === 'printer' ? 'printer' : 'both'; } catch (e) { return 'both'; }
   }
   function savePickupReceiptDest(v) {
     try { localStorage.setItem('rc_pickup_receipt', v); } catch (e) {}
