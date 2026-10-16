@@ -1804,8 +1804,21 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         }).join('')
       + '</div>');
   }
-  async function cfComplete(ticketId) {
+  // The weigh-out decides what the visit was, in Manual mode just as in Auto:
+  // leaving heavier than it came in is a pickup (paid), lighter is a drop-off
+  // (free). A ticket marked the other way is corrected before it closes.
+  async function cfComplete(ticketId, decided) {
     cfTicketId = ticketId;
+    const tk = openTickets.find(function (x) { return x.id === Number(ticketId); });
+    if (!decided && tk && currentLiveWeight > 0) {
+      const tol = Math.max(1, Number(agentSettings && agentSettings.min_net_kg) || 10);
+      const wIn = Number(tk.weight_in) || 0;
+      if (ticketKind(tk) === 'dropoff' && currentLiveWeight > wIn + tol) return cfAskMaterial(tk, currentLiveWeight);
+      if (ticketKind(tk) === 'pickup' && currentLiveWeight < wIn - tol) {
+        agentLog(tk.ticket_number + ' is leaving lighter than it came in, so it is a drop-off (no charge)');
+        if (!(await setTicketType(tk.id, 'dropoff'))) return;
+      }
+    }
     if (remoteScale && !isLive()) {
       closeModal('cf-modal');
       const r = await sendRemoteCommand('weigh_out', Number(ticketId), 'weighing out');
@@ -1832,6 +1845,31 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     } catch (e) {
       alert('Could not complete the ticket: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
     } finally { hideLoading(); }
+  }
+  function cfAskMaterial(t, w) {
+    const added = Math.max(0, w - (Number(t.weight_in) || 0));
+    const def = t.tire_type || (agentSettings && agentSettings.material) || '';
+    const list = pricingData.slice().sort(function (a, b) { return (a.material_type === def ? -1 : 0) - (b.material_type === def ? -1 : 0); });
+    cfSet('Pickup · paid', 'What did they pick up?',
+      '<p class="cf-intro">' + escHtml(t.ticket_number) + ' came in at <b>' + cfKg(t.weight_in) + ' kg</b> and is leaving at <b>' + cfKg(w) + ' kg</b>: <b>' + cfKg(added) + ' kg</b> loaded. Pickups are paid; choose the material to bill.</p><div class="cf-choices">'
+      + list.map(function (p) {
+          const rate = p.pickup_price_per_kg === null || p.pickup_price_per_kg === undefined ? null : Number(p.pickup_price_per_kg);
+          return '<button type="button" class="cf-choice"' + (p.material_type === def ? ' style="border-color:#7aa65a;background:#f0f5e9"' : '') + ' onclick="cfPickMaterial(' + t.id + ', &quot;' + escAttr(p.material_type) + '&quot;)">'
+            + '<span class="cf-ic"><i class="fas fa-recycle"></i></span><span><strong>' + escHtml(getMaterialLabel(p.material_type)) + '</strong><small>'
+            + (rate === null ? 'No pickup price yet: you will set it next' : '$' + rate.toFixed(2) + '/kg · about ' + cfMoney(added * rate * 1.05) + ' with GST') + '</small></span><span class="cf-arrow">&#8594;</span></button>';
+        }).join('')
+      + '</div>');
+  }
+  async function cfPickMaterial(ticketId, material) {
+    try {
+      await axios.post('/api/scale-tickets/' + ticketId + '/assign', { tire_type: material });
+    } catch (e) {
+      alert('Could not set the material: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+      return;
+    }
+    closeModal('cf-modal');
+    // Marks it a pickup (or opens the price box first), then closes it.
+    await setTicketType(Number(ticketId), 'pickup', function () { cfComplete(Number(ticketId), true); });
   }
   async function cfShowReceipt(ticketId, remote) {
     let r;
@@ -4402,13 +4440,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           driver_phone: driverPhone,
         });
       }
-      const photo = autoCapturePhoto('weigh-out');
-      await axios.post('/api/scale-tickets/' + ticketId + '/merge-out', { weight: currentLiveWeight, photo: photo || null });
+      // Close it through the same path as Truck leaving the yard, so the
+      // weight decides drop-off (free) or pickup (paid) here too.
       closeAssignModal();
-      loadTicketDetail(ticketId);
-      loadOpenTickets(); loadCompletedToday(); loadStats();
-      autoChargeSquare(Number(ticketId));
-      autoPrintReceipt(ticketId);
+      hideLoading();
+      lastPrintTrigger = 0;
+      await loadOpenTickets();
+      await cfComplete(Number(ticketId));
     } catch (err) {
       alert(err.response?.data?.error || 'Failed');
     } finally {
@@ -5387,6 +5425,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // reading for the selected ticket, then routes through the existing merge
   // confirm flow so the operator can verify net weight + total before printing.
   async function connectToTruckOnScale(ticketId) {
+    // Same path as Capture Weight > Truck leaving the yard: decides drop-off
+    // or pickup from the weight, then receipt and payment.
+    if ((isLive() || remoteScale) && currentLiveWeight > 0) { cfWeight = currentLiveWeight; cfComplete(Number(ticketId)); return; }
     if (remoteScale && !isLive()) { remoteWeighOut(ticketId); return; }
     if (!isLive() && connectionMode !== 'sim') {
       alert(remoteScaleMsg('Scale is disconnected or stale — reconnect to capture the outbound weight.'));
