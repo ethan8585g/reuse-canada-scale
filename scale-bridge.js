@@ -292,6 +292,11 @@ function printPdf(pdfBase64, printer, title) {
   try {
     // No -o raw: CUPS must run its PDF filter chain for the target printer.
     const args = ['-d', printer];
+    // The receipt PDF is a custom 80mm-wide page. An office printer treats
+    // that as a paper size to be loaded and holds every job on
+    // "media-needed" with a full tray. Ask for Letter instead, at actual
+    // size, so it prints on the paper already in the drawer.
+    if (!isReceiptQueue(printer)) args.push('-o', 'media=Letter', '-o', 'print-scaling=none');
     if (title) args.push('-t', String(title).slice(0, 60));
     args.push(tmp);
     return execFileSync('lp', args, { encoding: 'utf8' }).trim();
