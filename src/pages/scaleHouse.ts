@@ -4652,7 +4652,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (!pricingData.length) { setAgentMode('live'); return; }
     const cur = (agentSettings && agentSettings.material) || 'mixed';
     cfSet('Auto mode', 'Which material is coming in?',
-      '<p class="cf-intro">Auto mode opens and closes tickets by itself with this material. A truck that leaves heavier is a pickup, and you will be asked what it loaded.</p><div class="cf-choices">'
+      '<p class="cf-intro">Auto mode does everything by itself with this material: a truck that leaves lighter is a free drop-off; one that leaves heavier is a pickup, billed on the Square Terminal at its pickup price.</p><div class="cf-choices">'
       + pricingData.map(function (p) {
           return '<button type="button" class="cf-choice"' + (p.material_type === cur ? ' style="border-color:#7aa65a;background:#f0f5e9"' : '') + ' onclick="startAutoMode(&quot;' + escAttr(p.material_type) + '&quot;)">'
             + '<span class="cf-ic"><i class="fas fa-recycle"></i></span><span><strong>' + escHtml(getMaterialLabel(p.material_type)) + '</strong>'
@@ -4661,8 +4661,17 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       + '</div>');
   }
   async function startAutoMode(material) {
+    // Auto mode bills pickups by itself, so the material needs a pickup price
+    // now -- never while a truck is waiting on the scale.
+    const pm = pricingData.find(function (x) { return x.material_type === material; });
+    if (pm && (pm.pickup_price_per_kg === null || pm.pickup_price_per_kg === undefined)) {
+      closeModal('cf-modal');
+      openPickupPriceModal(material, function () { startAutoMode(material); });
+      return;
+    }
     try {
-      const res = await axios.put('/api/scale-agent/settings', { mode: 'live', material: material });
+      // Hands off: no customer window after a close, no cancel countdown.
+      const res = await axios.put('/api/scale-agent/settings', { mode: 'live', material: material, customer_prompt: 'off', cancel_seconds: 0 });
       agentSettings = res.data.settings;
       applyAgentSettingsToUI();
       try { shRenderMaterial(); shSyncStrip(); } catch (e) {}
@@ -4883,8 +4892,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         const c0 = Array.isArray(d.candidates) && d.candidates.length === 1 ? d.candidates[0] : null;
         if (d.mode === 'live' && c0 && ticketKind(c0) === 'dropoff' && weight > Number(c0.weight_in)
             && (d.rule === 'single_truck_unexpected_arrival' || d.rule === 'plate_match_not_lighter')) {
-          agentLog(c0.ticket_number + ' is leaving heavier than it arrived — a pickup; asking which material to bill');
-          promptTicketKind({
+          agentLog(c0.ticket_number + ' is leaving heavier than it arrived — a pickup; billing it automatically');
+          autoCloseAsPickup({
             id: c0.id, number: c0.ticket_number, weight: Number(c0.weight_in), pickupMaterial: true,
             weighOut: {
               weight: weight, photo: photo || null, decision_id: d.decision_id || null,
@@ -7323,6 +7332,19 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     } else {
       showKindPrompt();
       document.getElementById('kp-error').textContent = 'Could not mark it a pickup. Try again, or use the switch on its ticket.';
+    }
+  }
+  // Auto mode, truck left heavier: a pickup, billed with the ticket's material
+  // (the Auto-mode material) with nobody pressing anything. Only if that
+  // material has no pickup price does it fall back to asking.
+  async function autoCloseAsPickup(q) {
+    try {
+      await axios.post('/api/scale-tickets/' + q.id + '/type', { ticket_type: 'pickup' });
+      await closeAsPickup(q);
+    } catch (e) {
+      const data = (e.response && e.response.data) || {};
+      agentLog(q.number + ': could not bill it automatically (' + (data.error || e.message) + ') — asking instead');
+      promptTicketKind(q);
     }
   }
   // Auto mode, truck left heavier: the person inside picks what was loaded.
