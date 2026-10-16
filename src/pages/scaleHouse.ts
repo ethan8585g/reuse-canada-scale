@@ -28,6 +28,30 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     .sh-btn:disabled { opacity:.45; cursor:not-allowed; }
     .sh-btn-primary { background:var(--sh-ink); color:#fff; border-color:var(--sh-ink); }
     .sh-btn-primary:hover { background:var(--sh-ink2); }
+    .mp-intro { font-size:13px; color:var(--sh-muted); margin-bottom:12px; }
+    .mp-row { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 0; border-bottom:1px solid var(--sh-line); font-size:14px; }
+    .mp-row .mp-name { min-width:0; }
+    .mp-row .mp-notes { display:block; font-size:11px; color:var(--sh-muted); margin-top:3px; }
+    .mp-row img { display:block; width:56px; height:42px; object-fit:cover; border-radius:6px; margin-top:6px; }
+    .mp-rate { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+    .mp-rate input { width:90px; text-align:right; }
+    #settings-modal .mp-rate input, #settings-modal .mp-field input, #settings-modal .mp-field textarea { border:1px solid #dce3d5; border-radius:8px; background:#fff; padding:10px 12px; font-size:14px; color:#14241d; }
+    #settings-modal .mp-field textarea { resize:vertical; min-height:80px; }
+    .mp-add { margin-top:18px; }
+    .mp-add summary { cursor:pointer; font-size:13px; font-weight:650; color:var(--sh-ink); padding:8px 6px; border-radius:6px; }
+    .mp-add summary:focus-visible { outline:3px solid #8acb9f; outline-offset:2px; }
+    .mp-field { display:flex; flex-direction:column; gap:7px; margin:16px 0; font-size:13px; font-weight:600; color:#14241d; }
+    .mp-field small, .mp-opt, .mp-hint { font-weight:400; color:var(--sh-muted); font-size:11px; }
+    .mp-pic-preview { display:flex; align-items:center; gap:12px; }
+    .mp-pic-preview img { width:96px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--sh-line); }
+    .mp-link { border:0; background:none; color:var(--sh-ink); font-size:12px; font-weight:600; padding:6px 0; text-decoration:underline; }
+    .mp-msg { font-size:12px; color:#a63e37; min-height:1em; margin-top:8px; }
+    .mp-msg.ok { color:var(--sh-ink); }
+    .mp-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:20px; margin-top:12px; border-top:1px solid var(--sh-line); }
+    .mp-btn { border:1px solid var(--sh-line); background:#fff; border-radius:10px; padding:12px 20px; font-size:14px; font-weight:650; color:#14241d; }
+    .mp-btn-primary { background:var(--sh-ink); border-color:var(--sh-ink); color:#fff; }
+    .mp-btn-primary:hover { background:var(--sh-ink2); }
+    .mp-btn:disabled { opacity:.5; cursor:not-allowed; }
     #weighbridge-panel { background:var(--sh-ink) !important; border-color:var(--sh-ink2) !important; border-radius:20px !important; }
     #weighbridge-panel [class*="bg-gray-800"] { background:rgba(0,0,0,.18) !important; }
     #weighbridge-panel [class*="border-gray-6"], #weighbridge-panel [class*="border-gray-7"] { border-color:rgba(255,255,255,.12) !important; }
@@ -708,7 +732,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   <div id="settings-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="sp-title">
     <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-2xl max-h-[90vh] overflow-y-auto">
       <div class="p-5 border-b border-gray-100 flex items-center justify-between gap-3 sticky top-0 bg-white z-10">
-        <div><div class="sh-eyebrow">Equipment &amp; settings</div><h3 id="sp-title" class="text-lg font-bold text-gray-800"></h3></div>
+        <div><div class="sh-eyebrow">Equipment &amp; settings</div><h3 id="sp-title" class="text-2xl font-bold tracking-tight text-gray-800"></h3></div>
         <button type="button" onclick="closeSettings()" aria-label="Close settings" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
       </div>
       <div class="p-5">
@@ -870,17 +894,28 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         </div>
       </div>
       </div>
-      <div data-sp="pricing" style="display:none;" class="space-y-4">
-      <!-- Material Pricing -->
-      <div class="sh-card overflow-hidden">
-        <div class="p-3 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-tags text-purple-600"></i> Pickup Prices</h3>
-          <button id="btn-manage-pricing" onclick="openPricingModal()" class="hidden text-xs font-semibold text-blue-600 hover:text-blue-700"><i class="fas fa-sliders mr-1"></i>Manage</button>
+      <div data-sp="pricing" style="display:none;">
+      <!-- Material pricing: one form, matching the redesign. The rate is the
+           PICKUP price -- the only price that bills anybody at this scale. -->
+      <form id="mp-form" onsubmit="event.preventDefault(); mpSave();" novalidate>
+        <p class="mp-intro">Pickup rates per kilogram, before GST. Drop-offs are never charged.</p>
+        <div id="pricing-table"><div class="mp-intro">Loading…</div></div>
+        <details id="mp-add" class="mp-add">
+          <summary>+ Add a material</summary>
+          <div id="mp-add-locked" class="mp-hint" style="display:none;">Only an admin or manager can add materials.</div>
+          <label class="mp-field">Material name<input id="mp-new-name" maxlength="80" placeholder="Material name"></label>
+          <label class="mp-field">Rate per kg<input id="mp-new-rate" type="number" min="0" max="1000" step="0.01" value="0.10"></label>
+          <label class="mp-field">Notes <span class="mp-opt">Optional</span><textarea id="mp-new-notes" maxlength="1000" placeholder="Describe the material, accepted condition or handling instructions…"></textarea></label>
+          <label class="mp-field">Attach picture <span class="mp-opt">Optional</span><input id="mp-new-pic" type="file" accept="image/jpeg,image/png,image/webp" onchange="mpPickPicture(this)"><small>JPG, PNG or WebP · under 20 MB · resized for preview and saved only in this browser</small></label>
+          <div id="mp-pic-preview" style="display:none;" class="mp-pic-preview"><img id="mp-pic-img" alt="Attached material picture"><button type="button" class="mp-link" onclick="mpClearPicture()">Remove picture</button></div>
+        </details>
+        <button type="button" id="btn-manage-pricing" onclick="openPricingModal()" class="mp-link" style="display:none;">Edit drop-off rates or remove materials</button>
+        <p id="mp-msg" class="mp-msg" role="alert"></p>
+        <div class="mp-actions">
+          <button type="button" class="mp-btn" onclick="closeSettings()">Cancel</button>
+          <button type="submit" id="mp-save" class="mp-btn mp-btn-primary">Save settings</button>
         </div>
-        <div id="pricing-table" class="p-3">
-          <div class="text-center text-gray-400 text-xs py-2"><i class="fas fa-spinner fa-spin mr-1"></i>Loading...</div>
-        </div>
-      </div>
+      </form>
       </div>
       <div data-sp="square" style="display:none;" class="space-y-4">
       <!-- Square Terminal -->
@@ -5315,22 +5350,124 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     } catch(err) {}
   }
 
-  // The sidebar shows PICKUP prices -- the only prices that bill anybody at
-  // this scale now -- and every row is editable by the operator.
+  // Material pricing rows: the PICKUP price is the rate -- the only price that
+  // bills anybody at this scale now -- and every row is editable by the
+  // operator. A row being edited is never re-rendered underneath them.
+  let mpDirty = false;
+  function mpPics() { try { return JSON.parse(localStorage.getItem('rc_material_pics') || '{}') || {}; } catch (e) { return {}; } }
   function renderPricingPanel() {
     const div = document.getElementById('pricing-table');
     if (!div) return;
-    if (!pricingData.length) { div.innerHTML = '<div class="text-center text-gray-400 text-xs">No materials</div>'; return; }
-    div.innerHTML = '<div class="text-[10px] text-gray-400 mb-1.5 leading-snug">Pickup price per kg + GST. Drop-offs are never charged.</div>'
-      + '<div class="space-y-0.5">' + pricingData.map(function (p) {
-        const set = p.pickup_price_per_kg !== null && p.pickup_price_per_kg !== undefined;
-        return '<button type="button" onclick="openPickupPriceModal(&quot;' + escHtml(p.material_type) + '&quot;)" class="w-full flex items-center justify-between text-xs py-1.5 px-1 rounded hover:bg-purple-50 border-b border-gray-50 last:border-0 text-left">'
-          + '<span class="text-gray-600 min-w-0"><span class="block">' + escHtml(getMaterialLabel(p.material_type)) + '</span>' + (p.notes ? '<span class="block text-[10px] text-gray-400 leading-snug truncate" title="' + escAttr(p.notes) + '">' + escHtml(p.notes) + '</span>' : '') + '</span>'
-          + (set
-            ? '<span class="font-mono font-semibold text-gray-800">$' + Number(p.pickup_price_per_kg).toFixed(2) + '/kg <i class="fas fa-pen text-[9px] text-gray-300 ml-1"></i></span>'
-            : '<span class="text-[10px] text-purple-600 font-semibold">Set price <i class="fas fa-pen text-[9px] ml-1"></i></span>')
-          + '</button>';
-      }).join('') + '</div>';
+    if (mpDirty && shSettingsOpen === 'pricing') return;
+    if (!pricingData.length) { div.innerHTML = '<div class="mp-intro">No materials yet.</div>'; return; }
+    const pics = mpPics();
+    div.innerHTML = pricingData.map(function (p) {
+      const set = p.pickup_price_per_kg !== null && p.pickup_price_per_kg !== undefined;
+      const label = getMaterialLabel(p.material_type);
+      return '<label class="mp-row"><span class="mp-name">' + escHtml(label)
+        + (p.notes ? '<span class="mp-notes">' + escHtml(p.notes) + '</span>' : '')
+        + (pics[p.material_type] ? '<img src="' + escAttr(pics[p.material_type]) + '" alt="' + escAttr(label) + ' reference picture">' : '')
+        + '</span><span class="mp-rate">$ <input type="number" min="0" max="1000" step="0.01" data-mp-id="' + p.id + '" value="' + (set ? Number(p.pickup_price_per_kg) : '') + '" placeholder="Not set" oninput="mpDirty = true" aria-label="' + escAttr(label) + ' pickup price per kilogram"></span></label>';
+    }).join('');
+  }
+
+  // Picture for a new material: resized here and kept in this browser only.
+  let mpPicture = '';
+  function mpClearPicture() {
+    mpPicture = '';
+    const f = document.getElementById('mp-new-pic'); if (f) f.value = '';
+    document.getElementById('mp-pic-preview').style.display = 'none';
+  }
+  function mpPickPicture(input) {
+    const msg = document.getElementById('mp-msg');
+    const file = input.files && input.files[0];
+    mpPicture = '';
+    document.getElementById('mp-pic-preview').style.display = 'none';
+    if (!file) return;
+    if (['image/jpeg', 'image/png', 'image/webp'].indexOf(file.type) < 0) { msg.className = 'mp-msg'; msg.textContent = 'Pick a JPG, PNG or WebP picture.'; input.value = ''; return; }
+    if (file.size > 20 * 1024 * 1024) { msg.className = 'mp-msg'; msg.textContent = 'That picture is over 20 MB.'; input.value = ''; return; }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = function () {
+      const k = Math.min(1, 320 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      mpPicture = c.toDataURL('image/jpeg', 0.8);
+      document.getElementById('mp-pic-img').src = mpPicture;
+      document.getElementById('mp-pic-preview').style.display = 'flex';
+      msg.textContent = '';
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); msg.className = 'mp-msg'; msg.textContent = 'That picture could not be read.'; input.value = ''; };
+    img.src = url;
+  }
+
+  function mpReset() {
+    mpDirty = false;
+    ['mp-new-name', 'mp-new-notes'].forEach(function (id) { const el = document.getElementById(id); if (el) el.value = ''; });
+    const r = document.getElementById('mp-new-rate'); if (r) r.value = '0.10';
+    mpClearPicture();
+    const add = document.getElementById('mp-add'); if (add) add.open = false;
+    const msg = document.getElementById('mp-msg'); if (msg) { msg.className = 'mp-msg'; msg.textContent = ''; }
+    const canAdd = ['admin', 'manager'].indexOf(currentUserRole) >= 0;
+    ['mp-new-name', 'mp-new-rate', 'mp-new-notes', 'mp-new-pic'].forEach(function (id) { const el = document.getElementById(id); if (el) el.disabled = !canAdd; });
+    document.getElementById('mp-add-locked').style.display = canAdd ? 'none' : '';
+    renderPricingPanel();
+  }
+
+  async function mpSave() {
+    const msg = document.getElementById('mp-msg');
+    const btn = document.getElementById('mp-save');
+    msg.className = 'mp-msg'; msg.textContent = '';
+    // Read and check everything before writing anything.
+    const changes = [];
+    const inputs = document.querySelectorAll('#pricing-table input[data-mp-id]');
+    for (let i = 0; i < inputs.length; i++) {
+      const el = inputs[i];
+      const p = pricingData.find(function (x) { return String(x.id) === el.dataset.mpId; });
+      if (!p) continue;
+      const raw = el.value.trim();
+      const v = raw === '' ? null : Number(raw);
+      if (v !== null && (!isFinite(v) || v < 0 || v > 1000)) { msg.textContent = getMaterialLabel(p.material_type) + ': enter a rate between 0 and 1000, or leave it empty.'; el.focus(); return; }
+      const cur = (p.pickup_price_per_kg === null || p.pickup_price_per_kg === undefined) ? null : Number(p.pickup_price_per_kg);
+      if (v !== cur) changes.push({ id: p.id, v: v });
+    }
+    const name = document.getElementById('mp-new-name').value.trim();
+    const rateRaw = document.getElementById('mp-new-rate').value.trim();
+    const notes = document.getElementById('mp-new-notes').value.trim();
+    const rate = Number(rateRaw);
+    if (name) {
+      if (rateRaw === '' || !isFinite(rate) || rate < 0 || rate > 1000) { msg.textContent = 'New material: enter a rate between 0 and 1000.'; document.getElementById('mp-new-rate').focus(); return; }
+    } else if (notes || mpPicture) { msg.textContent = 'New material: enter a material name.'; document.getElementById('mp-new-name').focus(); return; }
+    if (!changes.length && !name) { closeSettings(); return; }
+    btn.disabled = true;
+    let done = 0;
+    try {
+      for (let i = 0; i < changes.length; i++) {
+        await axios.post('/api/pricing/' + changes[i].id + '/pickup', { pickup_price_per_kg: changes[i].v });
+        done++;
+      }
+      if (name) {
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 50);
+        const res = await axios.post('/api/pricing', { material_type: slug, description: name, price_per_kg: rate, price_per_tire: 0, notes: notes });
+        await axios.post('/api/pricing/' + res.data.id + '/pickup', { pickup_price_per_kg: rate });
+        if (mpPicture) {
+          const pics = mpPics(); pics[res.data.material_type] = mpPicture;
+          try { localStorage.setItem('rc_material_pics', JSON.stringify(pics)); } catch (e) { /* storage full: the material is still saved */ }
+        }
+      }
+      mpDirty = false;
+      await loadPricing();
+      btn.disabled = false;
+      closeSettings();
+    } catch (e) {
+      const err = (e.response && e.response.data && e.response.data.error) || e.message;
+      msg.textContent = (done ? done + ' rate' + (done === 1 ? '' : 's') + ' saved, then: ' : 'Not saved: ') + err;
+      btn.disabled = false;
+      mpDirty = false;
+      loadPricing();
+    }
   }
 
   async function loadPricing() {
@@ -5817,6 +5954,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     shText('sp-title', card ? card[2] : 'Settings');
     shSettingsOpen = key;
     if (key === 'camera') renderCamsList();
+    if (key === 'pricing') mpReset();
     if (key === 'branding' && brandSaved) { brandDirty = false; brandFill(brandSaved); }
     openModal('settings-modal');
   }
@@ -7098,7 +7236,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       // Reveal price-management button only to roles permitted by the backend
       // (mirrors roleRequired('admin','manager') on POST/DELETE /api/pricing).
       if (['admin','manager'].includes(currentUserRole)) {
-        document.getElementById('btn-manage-pricing')?.classList.remove('hidden');
+        { const bmp = document.getElementById('btn-manage-pricing'); if (bmp) bmp.style.display = ''; }
         // Writing a weight the scale never reported is not something a yard
         // operator session should be able to do, even for a test.
         const tl = document.getElementById('test-load-box');
