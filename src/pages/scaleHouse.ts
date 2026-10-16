@@ -5,7 +5,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   return layout('Scale House', employeePageWrapper('scale-house', 'Scale House — Truck Scale', `
 
   <style>
-    .sh-wrap, #sh-pay-modal { --sh-ink:#1f3a2f; --sh-ink2:#2b4b3d; --sh-lime:#dcf2a2; --sh-line:#e6e4dc; --sh-muted:#6b7a72; --sh-soft:#f1f0e8; color:#14241d; }
+    .sh-wrap, #sh-pay-modal, #settings-modal { --sh-ink:#1f3a2f; --sh-ink2:#2b4b3d; --sh-lime:#dcf2a2; --sh-line:#e6e4dc; --sh-muted:#6b7a72; --sh-soft:#f1f0e8; color:#14241d; }
     .sh-eyebrow { font-size:11px; letter-spacing:.18em; font-weight:700; color:var(--sh-muted); text-transform:uppercase; }
     .sh-title { font-size:2.1rem; font-weight:800; letter-spacing:-.03em; line-height:1.1; }
     .sh-title span { color:#7fb069; }
@@ -43,6 +43,26 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     .sh-table td { padding:.75rem 1.25rem; border-top:1px solid var(--sh-line); vertical-align:top; }
     .sh-table tr.sh-click { cursor:pointer; } .sh-table tr.sh-click:hover td { background:#fafaf6; }
     .sh-history-list { max-height:34rem; }
+    .sh-eq-card { background:#fff; border:1px solid var(--sh-line); border-radius:22px; padding:2rem; display:flex; flex-direction:column; }
+    .sh-eq-icon { font-size:2rem; line-height:1; color:#5d7f4c; height:2.25rem; }
+    .sh-eq-card h2 { font-size:1.3rem; font-weight:700; margin-top:1.4rem; }
+    .sh-eq-card p { color:var(--sh-muted); margin-top:.6rem; line-height:1.55; flex:1; }
+    .sh-eq-pill { align-self:flex-start; margin-top:1.4rem; padding:.3rem .65rem; border-radius:8px; font-size:12px; font-weight:700; letter-spacing:.03em; background:#eef4dc; color:#4d6b2c; }
+    .sh-eq-pill.warn { background:#fbeed6; color:#8a5a12; } .sh-eq-pill.bad { background:#fde8e8; color:#a12d2d; }
+    .sh-eq-btn { margin-top:1.4rem; width:100%; border:1px solid var(--sh-line); border-radius:12px; padding:.9rem 1rem; font-weight:600; color:#14241d; background:#fff; }
+    .sh-eq-btn:hover { background:#fafaf6; }
+    @media (max-width: 640px) { .sh-eq-card { padding:1.4rem; } }
+    .sh-input { border:1px solid #dce3d5; border-radius:8px; background:#fff; padding:.6rem .75rem; font-size:13px; color:#14241d; }
+    .sh-input:focus { outline:2px solid #8acb9f; outline-offset:1px; }
+    .sh-filter { display:flex; flex:1 1 170px; flex-direction:column; gap:.4rem; font-size:11px; font-weight:600; color:var(--sh-muted); min-width:0; }
+    .sh-filter select { width:100%; font-weight:400; }
+    .sh-periods { display:flex; gap:4px; background:#f2f4ed; border-radius:9px; padding:4px; flex-wrap:wrap; }
+    .sh-periods button { padding:.45rem .8rem; font-size:12px; color:#7e8875; border-radius:6px; background:none; }
+    .sh-periods button[aria-pressed="true"] { background:#fff; color:var(--sh-ink); font-weight:700; box-shadow:0 1px 4px rgba(37,62,35,.08); }
+    .sh-sum { background:#fff; border:1px solid var(--sh-line); border-radius:14px; padding:1.3rem 1.4rem; }
+    .sh-sum span { display:block; color:var(--sh-muted); font-size:12px; }
+    .sh-sum strong { display:block; font-size:1.85rem; font-weight:600; letter-spacing:-.03em; margin-top:.45rem; }
+    @media (max-width: 640px) { .sh-sum { display:flex; justify-content:space-between; align-items:center; padding:1rem; } .sh-sum strong { margin:0; font-size:1.35rem; } .sh-filter { flex-basis:100%; } }
     .sh-kind { width:12.5rem; } .sh-kind button { white-space:nowrap; padding-top:.4rem; padding-bottom:.4rem; }
     .sh-seg { display:inline-flex; border:1px solid var(--sh-line); border-radius:10px; overflow:hidden; }
     .sh-seg button { padding:.4rem .9rem; font-size:12px; font-weight:600; color:var(--sh-muted); background:#fff; }
@@ -77,8 +97,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     <span class="sh-chip" style="font-weight:700;"><i class="sh-dot ok"></i> Station overview</span>
     <button type="button" class="sh-chip" onclick="toggleScaleSettings()" title="Scale connection settings"><i id="sh-strip-scale-dot" class="sh-dot"></i><span id="sh-strip-scale">Scale</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
     <button type="button" class="sh-chip" onclick="document.getElementById('camera-section').scrollIntoView({behavior:'smooth',block:'center'})"><i id="sh-strip-cam-dot" class="sh-dot"></i><span id="sh-strip-cam">Camera</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
-    <button type="button" class="sh-chip" onclick="shShowTab('equipment')"><i id="sh-strip-printer-dot" class="sh-dot"></i><span id="sh-strip-printer">Printer</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
-    <button type="button" class="sh-chip" onclick="shShowTab('equipment')"><i id="sh-strip-agent-dot" class="sh-dot"></i><span id="sh-strip-agent">Co-pilot</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+    <button type="button" class="sh-chip" onclick="openSettings('printer')"><i id="sh-strip-printer-dot" class="sh-dot"></i><span id="sh-strip-printer">Printer</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+    <button type="button" class="sh-chip" onclick="openSettings('agent')"><i id="sh-strip-agent-dot" class="sh-dot"></i><span id="sh-strip-agent">Co-pilot</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
   </div>
 
   <div class="grid lg:grid-cols-3 gap-5">
@@ -400,7 +420,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         <div class="flex items-center gap-3 flex-wrap min-w-0">
           <select id="sh-material" onchange="shSetMaterial(this.value)" aria-label="Material for new loads" class="text-sm font-semibold border border-gray-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-rc-green"><option value="">Loading…</option></select>
           <span id="sh-material-rate" class="text-xs text-gray-500"></span>
-          <button type="button" class="text-xs font-semibold text-rc-green hover:underline" onclick="shShowTab('equipment')">View rates <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+          <button type="button" class="text-xs font-semibold text-rc-green hover:underline" onclick="openSettings('pricing')">View rates <i class="fas fa-arrow-up-right text-[9px]"></i></button>
         </div>
       </section>
 
@@ -602,7 +622,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         </div>
         <div class="flex items-center justify-between text-xs">
           <button type="button" class="text-gray-400 cursor-not-allowed" disabled title="Emergency contact is not set up yet">Emergency contact — not set up</button>
-          <button type="button" class="font-semibold text-rc-green hover:underline" onclick="shShowTab('equipment')">Advanced settings →</button>
+          <button type="button" class="font-semibold text-rc-green hover:underline" onclick="openSettings('agent')">Advanced settings →</button>
         </div>
       </section>
     </aside>
@@ -620,57 +640,43 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   <!-- ═══════ TICKET HISTORY ═══════ -->
   <section id="sh-tab-history" role="tabpanel" aria-labelledby="sh-tabbtn-history" style="display:none;">
-      <!-- Scale Ticket History -->
-      <div class="sh-card overflow-hidden">
-        <div class="p-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-            <i class="fas fa-clock-rotate-left text-rc-green"></i> Scale Ticket History
-          </h3>
-          <div class="flex items-center gap-2">
-            <a href="/employee/scale-tickets" class="text-[11px] text-gray-400 hover:text-rc-green">Full view <i class="fas fa-arrow-up-right-from-square text-[9px]"></i></a>
-            <button onclick="loadTicketHistory()" class="text-gray-400 hover:text-gray-600 text-xs" title="Refresh"><i class="fas fa-sync-alt"></i></button>
-          </div>
-        </div>
+    <!-- Totals for exactly what the table below is showing. -->
+    <div id="history-summary" class="grid sm:grid-cols-3 gap-4 mb-5"></div>
 
-        <div class="px-3 pt-2.5 pb-2 border-b border-gray-100 space-y-2">
-          <div id="history-periods" class="flex flex-wrap gap-1"></div>
-          <div class="flex items-center gap-2">
-            <div class="relative flex-1">
-              <i class="fas fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-[11px]"></i>
-              <input id="history-search" type="text" placeholder="Ticket #, customer or plate"
-                     oninput="onHistorySearch()"
-                     class="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-rc-green/30 focus:border-rc-green outline-none" />
-            </div>
-            <select id="history-status" onchange="loadTicketHistory()"
-                    class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green">
-              <option value="">All</option>
-              <option value="completed">Completed</option>
-              <option value="weighed_in,field_pending,field_complete">Open</option>
-              <option value="voided">Voided</option>
-            </select>
-          </div>
-          <div class="flex items-center gap-2 flex-wrap">
-            <label class="text-[11px] text-gray-500 flex items-center gap-1">Material
-              <select id="history-material" onchange="renderHistoryRows()" aria-label="Filter by material" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green"><option value="">All materials</option></select>
-            </label>
-            <label class="text-[11px] text-gray-500 flex items-center gap-1">Customer
-              <select id="history-customer" onchange="renderHistoryRows()" aria-label="Filter by customer" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green max-w-[14rem]"><option value="">All customers</option></select>
-            </label>
-            <button type="button" id="history-clear" onclick="clearHistoryFilters()" class="text-[11px] font-semibold text-gray-500 hover:text-gray-700 underline" style="display:none;">Clear filters</button>
-            <button type="button" onclick="exportHistoryCsv()" class="ml-auto sh-btn"><i class="fas fa-download mr-1"></i> Export CSV</button>
-          </div>
-          <div id="history-range" class="hidden flex items-center gap-1.5">
-            <input id="history-from" type="date" onchange="loadTicketHistory()" class="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-rc-green" />
-            <span class="text-gray-300 text-xs">to</span>
-            <input id="history-to" type="date" onchange="loadTicketHistory()" class="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-rc-green" />
-          </div>
-          <div id="history-summary" class="grid grid-cols-3 gap-1.5"></div>
-        </div>
-
-        <div id="ticket-history" class="sh-history-list overflow-y-auto">
-          <div class="p-4 text-center text-gray-400 text-sm">Loading...</div>
+    <section class="sh-card overflow-hidden">
+      <div class="flex items-center justify-between gap-3 flex-wrap p-5">
+        <div id="history-periods" class="sh-periods" role="group" aria-label="Period"></div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="loadTicketHistory()" class="sh-btn" aria-label="Refresh ticket history"><i class="fas fa-sync-alt"></i></button>
+          <button type="button" onclick="exportHistoryCsv()" class="sh-btn"><i class="fas fa-download"></i> Export CSV</button>
         </div>
       </div>
+      <div id="history-range" class="flex items-center gap-4 px-5 pb-4 text-xs text-gray-500 flex-wrap" style="display:none;">
+        <label class="flex items-center gap-2">From <input id="history-from" type="date" onchange="loadTicketHistory()" class="sh-input" /></label>
+        <label class="flex items-center gap-2">To <input id="history-to" type="date" onchange="loadTicketHistory()" class="sh-input" /></label>
+      </div>
+      <div class="flex items-end gap-3 flex-wrap px-5 pb-5">
+        <input id="history-search" type="search" placeholder="Search ticket, customer or licence plate…" oninput="onHistorySearch()" aria-label="Search ticket history" class="sh-input w-full" />
+        <label class="sh-filter">Status
+          <select id="history-status" onchange="loadTicketHistory()" aria-label="Filter ticket status" class="sh-input">
+            <option value="">All tickets</option>
+            <option value="weighed_in,field_pending,field_complete">In yard</option>
+            <option value="completed">Completed</option>
+            <option value="voided">Voided</option>
+          </select>
+        </label>
+        <label class="sh-filter">Material
+          <select id="history-material" onchange="renderHistoryRows()" aria-label="Filter material" class="sh-input"><option value="">All materials</option></select>
+        </label>
+        <label class="sh-filter">Customer
+          <select id="history-customer" onchange="renderHistoryRows()" aria-label="Filter customer" class="sh-input"><option value="">All customers</option></select>
+        </label>
+        <button type="button" id="history-clear" onclick="clearHistoryFilters()" class="text-xs font-semibold text-rc-green hover:underline pb-2.5" style="display:none;">Clear filters</button>
+      </div>
+      <div id="ticket-history" class="overflow-x-auto border-t border-gray-100">
+        <div class="p-6 text-center text-gray-400 text-sm">Loading…</div>
+      </div>
+    </section>
   </section>
 
   <!-- ═══════ EQUIPMENT & SETTINGS ═══════ -->
@@ -679,9 +685,35 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       <span class="w-10 h-10 rounded-xl flex items-center justify-center text-white" style="background:var(--sh-ink)"><i class="fas fa-gear"></i></span>
       <div><h2 class="font-bold">One place for your station setup.</h2><p class="text-xs text-gray-500">Keep daily weighing simple. Come here when you need to adjust how it works.</p></div>
     </div>
-    <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 items-start mb-4">
+    <div id="sh-equip-grid" class="grid md:grid-cols-2 gap-5"></div>
+    <div class="mt-5">
+      <!-- Hotkey Reference -->
+      <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
+        <div class="text-[10px] text-gray-500 font-semibold uppercase tracking-wide mb-1.5">Keyboard Shortcuts</div>
+        <div class="grid grid-cols-2 gap-1 text-[10px] text-gray-500">
+          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">Space</kbd> Capture</div>
+          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">Esc</kbd> Close</div>
+          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">N</kbd> New ticket</div>
+          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">R</kbd> Refresh</div>
+        </div>
+      </div>
+    </div>
+  </section>
+  </div>
+
+  <!-- Equipment & settings: one window, one panel at a time. The panels are
+       the same blocks as before, moved here unchanged, so every id and
+       handler still works. -->
+  <div id="settings-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="sp-title">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between gap-3 sticky top-0 bg-white z-10">
+        <div><div class="sh-eyebrow">Equipment &amp; settings</div><h3 id="sp-title" class="text-lg font-bold text-gray-800"></h3></div>
+        <button type="button" onclick="closeSettings()" aria-label="Close settings" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div class="p-5">
+      <div data-sp="branding" style="display:none;" class="space-y-4">
       <!-- Branding & appearance: name + colours for this station and its receipts. -->
-      <section class="sh-card p-4 space-y-3" id="br-card" aria-labelledby="br-title">
+      <section class="space-y-3" id="br-card" aria-labelledby="br-title">
         <div><h2 id="br-title" class="font-bold">Branding &amp; appearance</h2><p class="text-xs text-gray-500">Shown on this station and printed on its receipts.</p></div>
         <label class="block text-xs font-semibold text-gray-600">Business name
           <input id="br-name" maxlength="60" oninput="brandInput()" class="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-rc-green" />
@@ -705,10 +737,25 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <button type="button" class="text-xs font-semibold text-gray-500 underline ml-auto" onclick="brandRestore()">Restore default</button>
         </div>
       </section>
-
+      </div>
+      <div data-sp="unattended" style="display:none;" class="space-y-4">
+        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div class="font-bold mb-1"><i class="fas fa-circle-info mr-1"></i>Not set up yet</div>
+          <p class="text-xs leading-relaxed">Drivers checking themselves in with a QR code, a licence photo on every visit, automatic weighing and emailed bills are designed but not built. Nothing here runs in demo mode — the station stays operator-run until this is done.</p>
+        </div>
+        <div class="text-xs text-gray-600 leading-relaxed"><div class="font-semibold text-gray-800 mb-1">Needed before it can be switched on</div><ul class="list-disc pl-5 space-y-1"><li>An email provider (API key and a sending domain) for bills and receipts</li><li>Square Payment Links / Checkout plus a payment webhook, so a driver can pay after leaving</li><li>Secure storage for licence photos, with a retention period you choose</li><li>A public check-in page and a decision on account vs walk-in rules</li><li>An emergency contact (below) for anything that needs a person</li></ul></div>
+      </div>
+      <div data-sp="emergency" style="display:none;" class="space-y-4">
+        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div class="font-bold mb-1"><i class="fas fa-circle-info mr-1"></i>Not set up yet</div>
+          <p class="text-xs leading-relaxed">Remote incident alerts need an email provider, which this system does not have yet. SMS is planned for later.</p>
+        </div>
+        <div class="text-xs text-gray-600 leading-relaxed"><div class="font-semibold text-gray-800 mb-1">Needed before it can be switched on</div><ul class="list-disc pl-5 space-y-1"><li>An email provider (API key and a sending domain)</li><li>The contact name and email address that should receive alerts</li></ul></div>
+      </div>
+      <div data-sp="camera" style="display:none;" class="space-y-4">
       <!-- Cameras: several named cameras; one is the ticket-photo camera, which
            is the one the existing capture pipeline runs. Station-scoped. -->
-      <section class="sh-card p-4 space-y-3" aria-labelledby="cams-title">
+      <section class="space-y-3" aria-labelledby="cams-title">
         <div class="flex items-start justify-between gap-2">
           <div><h2 id="cams-title" class="font-bold">Cameras</h2><p class="text-xs text-gray-500">The ticket camera takes every weigh-in and weigh-out photo. Others are for watching.</p></div>
           <button type="button" class="sh-btn" onclick="openCamEditor(null)"><i class="fas fa-plus"></i> Add</button>
@@ -716,16 +763,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         <div id="cams-list" class="space-y-2"></div>
         <button type="button" class="sh-btn w-full justify-center" onclick="openCamConsole()"><i class="fas fa-expand"></i> Open camera console</button>
       </section>
-
-      <!-- Photo Vault: every ticket photo already stored, grouped by visit. -->
-      <section class="sh-card p-4 space-y-3" aria-labelledby="vault-title">
-        <div><h2 id="vault-title" class="font-bold">Photo Vault</h2><p class="text-xs text-gray-500">Every weigh-in and weigh-out photo, grouped by visit. Search, open, export.</p></div>
-        <p class="text-[11px] text-gray-400 leading-snug">Photos are the ones saved on scale tickets. Pictures taken from the camera console are kept on this screen only — uploading new pictures is not set up yet.</p>
-        <button type="button" class="sh-btn sh-btn-primary w-full justify-center" onclick="openVault()"><i class="fas fa-images"></i> Open Photo Vault</button>
-      </section>
-    </div>
-    <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
-      <div class="space-y-4">
+      </div>
+      <div data-sp="agent" style="display:none;" class="space-y-4">
       <!-- Scale Agent -->
       <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100 flex items-center justify-between">
@@ -797,7 +836,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </label>
         </section>
       </div>
-      <div class="space-y-4">
+      <div data-sp="printer" style="display:none;" class="space-y-4">
       <!-- Receipt Printer -->
       <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100">
@@ -814,7 +853,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             <button onclick="printTestReceipt()" class="px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-vial mr-1"></i> Test Print</button>
             <button onclick="reprintLastReceipt()" class="px-2 py-1.5 bg-gray-100 text-gray-700 text-[10px] font-semibold rounded-lg hover:bg-gray-200 border border-gray-200"><i class="fas fa-redo mr-1"></i> Reprint last</button>
           </div>
-          <button type="button" onclick="openModal('printer-add-modal')" class="w-full px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-dashed border-gray-300 text-gray-600 hover:bg-gray-50"><i class="fas fa-plus mr-1"></i> Add printer</button>
+          <button type="button" onclick="if(shSettingsOpen)closeSettings();openModal('printer-add-modal')" class="w-full px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-dashed border-gray-300 text-gray-600 hover:bg-gray-50"><i class="fas fa-plus mr-1"></i> Add printer</button>
           <label class="flex items-center gap-1.5 text-[10px] text-gray-600">
             <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out
           </label>
@@ -823,6 +862,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </label>
         </div>
       </div>
+      </div>
+      <div data-sp="pricing" style="display:none;" class="space-y-4">
       <!-- Material Pricing -->
       <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100 flex items-center justify-between">
@@ -834,7 +875,16 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         </div>
       </div>
       </div>
-      <div class="space-y-4">
+      <div data-sp="square" style="display:none;" class="space-y-4">
+      <!-- Square Terminal -->
+      <div class="sh-card overflow-hidden">
+        <div class="p-3 border-b border-gray-100">
+          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square</h3>
+        </div>
+        <div class="p-3">
+          <div class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i> Payment amounts sent to Square Reader.</div>
+        </div>
+      </div>
       <!-- End of Day Settlement -->
       <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100">
@@ -847,29 +897,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </button>
         </div>
       </div>
-      <!-- Square Terminal -->
-      <div class="sh-card overflow-hidden">
-        <div class="p-3 border-b border-gray-100">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square</h3>
-        </div>
-        <div class="p-3">
-          <div class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i> Payment amounts sent to Square Reader.</div>
-        </div>
-      </div>
-      <!-- Hotkey Reference -->
-      <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
-        <div class="text-[10px] text-gray-500 font-semibold uppercase tracking-wide mb-1.5">Keyboard Shortcuts</div>
-        <div class="grid grid-cols-2 gap-1 text-[10px] text-gray-500">
-          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">Space</kbd> Capture</div>
-          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">Esc</kbd> Close</div>
-          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">N</kbd> New ticket</div>
-          <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">R</kbd> Refresh</div>
-        </div>
       </div>
       </div>
     </div>
-  </section>
   </div>
+
 
 
   <!-- ═══════ ALL MODALS ═══════ -->
@@ -4877,15 +4909,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const on = p.key === historyPeriod;
       // &quot; rather than an escaped quote: a lone backslash in this page's
       // inline script is eaten by the outer template literal.
-      return '<button onclick="setHistoryPeriod(&quot;' + p.key + '&quot;)" class="px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors '
-        + (on ? 'bg-rc-green text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200') + '">' + p.label + '</button>';
+      return '<button type="button" aria-pressed="' + on + '" onclick="setHistoryPeriod(&quot;' + p.key + '&quot;)">' + p.label + '</button>';
     }).join('');
   }
 
   function setHistoryPeriod(key) {
     historyPeriod = key;
     const range = document.getElementById('history-range');
-    if (range) range.classList.toggle('hidden', key !== 'custom');
+    if (range) range.style.display = key === 'custom' ? 'flex' : 'none';
     if (key === 'custom') {
       // Seed the pickers with the last 30 days so the panel is never blank
       // the moment Range is chosen.
@@ -5005,35 +5036,23 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         + (narrowed ? 'No tickets match these filters. <button type="button" onclick="clearHistoryFilters()" class="underline">Clear filters</button>' : 'No tickets in this period') + '</div>';
       return;
     }
-    el.innerHTML = tickets.map(function (t) {
-        const when = t.created_at ? new Date(String(t.created_at).replace(' ', 'T') + 'Z') : null;
-        const stamp = when && !isNaN(when.getTime())
-          ? (historyPeriod === 'today'
-              ? when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' })
-              : when.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' ' + when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }))
-          : '';
-        return '<div onclick="loadTicketDetail(' + t.id + ')" class="px-3 py-2 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors flex items-start gap-2.5">'
-          + '<div class="pt-1.5">' + historyStatusDot(t) + '</div>'
-          + '<div class="min-w-0 flex-1">'
-            + '<div class="flex items-center gap-1.5">'
-              + '<span class="font-mono text-[11px] font-bold text-rc-green">' + escHtml(t.ticket_number) + '</span>'
-              + (t.has_photo_in ? '<i class="fas fa-camera text-green-400 text-[9px]" title="Weigh-in photo"></i>' : '')
-              + (t.has_photo_out ? '<i class="fas fa-camera text-green-600 text-[9px]" title="Weigh-out photo"></i>' : '')
-              + (ticketKind(t) === 'pickup' ? ticketKindChip(t) : '')
-              + (ticketKind(t) === 'pickup' && t.status === 'completed' && Number(t.grand_total) > 0
-                  ? (t.payment_status === 'paid' ? '<span class="text-[9px] font-bold text-green-600">PAID</span>' : '<span class="text-[9px] font-bold text-amber-600">UNPAID</span>')
-                  : '')
-              + '<span class="text-[10px] text-gray-400 ml-auto">' + stamp + '</span>'
-            + '</div>'
-            + '<div class="text-[11px] text-gray-600 truncate">' + escHtml(t.company_name || 'Walk-in') + '</div>'
-            + vehicleChip(t)
-          + '</div>'
-          + '<div class="text-right shrink-0">'
-            + '<div class="font-mono text-[11px] font-bold text-gray-800">' + (t.net_weight ? parseFloat(t.net_weight).toLocaleString('en-CA', { maximumFractionDigits: 0 }) + ' kg' : '—') + '</div>'
-            + '<div class="font-mono text-[11px] font-bold text-rc-green">' + (t.grand_total ? '$' + parseFloat(t.grand_total).toFixed(2) : '') + '</div>'
-          + '</div>'
-        + '</div>';
-      }).join('');
+    el.innerHTML = '<table class="sh-table"><thead><tr><th>Ticket / time</th><th>Customer</th><th>Material</th><th class="text-right">Net weight</th><th class="text-right">Total</th><th>Status</th><th aria-label="Open ticket"></th></tr></thead><tbody>'
+      + tickets.map(function (t) {
+        const look = parseLook(t.appearance_in) || parseLook(t.appearance_out);
+        const sub = [t.vehicle_plate ? escHtml(t.vehicle_plate) : '', look ? escHtml([look.color, look.body].filter(Boolean).join(' ')) : ''].filter(Boolean).join(' · ');
+        const status = t.status === 'completed' ? shPayPill(t)
+          : t.status === 'voided' ? '<span class="sh-pill" style="background:#f9e9e6;color:#af5042">Voided</span>'
+          : '<span class="sh-pill sh-pill-yard">In yard</span>';
+        return '<tr class="sh-click" tabindex="0" onclick="loadTicketDetail(' + t.id + ')" onkeydown="if(event.key===&quot;Enter&quot;)loadTicketDetail(' + t.id + ')">'
+          + '<td><div class="font-bold text-rc-green">' + escHtml(t.ticket_number) + '</div><div class="text-[11px] text-gray-400">' + shWhen(t.weight_out_at || t.weight_in_at || t.created_at) + '</div></td>'
+          + '<td>' + escHtml(shCustomerKey(t)) + (sub ? '<div class="text-[11px] text-gray-400">' + sub + '</div>' : '') + '</td>'
+          + '<td>' + escHtml(getMaterialLabel(t.tire_type)) + ' ' + (ticketKind(t) === 'pickup' ? ticketKindChip(t) : '') + '</td>'
+          + '<td class="text-right tabular-nums">' + (t.status === 'completed' ? shKg(t.net_weight) : '—') + '</td>'
+          + '<td class="text-right tabular-nums">' + (t.status === 'completed' ? shMoney(t.grand_total) : '—') + '</td>'
+          + '<td>' + status + (t.verify_status === 'mismatch' ? ' <span class="sh-pill" style="background:#f9e9e6;color:#af5042" title="' + escAttr(t.verify_note || '') + '">Photo check</span>' : '') + '</td>'
+          + '<td class="text-right text-rc-green"><i class="fas fa-arrow-up-right-from-square text-xs"></i></td></tr>';
+      }).join('') + '</tbody></table>'
+      + (historyServerSummary && historyServerSummary.truncated ? '<div class="px-5 py-3 text-[11px] text-amber-600 border-t border-gray-100">Showing the newest ' + tickets.length + ' tickets. Narrow the period or search to see older ones.</div>' : '');
   }
   function clearHistoryFilters() {
     ['history-material', 'history-customer', 'history-status'].forEach(function (id) { const e = document.getElementById(id); if (e) e.value = ''; });
@@ -5083,15 +5102,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   function renderHistorySummary(s) {
     const el = document.getElementById('history-summary');
     if (!el) return;
-    const cell = function (value, label, cls) {
-      return '<div class="rounded-lg bg-gray-50 px-2 py-1.5 text-center">'
-        + '<div class="text-sm font-bold tabular-nums ' + (cls || 'text-gray-800') + '">' + value + '</div>'
-        + '<div class="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">' + label + '</div></div>';
-    };
+    const box = function (label, value) { return '<div class="sh-sum"><span>' + label + '</span><strong class="tabular-nums">' + value + '</strong></div>'; };
     el.innerHTML =
-      cell(Number(s.count || 0), 'Tickets') +
-      cell(Number(s.net_kg || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }), 'Net kg') +
-      cell('$' + Number(s.revenue || 0).toFixed(2), 'Revenue', 'text-rc-green');
+      box('Tickets in view', Number(s.count || 0).toLocaleString('en-CA')) +
+      box('Net material', Number(s.net_kg || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }) + ' <span style="display:inline;font-size:.9rem">kg</span>') +
+      box('Total incl. GST', shMoney(s.revenue));
   }
 
   // Kept as the name every completion path already calls. The panel defaults
@@ -5297,6 +5312,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
 
   function openPricingModal() {
+    if (shSettingsOpen) closeSettings();
     renderPricingManagementList();
     document.getElementById('pm-name').value = '';
     document.getElementById('pm-price-kg').value = '';
@@ -5444,6 +5460,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     });
     try { localStorage.setItem('rc_sh_tab', name); } catch (e) {}
     if (name === 'history') loadTicketHistory();
+    if (name === 'equipment') renderEquipCards();
   }
   function shTabKey(e) {
     const cur = SH_TABS.findIndex(function (n) { return document.getElementById('sh-tabbtn-' + n).getAttribute('aria-selected') === 'true'; });
@@ -5483,6 +5500,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     shText('sh-strip-agent', modeLabel);
     shDot('sh-strip-agent-dot', mode === 'live' ? 'ok' : (mode === 'dry_run' ? 'warn' : ''));
     shRenderCopilot(mode, live);
+    const eq = document.getElementById('sh-tab-equipment');
+    if (eq && eq.style.display !== 'none' && !shSettingsOpen) renderEquipCards();
   }
   function shRenderCopilot(mode, live) {
     const man = document.getElementById('sh-cp-manual'), auto = document.getElementById('sh-cp-auto');
@@ -5499,7 +5518,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     shText('sh-cp-text', text || '');
     const btn = document.getElementById('sh-cp-primary');
     if (btn) {
-      if (mode === 'live') { btn.innerHTML = '<i class="fas fa-eye"></i> Show what it is doing'; btn.onclick = function () { shShowTab('equipment'); const l = document.getElementById('agent-log'); if (l) l.scrollIntoView({ block: 'center' }); }; btn.disabled = false; }
+      if (mode === 'live') { btn.innerHTML = '<i class="fas fa-eye"></i> Show what it is doing'; btn.onclick = function () { openSettings('agent'); const l = document.getElementById('agent-log'); if (l) l.scrollIntoView({ block: 'center' }); }; btn.disabled = false; }
       else { btn.innerHTML = '<i class="fas fa-camera"></i> Capture weight'; btn.onclick = function () { captureWeight(); }; btn.disabled = !live; btn.title = live ? '' : 'Connect the scale first'; }
     }
     shText('sh-cp-yard', String((openTickets || []).length));
@@ -5684,6 +5703,83 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // SETTINGS: branding, printers, cameras, Photo Vault
   // ══════════════════════════════════════════
 
+
+  // ── Equipment & settings: card grid → one settings window ──
+  // Each card shows where that piece of the station stands right now; Manage
+  // opens its panel. Panels are the pre-existing blocks, unchanged.
+  const SH_EQUIP = [
+    ['branding', '◈', 'Branding & appearance', 'Personalize your business name and station colours.'],
+    ['unattended', '↗', 'Unattended station', 'Driver QR check-in, licence reading, vehicle matching and billing.'],
+    ['emergency', '!', 'Emergency contact', 'Choose who receives remote incident alerts. SMS is planned for later.'],
+    ['vault', '▧', 'Photo Vault', 'Find every capture, see arrivals and departures together, and review each truck visit.'],
+    ['connection', '▣', 'Truck scale', 'Manage the bridge connection, scale protocol and serial settings.'],
+    ['camera', '◉', 'Yard cameras', 'Switch between camera views and choose which camera supplies ticket photos.'],
+    ['agent', '✦', 'Scale automation', 'Choose how much the station does for you, and when it should ask.'],
+    ['printer', '▤', 'Receipt printer', 'Choose a printer, test a receipt and set automatic printing preferences.'],
+    ['pricing', '▨', 'Material pricing', 'Review the pickup rates and notes used for each material.'],
+    ['square', '▣', 'Square Terminal', 'Card payments for pickups, and the end-of-day settlement.'],
+  ];
+  let shVaultCount = null, shVaultCountAt = 0;
+  function shEquipStatus(key) {
+    if (key === 'branding') return [brandSaved ? brandSaved.business_name : 'Your identity', ''];
+    if (key === 'unattended') return ['Not set up', 'warn'];
+    if (key === 'emergency') return ['Not set up', 'warn'];
+    if (key === 'vault') return [shVaultCount === null ? 'Ticket photos' : shVaultCount.toLocaleString('en-CA') + ' pictures', ''];
+    if (key === 'connection') { const live = typeof isLive === 'function' && isLive(); return [live ? 'Connected' : 'Disconnected', live ? '' : 'bad']; }
+    if (key === 'camera') { const st = camsGet(); const on = st.list.filter(function (c) { return c.enabled; }).length; return [on + ' of ' + st.list.length + ' ready', on ? '' : 'warn']; }
+    if (key === 'agent') { const m = agentSettings ? agentSettings.mode : 'off'; return [{ off: 'Manual', dry_run: 'Dry run', live: 'Auto' }[m] || 'Manual', m === 'dry_run' ? 'warn' : '']; }
+    if (key === 'printer') { const q = typeof receiptPrinterName === 'function' ? receiptPrinterName() : ''; return [q ? 'Ready' : 'Browser print dialog', q ? '' : 'warn']; }
+    if (key === 'pricing') return [pricingData.length + ' materials', ''];
+    if (key === 'square') return ['Auto-charge on pickups', ''];
+    return ['', ''];
+  }
+  function renderEquipCards() {
+    const grid = document.getElementById('sh-equip-grid');
+    if (!grid) return;
+    grid.innerHTML = SH_EQUIP.map(function (c) {
+      const st = shEquipStatus(c[0]);
+      return '<article class="sh-eq-card"><div class="sh-eq-icon" aria-hidden="true">' + c[1] + '</div><h2>' + escHtml(c[2]) + '</h2><p>' + escHtml(c[3]) + '</p>'
+        + '<span class="sh-eq-pill ' + st[1] + '">' + escHtml(st[0]) + '</span>'
+        + '<button type="button" class="sh-eq-btn" onclick="openSettings(&quot;' + c[0] + '&quot;)">Manage ' + escHtml(c[2].toLowerCase()) + ' →</button></article>';
+    }).join('');
+    // Picture count: tickets carry at most two photos each; counted from the
+    // newest 500 tickets and refreshed at most once a minute.
+    if (Date.now() - shVaultCountAt > 60000) {
+      shVaultCountAt = Date.now();
+      axios.get('/api/scale-tickets?limit=500').then(function (r) {
+        shVaultCount = (r.data.tickets || []).reduce(function (n, t) { return n + (t.has_photo_in ? 1 : 0) + (t.has_photo_out ? 1 : 0); }, 0);
+        renderEquipCards();
+      }).catch(function () {});
+    }
+  }
+  let shSettingsOpen = null;
+  function openSettings(key) {
+    if (key === 'vault') { openVault(); return; }
+    if (key === 'connection') {
+      shShowTab('station');
+      const panel = document.getElementById('scale-settings-panel');
+      if (panel && panel.classList.contains('hidden')) toggleScaleSettings();
+      const wb = document.getElementById('weighbridge-panel');
+      if (wb) wb.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const card = SH_EQUIP.find(function (c) { return c[0] === key; });
+    document.querySelectorAll('#settings-modal [data-sp]').forEach(function (el) { el.style.display = el.dataset.sp === key ? '' : 'none'; });
+    shText('sp-title', card ? card[2] : 'Settings');
+    shSettingsOpen = key;
+    if (key === 'camera') renderCamsList();
+    if (key === 'branding' && brandSaved) { brandDirty = false; brandFill(brandSaved); }
+    openModal('settings-modal');
+  }
+  // Closing never keeps a half-made branding change: X, Escape and the
+  // backdrop all put the saved look back.
+  function closeSettings() {
+    if (shSettingsOpen === 'branding' && brandDirty) brandCancel();
+    shSettingsOpen = null;
+    closeModal('settings-modal');
+    renderEquipCards();
+  }
+
   // ── Branding & appearance ──
   // Saved server-side (admin/manager). Editing changes the page immediately as
   // a preview; Cancel or Escape puts the saved look back.
@@ -5696,7 +5792,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   function brandContrast(a, b) { const x = brandLum(a), y = brandLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
   function applyBrand(b) {
     if (!b) return;
-    document.querySelectorAll('.sh-wrap, #sh-pay-modal').forEach(function (el) {
+    document.querySelectorAll('.sh-wrap, #sh-pay-modal, #settings-modal').forEach(function (el) {
       el.style.setProperty('--sh-ink', b.primary_color);
       el.style.setProperty('--sh-ink2', b.primary_color);
       el.style.setProperty('--sh-lime', b.accent_color);
@@ -5967,6 +6063,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   let ccState = { view: 'all' }, ccViewers = [];
   function camConsoleOpen() { const e = document.getElementById('cam-console'); return !!e && e.style.display !== 'none'; }
   function openCamConsole(id) {
+    if (shSettingsOpen) closeSettings();
     const st = camsGet();
     openModal('cam-console');
     camConsoleShow(id || st.ticketId);
@@ -6276,6 +6373,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (e.key !== 'Escape') return;
     if (activeModalId === 'cam-edit-modal') { e.preventDefault(); e.stopPropagation(); closeCamEditor(); return; }
     if (activeModalId === 'cam-console') { e.preventDefault(); e.stopPropagation(); closeCamConsole(); return; }
+    if (activeModalId === 'settings-modal') { e.preventDefault(); e.stopPropagation(); closeSettings(); return; }
     const card = document.getElementById('br-card');
     if (brandDirty && card && card.contains(document.activeElement)) { e.preventDefault(); e.stopPropagation(); brandCancel(); }
   }, true);
