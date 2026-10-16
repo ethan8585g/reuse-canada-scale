@@ -494,6 +494,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             <img id="camera-net" alt="" class="cam-frame hidden" />
             <canvas id="camera-buffer" class="cam-frame hidden"></canvas>
             <canvas id="camera-canvas" class="hidden"></canvas>
+            <img id="camera-remote" alt="Yard camera, from the computer connected to the scale" class="cam-frame" style="display:none;" />
+            <div id="camera-remote-label" class="absolute top-1.5 left-1.5 bg-black/60 rounded-full px-2 py-0.5 text-[9px] font-bold text-white tracking-wider" style="display:none;">YARD CAMERA · <span id="camera-remote-age">live</span></div>
 
             <div id="camera-idle" class="absolute inset-0 flex flex-col items-center justify-center text-center px-3">
               <i id="camera-idle-icon" class="fas fa-video-slash text-gray-600 text-2xl mb-1"></i>
@@ -1410,7 +1412,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   const REMOTE_MAX_AGE_S = 6;
   function remoteScaleMsg(fallback) {
     if (!remoteScale) return fallback;
-    return 'This screen is showing the scale from ' + (remoteScale.publisher_name || 'another computer') + "'s station, view only. Capture and weigh out on the computer connected to the scale.";
+    return 'This screen is showing the scale from ' + (remoteScale.publisher_name || 'another computer') + "'s station. Use Capture Weight, or Weigh out in the In the yard list: the yard computer does it there.";
   }
   function showRemoteReading(d) {
     remoteScale = d;
@@ -1424,12 +1426,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const mp = document.getElementById('manual-entry-panel'); if (mp) mp.classList.add('hidden');
     try { hideSetupBanner(); } catch (e) {}
     const btn = document.getElementById('btn-capture-weight');
-    if (btn) btn.title = 'Capture on the computer connected to the scale';
+    if (btn) btn.title = 'The yard computer captures it';
+    remoteCamStart();
   }
   function endRemoteView() {
     if (!remoteScale) return;
     remoteScale = null;
     const btn = document.getElementById('btn-capture-weight'); if (btn) btn.title = '';
+    remoteCamStop();
     if (!isLive()) updateScaleUI('disconnected');
   }
   async function pollRemoteScale() {
@@ -1452,6 +1456,141 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     };
     remotePollTimer = setTimeout(tick, 1500);
   }
+  // ── Remote control ──
+  // A remote screen never writes a ticket itself. It asks the yard computer
+  // (POST /api/scale-bridge/commands), which does the capture or weigh-out with
+  // its own scale, camera, printer and Square Terminal and reports back.
+  const OPERATOR_ROLES = ['admin', 'manager', 'yard_operator'];
+  async function sendRemoteCommand(kind, ticketId, label) {
+    if (OPERATOR_ROLES.indexOf(currentUserRole) < 0) { alert('Your login can watch the scale but not capture or weigh out.'); return null; }
+    showLoading('Sent to the yard computer: ' + label + '…');
+    try {
+      const r = await axios.post('/api/scale-bridge/commands', { kind: kind, ticket_id: ticketId || null });
+      const id = r.data.id, until = Date.now() + 25000;
+      while (Date.now() < until) {
+        await new Promise(function (res) { setTimeout(res, 800); });
+        const st = await axios.get('/api/scale-bridge/commands/' + id);
+        if (st.data.status === 'done') return st.data.result || {};
+        if (st.data.status === 'failed') { alert('The yard computer could not do it: ' + ((st.data.result && st.data.result.message) || 'unknown error')); return null; }
+        if (st.data.status === 'expired') break;
+      }
+      alert('The yard computer did not answer. Check that Scale House is open there and the scale is connected.');
+      return null;
+    } catch (e) {
+      alert((e.response && e.response.data && e.response.data.error) || e.message);
+      return null;
+    } finally { hideLoading(); }
+  }
+  async function remoteCapture() {
+    if (!(currentLiveWeight > 0)) { alert('There is no weight on the scale.'); return; }
+    const r = await sendRemoteCommand('capture', null, 'capturing ' + Math.round(currentLiveWeight).toLocaleString() + ' kg');
+    if (!r) return;
+    loadOpenTickets(); loadStats();
+    openAssignModal(r.ticket_id, r.ticket_number, r.weight || currentLiveWeight);
+  }
+  async function remoteWeighOut(ticketId) {
+    const t = openTickets.find(function (x) { return x.id === Number(ticketId); });
+    const num = t ? t.ticket_number : 'this ticket';
+    if (!(currentLiveWeight > 0)) { alert('There is no weight on the scale.'); return; }
+    if (!confirm('Weigh out ' + num + ' at ' + Math.round(currentLiveWeight).toLocaleString() + ' kg? The yard computer closes it and prints the receipt there.')) return;
+    const r = await sendRemoteCommand('weigh_out', Number(ticketId), 'weighing out ' + num);
+    if (!r) return;
+    loadOpenTickets(); loadCompletedToday(); loadStats();
+    const net = r.net_weight !== null && r.net_weight !== undefined ? Math.round(r.net_weight).toLocaleString() + ' kg net' : '';
+    const bill = r.ticket_type === 'pickup' ? ('$' + Number(r.grand_total || 0).toFixed(2) + ', sent to the Square Terminal') : 'drop-off, no charge';
+    alert('Closed ' + (r.ticket_number || num) + ': ' + net + ', ' + bill + '. The receipt is printing at the yard.');
+  }
+
+  // Yard camera for remote screens: a small picture every few seconds.
+  let remoteCamTimer = null;
+  async function remoteCamTick() {
+    try {
+      const r = await axios.get('/api/scale-bridge/snapshot', { timeout: 8000 });
+      const img = document.getElementById('camera-remote'), lab = document.getElementById('camera-remote-label');
+      const fresh = r.data.image && typeof r.data.age_seconds === 'number' && r.data.age_seconds <= 20;
+      if (fresh && !camActive) {
+        if (img.src !== r.data.image) img.src = r.data.image;
+        img.style.display = ''; lab.style.display = '';
+        document.getElementById('camera-remote-age').textContent = r.data.age_seconds <= 4 ? 'live' : r.data.age_seconds + ' s ago';
+        document.getElementById('camera-idle').style.display = 'none';
+      } else if (!camActive) {
+        img.style.display = 'none'; lab.style.display = 'none';
+        document.getElementById('camera-idle').style.display = '';
+        document.getElementById('camera-idle-text').textContent = 'Waiting for the yard camera…';
+      }
+    } catch (e) { /* next tick */ }
+    if (remoteCamTimer) remoteCamTimer = setTimeout(remoteCamTick, 3000);
+  }
+  function remoteCamStart() { if (remoteCamTimer) return; remoteCamTimer = setTimeout(remoteCamTick, 10); }
+  function remoteCamStop() {
+    if (remoteCamTimer) { clearTimeout(remoteCamTimer); remoteCamTimer = null; }
+    const img = document.getElementById('camera-remote'), lab = document.getElementById('camera-remote-label');
+    if (img) { img.style.display = 'none'; img.removeAttribute('src'); }
+    if (lab) lab.style.display = 'none';
+    const idle = document.getElementById('camera-idle'); if (idle && !camActive) idle.style.display = '';
+  }
+
+  // ── Yard computer side ──
+  // While this computer holds the scale, it takes requests from remote
+  // screens and sends a camera picture when someone is watching.
+  let stationBusy = false, stationLastSnapAt = 0;
+  function startStationLoop() { setInterval(stationTick, 1500); }
+  async function stationTick() {
+    if (stationBusy || document.visibilityState === 'prerender') return;
+    if (!isLive() || connectionMode === 'sim' || OPERATOR_ROLES.indexOf(currentUserRole) < 0) return;
+    stationBusy = true;
+    try {
+      const r = await axios.get('/api/scale-bridge/station/next', { timeout: 8000 });
+      if (r.data.viewers_active && camActive && Date.now() - stationLastSnapAt > 3000) { stationLastSnapAt = Date.now(); stationSendSnapshot(); }
+      if (r.data.command) await stationRunCommand(r.data.command);
+    } catch (e) { /* next tick */ }
+    finally { stationBusy = false; }
+  }
+  function stationSendSnapshot() {
+    const full = capturePhoto('live', { quiet: true });
+    if (!full) return;
+    const im = new Image();
+    im.onload = function () {
+      const k = Math.min(1, 640 / Math.max(im.width, im.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      axios.post('/api/scale-bridge/station/snapshot', { image: c.toDataURL('image/jpeg', 0.6) }).catch(function () {});
+    };
+    im.src = full;
+  }
+  async function stationRunCommand(cmd) {
+    const report = function (o) { return axios.post('/api/scale-bridge/station/commands/' + cmd.id + '/result', o).catch(function () {}); };
+    try {
+      if (!isLive()) return report({ ok: false, message: 'The scale stopped sending a weight at the yard.' });
+      const w = currentLiveWeight;
+      if (!(w > 0)) return report({ ok: false, message: 'There is no weight on the scale.' });
+      if (!isWeightStable) return report({ ok: false, message: 'The weight is still moving. Try again when it settles.' });
+      if (agentSettings && agentSettings.mode === 'live' && agentState !== 'idle' && agentState !== 'cooldown') return report({ ok: false, message: 'Auto mode is handling this truck right now.' });
+      lastPrintTrigger = Date.now(); lastPrintWeight = w;
+      if (cmd.kind === 'capture') {
+        const photo = autoCapturePhoto('weigh-in');
+        const res = await axios.post('/api/scale-tickets/print-trigger', { weight: w, photo: photo || null });
+        agentLog('remote capture: opened ' + res.data.ticket_number + ' at ' + w.toFixed(1) + ' kg');
+        logSerial('>>> Remote capture: ' + res.data.ticket_number + ' @ ' + w + ' kg');
+        loadOpenTickets(); loadStats();
+        return report({ ok: true, ticket_id: res.data.id, ticket_number: res.data.ticket_number, weight: w });
+      }
+      const t = openTickets.find(function (x) { return x.id === Number(cmd.ticket_id); });
+      const photo = autoCapturePhoto('weigh-out');
+      const res = await axios.post('/api/scale-tickets/' + cmd.ticket_id + '/merge-out', { weight: w, photo: photo || null });
+      agentLog('remote weigh-out: closed ' + (t ? t.ticket_number : '#' + cmd.ticket_id) + ' at ' + w.toFixed(1) + ' kg');
+      markKindQuestionClosed(Number(cmd.ticket_id));
+      autoChargeSquare(Number(cmd.ticket_id));
+      await report({ ok: true, ticket_id: Number(cmd.ticket_id), ticket_number: t ? t.ticket_number : '', weight: w,
+        net_weight: res.data.net_weight, grand_total: res.data.grand_total, ticket_type: res.data.ticket_type });
+      await autoPrintReceipt(Number(cmd.ticket_id));
+      loadOpenTickets(); loadCompletedToday(); loadStats();
+    } catch (e) {
+      report({ ok: false, message: (e.response && e.response.data && e.response.data.error) || e.message });
+    }
+  }
+
   let isKioskMode = window.location.search.includes('kiosk');
   let activeModalId = null;
   // Not "userRole": employeeLayout's sidebar script declares a top-level
@@ -1569,6 +1708,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
 
   async function captureWeight() {
+    if (remoteScale && !isLive()) { remoteCapture(); return; }
     if (currentLiveWeight <= 0) return;
     if (!isLive() && connectionMode !== 'sim') {
       alert(remoteScaleMsg('Live weight is stale — reconnect the scale or use Manual Entry.'));
@@ -3126,7 +3266,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     // button greyed for legitimate sub-100 kg loads and during normal indicator
     // jitter on the AM5332C (e=10 kg increments). captureWeight() still blocks
     // <=0 and stale data, so this only widens the click window, not the safety.
-    btn.disabled = !(currentLiveWeight > 0 && isLive());
+    btn.disabled = !(currentLiveWeight > 0 && (isLive() || (remoteScale && OPERATOR_ROLES.indexOf(currentUserRole) >= 0)));
   }
 
   function showConnectionMode(mode) {
@@ -4976,6 +5116,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // reading for the selected ticket, then routes through the existing merge
   // confirm flow so the operator can verify net weight + total before printing.
   async function connectToTruckOnScale(ticketId) {
+    if (remoteScale && !isLive()) { remoteWeighOut(ticketId); return; }
     if (!isLive() && connectionMode !== 'sim') {
       alert(remoteScaleMsg('Scale is disconnected or stale — reconnect to capture the outbound weight.'));
       return;
@@ -7291,6 +7432,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       bootstrapScale();
       startStaleWatchdog();
       startRemoteScaleView();
+      startStationLoop();
       // Reveal price-management button only to roles permitted by the backend
       // (mirrors roleRequired('admin','manager') on POST/DELETE /api/pricing).
       if (['admin','manager'].includes(currentUserRole)) {
