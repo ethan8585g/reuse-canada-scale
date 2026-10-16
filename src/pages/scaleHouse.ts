@@ -4,6 +4,85 @@ import { employeePageWrapper } from '../utils/employeeLayout'
 export function renderScaleHouse(buildId: string = 'dev'): string {
   return layout('Scale House', employeePageWrapper('scale-house', 'Scale House — Truck Scale', `
 
+  <style>
+    .sh-wrap, #sh-pay-modal { --sh-ink:#1f3a2f; --sh-ink2:#2b4b3d; --sh-lime:#dcf2a2; --sh-line:#e6e4dc; --sh-muted:#6b7a72; --sh-soft:#f1f0e8; color:#14241d; }
+    .sh-eyebrow { font-size:11px; letter-spacing:.18em; font-weight:700; color:var(--sh-muted); text-transform:uppercase; }
+    .sh-title { font-size:2.1rem; font-weight:800; letter-spacing:-.03em; line-height:1.1; }
+    .sh-title span { color:#7fb069; }
+    .sh-tabs { display:flex; gap:1.75rem; border-bottom:1px solid var(--sh-line); overflow-x:auto; }
+    .sh-tab { padding:.65rem 0; font-size:.9rem; color:var(--sh-muted); border-bottom:2px solid transparent; white-space:nowrap; font-weight:500; background:none; }
+    .sh-tab[aria-selected="true"] { color:var(--sh-ink); border-bottom-color:var(--sh-ink); font-weight:700; }
+    .sh-wrap button:focus-visible, .sh-wrap select:focus-visible, .sh-wrap [tabindex]:focus-visible, #sh-pay-modal button:focus-visible { outline:2px solid #7fb069; outline-offset:2px; }
+    .sh-count { display:inline-block; min-width:1.4rem; padding:0 .4rem; border-radius:999px; background:#eef1e6; color:var(--sh-ink); font-size:11px; font-weight:700; text-align:center; margin-left:.35rem; }
+    .sh-strip { display:flex; flex-wrap:wrap; gap:.4rem 1.25rem; align-items:center; font-size:12px; color:var(--sh-muted); }
+    .sh-chip { display:inline-flex; align-items:center; gap:.4rem; color:#33473d; font-weight:500; background:none; }
+    .sh-chip:hover { color:var(--sh-ink); text-decoration:underline; }
+    .sh-dot { width:7px; height:7px; border-radius:999px; background:#9ca3af; display:inline-block; }
+    .sh-dot.ok { background:#5fa34a; } .sh-dot.warn { background:#d99a2b; } .sh-dot.bad { background:#d9534f; }
+    .sh-card { background:#fff; border:1px solid var(--sh-line); border-radius:18px; }
+    .sh-card-h { display:flex; justify-content:space-between; align-items:flex-start; gap:.75rem; padding:1rem 1.25rem; }
+    .sh-card-h h2 { font-size:1rem; font-weight:700; }
+    .sh-card-h p { font-size:12px; color:var(--sh-muted); margin-top:.15rem; }
+    .sh-btn { border:1px solid var(--sh-line); background:#fff; border-radius:10px; padding:.42rem .8rem; font-size:12px; font-weight:600; color:#14241d; display:inline-flex; align-items:center; gap:.35rem; }
+    .sh-btn:hover { background:#fafaf6; }
+    .sh-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .sh-btn-primary { background:var(--sh-ink); color:#fff; border-color:var(--sh-ink); }
+    .sh-btn-primary:hover { background:var(--sh-ink2); }
+    #weighbridge-panel { background:var(--sh-ink) !important; border-color:var(--sh-ink2) !important; border-radius:20px !important; }
+    #weighbridge-panel [class*="bg-gray-800"] { background:rgba(0,0,0,.18) !important; }
+    #weighbridge-panel [class*="border-gray-6"], #weighbridge-panel [class*="border-gray-7"] { border-color:rgba(255,255,255,.12) !important; }
+    #btn-capture-weight { background:var(--sh-lime) !important; color:#14241d !important; }
+    .sh-yard { max-height:28rem; overflow-y:auto; }
+    .sh-yard-row { display:flex; gap:.9rem; padding:1rem 1.25rem; border-top:1px solid var(--sh-line); }
+    .sh-num { width:2.25rem; height:2.25rem; flex-shrink:0; border-radius:10px; background:var(--sh-soft); font-weight:700; font-size:12px; color:#33473d; display:flex; align-items:center; justify-content:center; }
+    .sh-pill { display:inline-block; padding:.05rem .45rem; border-radius:6px; font-size:10px; font-weight:700; }
+    .sh-pill-yard { background:#eef4dc; color:#4d6b2c; } .sh-pill-need { background:#fbeed6; color:#8a5a12; }
+    .sh-pill-paid { background:#eef4dc; color:#4d6b2c; } .sh-pill-due { background:#fbeed6; color:#8a5a12; } .sh-pill-free { background:#eef0ee; color:#5f6b65; }
+    .sh-table { width:100%; font-size:13px; }
+    .sh-table th { text-align:left; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--sh-muted); font-weight:700; padding:.6rem 1.25rem; background:#fafaf6; }
+    .sh-table td { padding:.75rem 1.25rem; border-top:1px solid var(--sh-line); vertical-align:top; }
+    .sh-table tr.sh-click { cursor:pointer; } .sh-table tr.sh-click:hover td { background:#fafaf6; }
+    .sh-history-list { max-height:34rem; }
+    .sh-kind { width:12.5rem; } .sh-kind button { white-space:nowrap; padding-top:.4rem; padding-bottom:.4rem; }
+    .sh-seg { display:inline-flex; border:1px solid var(--sh-line); border-radius:10px; overflow:hidden; }
+    .sh-seg button { padding:.4rem .9rem; font-size:12px; font-weight:600; color:var(--sh-muted); background:#fff; }
+    .sh-seg button[aria-pressed="true"] { background:var(--sh-ink); color:#fff; }
+    .sh-step { flex:1; border:1px solid var(--sh-line); border-radius:12px; padding:.55rem .25rem; text-align:center; font-size:11px; font-weight:600; background:#fff; }
+    .sh-step:disabled { opacity:.45; cursor:not-allowed; }
+    .sh-stat { border:1px solid var(--sh-line); border-radius:12px; padding:.5rem; text-align:center; }
+    .sh-stat strong { display:block; font-size:1.05rem; }
+    .sh-stat span { font-size:10px; color:var(--sh-muted); }
+    @media (max-width: 640px) { .sh-title { font-size:1.7rem; } .sh-table th, .sh-table td { padding:.55rem .75rem; } .sh-yard-row { padding:.85rem; } }
+  </style>
+  <div class="sh-wrap">
+  <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
+    <div>
+      <div class="sh-eyebrow">Your yard, at a glance</div>
+      <h1 class="sh-title">Scale House<span>.</span></h1>
+      <p class="text-sm text-gray-500 mt-1">A clear view of every load, from arrival to receipt.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button type="button" onclick="openNewTicketModal()" class="sh-btn sh-btn-primary" style="padding:.65rem 1rem;font-size:13px;"><i class="fas fa-plus"></i> New ticket <kbd class="ml-1 px-1.5 rounded border border-white/30 text-[10px]">N</kbd></button>
+    </div>
+  </div>
+
+  <div class="sh-tabs mb-4" role="tablist" aria-label="Scale House sections" onkeydown="shTabKey(event)">
+    <button type="button" class="sh-tab" role="tab" id="sh-tabbtn-station" aria-controls="sh-tab-station" aria-selected="true" onclick="shShowTab('station')">Weighing station</button>
+    <button type="button" class="sh-tab" role="tab" id="sh-tabbtn-history" aria-controls="sh-tab-history" aria-selected="false" tabindex="-1" onclick="shShowTab('history')">Ticket history <span id="sh-history-count" class="sh-count">0</span></button>
+    <button type="button" class="sh-tab" role="tab" id="sh-tabbtn-equipment" aria-controls="sh-tab-equipment" aria-selected="false" tabindex="-1" onclick="shShowTab('equipment')">Equipment &amp; settings</button>
+  </div>
+  <!-- ═══════ WEIGHING STATION ═══════ -->
+  <section id="sh-tab-station" role="tabpanel" aria-labelledby="sh-tabbtn-station">
+  <div class="sh-strip mb-4" aria-label="Station overview">
+    <span class="sh-chip" style="font-weight:700;"><i class="sh-dot ok"></i> Station overview</span>
+    <button type="button" class="sh-chip" onclick="toggleScaleSettings()" title="Scale connection settings"><i id="sh-strip-scale-dot" class="sh-dot"></i><span id="sh-strip-scale">Scale</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+    <button type="button" class="sh-chip" onclick="document.getElementById('camera-section').scrollIntoView({behavior:'smooth',block:'center'})"><i id="sh-strip-cam-dot" class="sh-dot"></i><span id="sh-strip-cam">Camera</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+    <button type="button" class="sh-chip" onclick="shShowTab('equipment')"><i id="sh-strip-printer-dot" class="sh-dot"></i><span id="sh-strip-printer">Printer</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+    <button type="button" class="sh-chip" onclick="shShowTab('equipment')"><i id="sh-strip-agent-dot" class="sh-dot"></i><span id="sh-strip-agent">Co-pilot</span> <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+  </div>
+
+  <div class="grid lg:grid-cols-3 gap-5">
+    <div class="lg:col-span-2 space-y-4 min-w-0">
   <!-- ═══════ BROWSER / SETUP BANNER ═══════ -->
   <div id="scale-setup-banner" style="display:none;" role="region" aria-label="Scale connection help"></div>
 
@@ -311,17 +390,42 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     </div>
   </div>
 
-  <!-- ═══════ MAIN LAYOUT ═══════ -->
-  <div class="grid lg:grid-cols-3 gap-6">
+      <!-- Material the co-pilot puts on the tickets it opens. Manual tickets
+           still choose material in the Assign window. -->
+      <section class="sh-card px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div class="sh-eyebrow">Material for new loads</div>
+          <p class="text-xs text-gray-500 mt-0.5">Used when the co-pilot opens a ticket. Manual tickets choose it in Assign.</p>
+        </div>
+        <div class="flex items-center gap-3 flex-wrap min-w-0">
+          <select id="sh-material" onchange="shSetMaterial(this.value)" aria-label="Material for new loads" class="text-sm font-semibold border border-gray-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-rc-green"><option value="">Loading…</option></select>
+          <span id="sh-material-rate" class="text-xs text-gray-500"></span>
+          <button type="button" class="text-xs font-semibold text-rc-green hover:underline" onclick="shShowTab('equipment')">View rates <i class="fas fa-arrow-up-right text-[9px]"></i></button>
+        </div>
+      </section>
 
-    <!-- LEFT: Camera + Open Tickets -->
-    <div class="lg:col-span-2 space-y-6">
+      <!-- In the yard. Heading stays put; only the list scrolls. -->
+      <section class="sh-card overflow-hidden" aria-labelledby="sh-yard-title">
+        <div class="sh-card-h">
+          <div>
+            <h2 id="sh-yard-title">In the yard <span id="open-count" class="sh-count">0</span></h2>
+            <p>Pick a load to assign a customer or weigh it out. #1 is the oldest load in the yard.</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <span id="auto-refresh-indicator" class="text-[10px] text-gray-400"><i class="fas fa-sync-alt fa-spin mr-0.5"></i>Live</span>
+            <button type="button" onclick="loadOpenTickets()" class="text-xs font-semibold text-rc-green hover:underline"><i class="fas fa-sync-alt mr-1"></i>Refresh</button>
+          </div>
+        </div>
+        <div id="open-tickets-grid" class="sh-yard" tabindex="0" role="region" aria-label="Loads in the yard">
+          <div class="py-10 text-center text-sm text-gray-400">Loading…</div>
+        </div>
+      </section>
+    </div>
 
-      <!-- Camera + Open Tickets side by side -->
-      <div class="grid md:grid-cols-5 gap-4">
+    <aside class="space-y-4 min-w-0">
         <!-- Camera. Source-agnostic on purpose: webcam today, yard camera later
              (see the CAMERA block in the script for how the swap works). -->
-        <div id="camera-section" class="md:col-span-2 bg-white rounded-xl shadow-card border border-gray-100 p-3 flex flex-col">
+        <div id="camera-section" class="sh-card p-3 flex flex-col">
           <div class="flex items-center justify-between mb-2 gap-2">
             <div class="flex items-center gap-1.5 min-w-0">
               <i class="fas fa-video text-rc-green text-sm"></i>
@@ -459,33 +563,65 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </div>
         </div>
 
-        <!-- Open Tickets Grid -->
-        <div class="md:col-span-3 bg-white rounded-xl shadow-card border border-gray-100">
-          <div class="p-3 border-b border-gray-100 flex items-center justify-between">
-            <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-              <i class="fas fa-trucks-field text-rc-orange"></i>
-              Open Tickets <span id="open-count" class="text-xs font-normal text-gray-400">(0)</span>
-            </h2>
-            <div class="flex items-center gap-1.5">
-              <span id="auto-refresh-indicator" class="text-[10px] text-gray-400"><i class="fas fa-sync-alt fa-spin mr-0.5"></i>Live</span>
-              <button onclick="loadOpenTickets()" class="text-gray-400 hover:text-gray-600 text-xs"><i class="fas fa-sync-alt"></i></button>
-              <button onclick="openNewTicketModal()" class="px-2.5 py-1 bg-rc-orange text-white text-[10px] font-bold rounded-lg hover:bg-rc-orange-light btn-press transition-all">
-                <i class="fas fa-plus mr-0.5"></i> Manual
-              </button>
-            </div>
+      <!-- Today. Same ids loadStats() has always filled. -->
+      <section class="sh-card overflow-hidden">
+        <div class="sh-card-h"><h2>Today’s activity</h2><span id="sh-today-date" class="text-xs text-gray-400"></span></div>
+        <div class="grid grid-cols-2 border-t border-gray-100">
+          <div class="px-5 py-3 border-r border-gray-100"><div class="text-[11px] text-gray-500">Completed loads</div><div class="text-2xl font-bold tabular-nums" id="stat-completed">0</div></div>
+          <div class="px-5 py-3"><div class="text-[11px] text-gray-500">Net material</div><div class="text-2xl font-bold tabular-nums"><span id="stat-weight">0</span> <span class="text-xs text-gray-400">kg</span></div></div>
+        </div>
+        <div class="px-5 py-3 border-t border-gray-100 flex items-center justify-between"><span class="text-xs text-gray-500">In the yard now</span><strong class="tabular-nums" id="stat-open">0</strong></div>
+        <div class="px-5 py-3 border-t border-gray-100 flex items-center justify-between"><span class="text-xs text-gray-500">Total revenue</span><strong class="text-xl text-rc-green tabular-nums" id="stat-revenue">$0</strong></div>
+        <button type="button" onclick="openPaymentsModal('all')" class="w-full px-5 py-3 border-t border-gray-100 flex items-center justify-between text-xs font-semibold text-rc-green hover:bg-gray-50">Review payments <span>→</span></button>
+      </section>
+
+      <!-- Co-pilot. Manual = agent off, Auto = agent live. Dry run stays in
+           Equipment & settings. The server enforces the mode; this only asks. -->
+      <section class="sh-card p-4 space-y-3" id="sh-copilot" aria-labelledby="sh-cp-title">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-9 h-9 shrink-0 rounded-xl flex items-center justify-center text-white" style="background:var(--sh-ink)">✦</span>
+            <div><div class="sh-eyebrow">Co-pilot</div><h3 id="sh-cp-title" class="font-bold text-sm">Loading…</h3></div>
           </div>
-          <div id="open-tickets-grid" class="p-3 max-h-64 overflow-y-auto">
-            <div class="py-10 text-center">
-              <div class="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3"><i class="fas fa-balance-scale text-xl text-gray-300"></i></div>
-              <p class="font-semibold text-gray-500 text-sm">No open tickets</p>
-              <p class="text-xs text-gray-400 mt-1">Capture a weight to create a ticket</p>
-            </div>
+          <div class="sh-seg" role="group" aria-label="Co-pilot mode">
+            <button type="button" id="sh-cp-manual" aria-pressed="false" onclick="shSetCopilot('off')">Manual</button>
+            <button type="button" id="sh-cp-auto" aria-pressed="false" onclick="shSetCopilot('live')">Auto</button>
           </div>
         </div>
-      </div>
+        <p id="sh-cp-text" class="text-xs text-gray-500 leading-snug"></p>
+        <button type="button" id="sh-cp-primary" class="w-full sh-btn sh-btn-primary justify-center" style="padding:.65rem;"></button>
+        <div class="flex gap-2" role="group" aria-label="Steps">
+          <button type="button" class="sh-step" disabled title="Driver self check-in is not set up yet">Check in</button>
+          <button type="button" class="sh-step" onclick="captureWeight()">Weigh</button>
+          <button type="button" class="sh-step" onclick="openPaymentsModal('unpaid')">Bill</button>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="sh-stat"><strong id="sh-cp-yard">0</strong><span>In the yard</span></div>
+          <div class="sh-stat"><strong id="sh-cp-questions">0</strong><span>Need an answer</span></div>
+          <div class="sh-stat"><strong id="sh-cp-scale">—</strong><span>Scale</span></div>
+        </div>
+        <div class="flex items-center justify-between text-xs">
+          <button type="button" class="text-gray-400 cursor-not-allowed" disabled title="Emergency contact is not set up yet">Emergency contact — not set up</button>
+          <button type="button" class="font-semibold text-rc-green hover:underline" onclick="shShowTab('equipment')">Advanced settings →</button>
+        </div>
+      </section>
+    </aside>
+  </div>
 
+  <!-- Recently completed: today's closed tickets, newest first. -->
+  <section class="sh-card overflow-hidden mt-5">
+    <div class="sh-card-h">
+      <div><h2>Recently completed</h2><p>A receipt and a clear record for every load.</p></div>
+      <button type="button" class="text-xs font-semibold text-rc-green hover:underline" onclick="shShowTab('history')">All ticket history →</button>
+    </div>
+    <div id="sh-recent" class="overflow-x-auto"><div class="px-5 py-6 text-sm text-gray-400">Loading…</div></div>
+  </section>
+  </section>
+
+  <!-- ═══════ TICKET HISTORY ═══════ -->
+  <section id="sh-tab-history" role="tabpanel" aria-labelledby="sh-tabbtn-history" style="display:none;">
       <!-- Scale Ticket History -->
-      <div class="bg-white rounded-xl shadow-card border border-gray-100">
+      <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
             <i class="fas fa-clock-rotate-left text-rc-green"></i> Scale Ticket History
@@ -513,6 +649,16 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
               <option value="voided">Voided</option>
             </select>
           </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <label class="text-[11px] text-gray-500 flex items-center gap-1">Material
+              <select id="history-material" onchange="renderHistoryRows()" aria-label="Filter by material" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green"><option value="">All materials</option></select>
+            </label>
+            <label class="text-[11px] text-gray-500 flex items-center gap-1">Customer
+              <select id="history-customer" onchange="renderHistoryRows()" aria-label="Filter by customer" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-rc-green max-w-[14rem]"><option value="">All customers</option></select>
+            </label>
+            <button type="button" id="history-clear" onclick="clearHistoryFilters()" class="text-[11px] font-semibold text-gray-500 hover:text-gray-700 underline" style="display:none;">Clear filters</button>
+            <button type="button" onclick="exportHistoryCsv()" class="ml-auto sh-btn"><i class="fas fa-download mr-1"></i> Export CSV</button>
+          </div>
           <div id="history-range" class="hidden flex items-center gap-1.5">
             <input id="history-from" type="date" onchange="loadTicketHistory()" class="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-rc-green" />
             <span class="text-gray-300 text-xs">to</span>
@@ -521,53 +667,22 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <div id="history-summary" class="grid grid-cols-3 gap-1.5"></div>
         </div>
 
-        <div id="ticket-history" class="max-h-80 overflow-y-auto">
+        <div id="ticket-history" class="sh-history-list overflow-y-auto">
           <div class="p-4 text-center text-gray-400 text-sm">Loading...</div>
         </div>
       </div>
+  </section>
+
+  <!-- ═══════ EQUIPMENT & SETTINGS ═══════ -->
+  <section id="sh-tab-equipment" role="tabpanel" aria-labelledby="sh-tabbtn-equipment" style="display:none;">
+    <div class="flex items-center gap-3 mb-4">
+      <span class="w-10 h-10 rounded-xl flex items-center justify-center text-white" style="background:var(--sh-ink)"><i class="fas fa-gear"></i></span>
+      <div><h2 class="font-bold">One place for your station setup.</h2><p class="text-xs text-gray-500">Keep daily weighing simple. Come here when you need to adjust how it works.</p></div>
     </div>
-
-    <!-- RIGHT: Stats, Settlement, Pricing, Printer, Square -->
-    <div class="space-y-4">
-
-      <!-- Today Stats -->
-      <div class="bg-white rounded-xl shadow-card border border-gray-100 p-4">
-        <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5 mb-3"><i class="fas fa-chart-bar text-rc-green"></i> Today</h3>
-        <div class="grid grid-cols-2 gap-2">
-          <div class="bg-rc-orange-50 rounded-xl p-2.5 text-center ring-1 ring-black/5">
-            <div class="text-xl font-bold text-rc-orange tabular-nums" id="stat-open">0</div>
-            <div class="text-[10px] text-rc-orange font-semibold">Open</div>
-          </div>
-          <div class="bg-rc-green-50 rounded-xl p-2.5 text-center ring-1 ring-black/5">
-            <div class="text-xl font-bold text-rc-green tabular-nums" id="stat-completed">0</div>
-            <div class="text-[10px] text-rc-green font-semibold">Completed</div>
-          </div>
-          <div class="bg-rc-green-50 rounded-xl p-2.5 text-center ring-1 ring-black/5">
-            <div class="text-xl font-bold text-rc-green font-mono tabular-nums" id="stat-weight">0</div>
-            <div class="text-[10px] text-rc-green font-semibold">kg</div>
-          </div>
-          <div class="bg-rc-orange-50 rounded-xl p-2.5 text-center ring-1 ring-black/5">
-            <div class="text-xl font-bold text-rc-orange font-mono tabular-nums" id="stat-revenue">$0</div>
-            <div class="text-[10px] text-rc-orange font-semibold">Revenue</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- End of Day Settlement -->
-      <div class="bg-white rounded-xl shadow-card border border-gray-100">
-        <div class="p-3 border-b border-gray-100">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-cash-register text-rc-green"></i> Settlement</h3>
-        </div>
-        <div class="p-3 space-y-2">
-          <div id="settlement-summary" class="text-xs text-gray-500">Loading...</div>
-          <button onclick="settleDay()" id="btn-settle" class="w-full px-3 py-2 bg-rc-green text-white text-xs font-bold rounded-lg hover:bg-rc-green-light btn-press transition-all disabled:opacity-30" disabled>
-            <i class="fas fa-check-double mr-1"></i> Settle Today
-          </button>
-        </div>
-      </div>
-
+    <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+      <div class="space-y-4">
       <!-- Scale Agent -->
-      <div class="bg-white rounded-xl shadow-card border border-gray-100">
+      <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-robot text-rc-green"></i> Scale Agent</h3>
           <span id="agent-mode-badge" class="px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-100 text-gray-500">OFF</span>
@@ -630,9 +745,16 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </div>
         </div>
       </div>
-
+        <section class="sh-card p-4">
+          <label class="flex items-start gap-2 text-xs text-gray-600 cursor-pointer">
+            <input type="checkbox" id="sh-floating-cards" onchange="shSetFloatingCards(this.checked)" class="rounded mt-0.5">
+            <span>Also show floating live-ticket cards <span class="text-gray-400">— the older draggable cards, on top of the In the yard list</span></span>
+          </label>
+        </section>
+      </div>
+      <div class="space-y-4">
       <!-- Receipt Printer -->
-      <div class="bg-white rounded-xl shadow-card border border-gray-100">
+      <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100">
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-print text-gray-600"></i> Receipt Printer</h3>
         </div>
@@ -655,9 +777,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </label>
         </div>
       </div>
-
       <!-- Material Pricing -->
-      <div class="bg-white rounded-xl shadow-card border border-gray-100">
+      <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100 flex items-center justify-between">
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-tags text-purple-600"></i> Pickup Prices</h3>
           <button id="btn-manage-pricing" onclick="openPricingModal()" class="hidden text-xs font-semibold text-blue-600 hover:text-blue-700"><i class="fas fa-sliders mr-1"></i>Manage</button>
@@ -666,9 +787,22 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <div class="text-center text-gray-400 text-xs py-2"><i class="fas fa-spinner fa-spin mr-1"></i>Loading...</div>
         </div>
       </div>
-
+      </div>
+      <div class="space-y-4">
+      <!-- End of Day Settlement -->
+      <div class="sh-card overflow-hidden">
+        <div class="p-3 border-b border-gray-100">
+          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-cash-register text-rc-green"></i> Settlement</h3>
+        </div>
+        <div class="p-3 space-y-2">
+          <div id="settlement-summary" class="text-xs text-gray-500">Loading...</div>
+          <button onclick="settleDay()" id="btn-settle" class="w-full px-3 py-2 bg-rc-green text-white text-xs font-bold rounded-lg hover:bg-rc-green-light btn-press transition-all disabled:opacity-30" disabled>
+            <i class="fas fa-check-double mr-1"></i> Settle Today
+          </button>
+        </div>
+      </div>
       <!-- Square Terminal -->
-      <div class="bg-white rounded-xl shadow-card border border-gray-100">
+      <div class="sh-card overflow-hidden">
         <div class="p-3 border-b border-gray-100">
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square</h3>
         </div>
@@ -676,7 +810,6 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <div class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i> Payment amounts sent to Square Reader.</div>
         </div>
       </div>
-
       <!-- Hotkey Reference -->
       <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
         <div class="text-[10px] text-gray-500 font-semibold uppercase tracking-wide mb-1.5">Keyboard Shortcuts</div>
@@ -687,8 +820,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <div><kbd class="px-1 py-0.5 bg-white rounded border text-gray-600 font-mono">R</kbd> Refresh</div>
         </div>
       </div>
+      </div>
     </div>
+  </section>
   </div>
+
 
   <!-- ═══════ ALL MODALS ═══════ -->
 
@@ -903,6 +1039,18 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <button onclick="savePickupPrice(true)" class="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold py-2.5 rounded-xl btn-press" title="Stop selling this material on pickup">Clear</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Today's payments: category -> list -> one record. Read-only view of
+       the tickets; collecting goes through the existing Square/cash paths. -->
+  <div id="sh-pay-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="sh-pay-title">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+        <div><div class="sh-eyebrow">Today’s payments</div><h3 id="sh-pay-title" class="text-lg font-bold text-gray-800">Payments</h3></div>
+        <button type="button" onclick="closeModal('sh-pay-modal')" aria-label="Close payments" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div id="sh-pay-body" class="p-5"></div>
     </div>
   </div>
 
@@ -3763,6 +3911,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (cancelHint) cancelHint.textContent = cancelSec === 0
       ? 'Acts the moment the scale settles, then shows what it did for a few seconds.'
       : 'Shows what it is about to do for ' + cancelSec + ' s, with a Cancel button, before acting.';
+    shSyncStrip();
+    shRenderMaterial();
     ['off', 'dry_run', 'live'].forEach(function (m) {
       const b = document.getElementById('agent-btn-' + m);
       if (!b) return;
@@ -4295,19 +4445,46 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const res = await axios.get('/api/scale-tickets?status=weighed_in,field_pending,field_complete&photos=1');
       openTickets = (res.data.tickets||[]).filter(t => t.status !== 'completed' && t.status !== 'voided');
       const grid = document.getElementById('open-tickets-grid');
-      document.getElementById('open-count').textContent = '(' + openTickets.length + ')';
+      document.getElementById('open-count').textContent = openTickets.length;
       if (openTickets.length === 0) {
-        grid.innerHTML = '<div class="py-10 text-center"><div class="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3"><i class="fas fa-balance-scale text-xl text-gray-300"></i></div><p class="font-semibold text-gray-500 text-sm">No open tickets</p><p class="text-xs text-gray-400 mt-1">Capture a weight to create a ticket</p></div>';
+        grid.innerHTML = '<div class="py-10 text-center"><div class="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3" style="background:var(--sh-soft)"><i class="fas fa-balance-scale text-xl text-gray-300"></i></div><p class="font-semibold text-gray-500 text-sm">Nothing in the yard</p><p class="text-xs text-gray-400 mt-1">Capture a weight to start a ticket</p></div>';
+        shSyncStrip();
+        renderLiveTicketCards();
         return;
       }
-      grid.innerHTML = '<div class="space-y-2">' + openTickets.map(t => {
-        const isUn = !t.customer_id || t.customer_id === 0;
-        return '<div class="flex items-center justify-between p-3 rounded-lg border ' + (isUn ? 'border-amber-200 bg-amber-50/50' : 'border-gray-100 bg-white') + ' hover:shadow-sm transition-all">' +
-          '<div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="font-mono text-xs font-bold text-rc-green">' + escHtml(t.ticket_number) + '</span>' + (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px]"></i>' : '') + '<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ' + (isUn ? 'bg-amber-200 text-amber-800' : 'bg-blue-100 text-blue-700') + '">' + (isUn ? 'UNASSIGNED' : 'IN YARD') + '</span>' + ticketKindChip(t) + '</div><div class="text-xs text-gray-500 truncate mt-0.5">' + escHtml(t.company_name || 'No customer') + ' &middot; ' + escHtml(getMaterialLabel(t.tire_type)) + '</div></div>' +
-          '<div class="flex items-center gap-2 flex-shrink-0"><div class="text-right"><div class="text-sm font-mono font-bold">' + (t.weight_in ? parseFloat(t.weight_in).toLocaleString('en-CA',{minimumFractionDigits:0}) + ' kg' : '—') + '</div><div class="text-[10px] text-gray-400">' + timeAgo(t.weight_in_at||t.created_at) + '</div></div>' +
-          '<button onclick="openAssignModal(' + t.id + ',\\'' + (t.ticket_number || '').replace(/[\\\\\'"<>]/g,'') + '\\',' + (t.weight_in||0) + ')" class="px-2 py-1 ' + (isUn ? 'bg-amber-500 text-white' : 'bg-blue-100 text-blue-700') + ' text-[10px] font-bold rounded hover:opacity-80 btn-press"><i class="fas fa-' + (isUn ? 'user-tag' : 'edit') + '"></i></button>' +
-          '<button onclick="openVoidModal(' + t.id + ',\\'' + (t.ticket_number || '').replace(/[\\\\\'"<>]/g,'') + '\\')" class="px-2 py-1 bg-red-100 text-red-600 text-[10px] rounded hover:bg-red-200 btn-press"><i class="fas fa-ban"></i></button></div></div>';
-      }).join('') + '</div>';
+      // Yard position: #1 is the oldest load still in the yard -- not the
+      // ticket number, which stays on the row as the reference.
+      const yard = openTickets.slice().sort(function (a, b) {
+        return new Date(a.weight_in_at || a.created_at || 0) - new Date(b.weight_in_at || b.created_at || 0);
+      });
+      grid.innerHTML = yard.map(function (t, i) {
+        // Unassigned means the Walk-In sentinel, never a null customer id.
+        const isUn = !t.company_name || t.company_name === 'Walk-In';
+        const safeNum = (t.ticket_number || '').replace(/[^A-Za-z0-9-]/g, '');
+        const arrived = t.weight_in_at ? new Date(t.weight_in_at).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '—';
+        const look = parseLook(t.appearance_in);
+        const lookTxt = look ? [look.color, look.make, look.body].filter(Boolean).join(' ') : '';
+        const vehicle = [t.vehicle_plate ? escHtml(t.vehicle_plate) : '', escHtml(lookTxt)].filter(Boolean).join(' · ') || 'Vehicle not recorded';
+        return '<div class="sh-yard-row">'
+          + '<div class="sh-num">' + String(i + 1).padStart(2, '0') + '</div>'
+          + '<div class="min-w-0 flex-1">'
+            + '<div class="flex items-center gap-2 flex-wrap"><span class="font-semibold text-sm truncate">' + (isUn ? 'Unknown — live ticket' : escHtml(t.company_name)) + '</span>'
+              + (isUn ? '<span class="sh-pill sh-pill-need">Needs customer</span>' : '<span class="sh-pill sh-pill-yard">In yard</span>')
+              + ticketKindChip(t) + '</div>'
+            + '<div class="text-xs text-gray-500 mt-0.5">' + escHtml(t.ticket_number) + ' · ' + escHtml(getMaterialLabel(t.tire_type)) + '</div>'
+            + '<div class="text-xs text-gray-500"><span class="font-semibold text-gray-700">' + vehicle + '</span> · Arrived ' + arrived + (t.driver_display_name ? ' · ' + escHtml(t.driver_display_name) : '') + '</div>'
+            + '<div class="flex items-center gap-2 mt-2 flex-wrap">'
+              + '<button type="button" class="sh-btn" onclick="openAssignModal(' + t.id + ',&quot;' + safeNum + '&quot;,' + (Number(t.weight_in) || 0) + ')">' + (isUn ? '<i class="fas fa-plus"></i> Assign customer' : 'Edit details') + '</button>'
+              + '<button type="button" class="sh-btn sh-btn-primary" onclick="connectToTruckOnScale(' + t.id + ')">Weigh out →</button>'
+              + '<div class="sh-kind">' + ticketKindToggle(t.id, ticketKind(t)) + '</div>'
+              + '<button type="button" class="sh-btn" onclick="loadTicketDetail(' + t.id + ')" aria-label="Open ticket ' + safeNum + '"><i class="fas fa-eye"></i></button>'
+              + '<button type="button" class="sh-btn" onclick="openVoidModal(' + t.id + ',&quot;' + safeNum + '&quot;)" aria-label="Void ticket ' + safeNum + '" style="color:#b42318"><i class="fas fa-ban"></i></button>'
+            + '</div>'
+          + '</div>'
+          + '<div class="text-right shrink-0"><div class="font-bold tabular-nums">' + (t.weight_in ? Number(t.weight_in).toLocaleString('en-CA', { maximumFractionDigits: 0 }) : '—') + ' <span class="text-xs text-gray-400">kg</span></div><div class="text-[11px] text-gray-400">' + (ticketKind(t) === 'pickup' ? 'Empty weight' : 'Gross weight') + '</div></div>'
+        + '</div>';
+      }).join('');
+      shSyncStrip();
       renderLiveTicketCards();
     } catch(err) { console.error(err); }
   }
@@ -4345,6 +4522,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   function renderLiveTicketCards() {
     const panel = ensureLiveTicketsPanel();
+    // The In the yard list carries every action now. The floating cards are
+    // an opt-in extra (Equipment & settings), off by default.
+    if (!shFloatingCardsOn()) { panel.innerHTML = ''; liveTicketPositions = {}; return; }
     // Sort by oldest weight-in first so the truck that drove on first is #1.
     // This number is a "yard position" — it's not the persistent ticket
     // number, which still lives on each card as "Load #".
@@ -4624,31 +4804,67 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     return '<span class="inline-block w-1.5 h-1.5 rounded-full ' + m[0] + '" title="' + escAttr(m[1]) + '"></span>';
   }
 
-  async function loadTicketHistory() {
+  // Rows from the last history fetch, so the Material and Customer filters
+  // can narrow them without another request. Their options come only from
+  // values actually present on these tickets.
+  let historyRows = [], historyServerSummary = {};
+  function shCustomerKey(t) { return t.company_name || 'Walk-In'; }
+  function shPopulateHistoryFilters() {
+    const fill = function (id, values, label) {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">' + label + '</option>' + values.map(function (v) {
+        return '<option value="' + escAttr(v[0]) + '">' + escHtml(v[1]) + '</option>';
+      }).join('');
+      sel.value = values.some(function (v) { return v[0] === cur; }) ? cur : '';
+    };
+    const mats = {}, custs = {};
+    historyRows.forEach(function (t) {
+      if (t.tire_type) mats[t.tire_type] = getMaterialLabel(t.tire_type);
+      const k = shCustomerKey(t); custs[k] = k === 'Walk-In' ? 'Walk-In (unassigned)' : k;
+    });
+    const sorted = function (o) { return Object.keys(o).map(function (k) { return [k, o[k]]; }).sort(function (a, b) { return a[1].localeCompare(b[1]); }); };
+    fill('history-material', sorted(mats), 'All materials');
+    fill('history-customer', sorted(custs), 'All customers');
+  }
+  function shHistoryFiltered() {
+    const m = (document.getElementById('history-material') || {}).value || '';
+    const c = (document.getElementById('history-customer') || {}).value || '';
+    return historyRows.filter(function (t) {
+      return (!m || t.tire_type === m) && (!c || shCustomerKey(t) === c);
+    });
+  }
+  function renderHistoryRows() {
     const el = document.getElementById('ticket-history');
     if (!el) return;
-    const r = historyRange();
+    const m = (document.getElementById('history-material') || {}).value || '';
+    const c = (document.getElementById('history-customer') || {}).value || '';
     const statusSel = document.getElementById('history-status');
     const searchEl = document.getElementById('history-search');
-    const q = [];
-    if (r.from) q.push('date_from=' + encodeURIComponent(r.from));
-    if (r.to) q.push('date_to=' + encodeURIComponent(r.to));
-    if (statusSel && statusSel.value) q.push('status=' + encodeURIComponent(statusSel.value));
-    if (searchEl && searchEl.value.trim()) q.push('search=' + encodeURIComponent(searchEl.value.trim()));
-    q.push('limit=200');
-
-    try {
-      const res = await axios.get('/api/scale-tickets?' + q.join('&'));
-      const tickets = res.data.tickets || [];
-      const sum = res.data.summary || {};
-      renderHistorySummary(sum);
-
-      if (tickets.length === 0) {
-        el.innerHTML = '<div class="p-5 text-center text-gray-400 text-xs"><i class="fas fa-inbox block text-xl mb-1.5 text-gray-200"></i>No tickets in this period</div>';
-        return;
-      }
-
-      el.innerHTML = tickets.map(function (t) {
+    const narrowed = !!(m || c || (statusSel && statusSel.value) || (searchEl && searchEl.value.trim()));
+    const clr = document.getElementById('history-clear');
+    if (clr) clr.style.display = narrowed ? '' : 'none';
+    const tickets = shHistoryFiltered();
+    // The server totals the whole period; once a client-side filter narrows
+    // the rows, the totals have to describe what is on screen instead.
+    if (m || c) {
+      renderHistorySummary({
+        count: tickets.length,
+        net_kg: tickets.reduce(function (n, t) { return n + (t.status === 'completed' ? Number(t.net_weight) || 0 : 0); }, 0),
+        revenue: tickets.reduce(function (n, t) { return n + (t.status === 'completed' ? Number(t.grand_total) || 0 : 0); }, 0),
+      });
+    } else {
+      renderHistorySummary(historyServerSummary);
+    }
+    const badge = document.getElementById('sh-history-count');
+    if (badge) badge.textContent = tickets.length;
+    if (tickets.length === 0) {
+      el.innerHTML = '<div class="p-6 text-center text-gray-400 text-xs"><i class="fas fa-inbox block text-xl mb-1.5 text-gray-200"></i>'
+        + (narrowed ? 'No tickets match these filters. <button type="button" onclick="clearHistoryFilters()" class="underline">Clear filters</button>' : 'No tickets in this period') + '</div>';
+      return;
+    }
+    el.innerHTML = tickets.map(function (t) {
         const when = t.created_at ? new Date(String(t.created_at).replace(' ', 'T') + 'Z') : null;
         const stamp = when && !isNaN(when.getTime())
           ? (historyPeriod === 'today'
@@ -4677,6 +4893,47 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           + '</div>'
         + '</div>';
       }).join('');
+  }
+  function clearHistoryFilters() {
+    ['history-material', 'history-customer', 'history-status'].forEach(function (id) { const e = document.getElementById(id); if (e) e.value = ''; });
+    const q = document.getElementById('history-search'); if (q) q.value = '';
+    loadTicketHistory();
+  }
+  function exportHistoryCsv() {
+    const rows = shHistoryFiltered();
+    const cell = function (v) { const x = v === null || v === undefined ? '' : String(v); return '"' + x.replace(/"/g, '""') + '"'; };
+    const head = ['Ticket', 'Created', 'Status', 'Type', 'Customer', 'Material', 'Plate', 'Driver', 'Weight in (kg)', 'Weight out (kg)', 'Net (kg)', 'Total', 'Payment'];
+    const lines = [head.map(cell).join(',')].concat(rows.map(function (t) {
+      return [t.ticket_number, t.created_at, t.status, ticketKind(t), shCustomerKey(t), getMaterialLabel(t.tire_type), t.vehicle_plate, t.driver_display_name,
+              t.weight_in, t.weight_out, t.net_weight, t.grand_total, t.payment_status].map(cell).join(',');
+    }));
+    const blob = new Blob([lines.join(String.fromCharCode(13, 10))], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'scale-tickets-' + shLocalDate(new Date()) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  async function loadTicketHistory() {
+    const el = document.getElementById('ticket-history');
+    if (!el) return;
+    const r = historyRange();
+    const statusSel = document.getElementById('history-status');
+    const searchEl = document.getElementById('history-search');
+    const q = [];
+    if (r.from) q.push('date_from=' + encodeURIComponent(r.from));
+    if (r.to) q.push('date_to=' + encodeURIComponent(r.to));
+    if (statusSel && statusSel.value) q.push('status=' + encodeURIComponent(statusSel.value));
+    if (searchEl && searchEl.value.trim()) q.push('search=' + encodeURIComponent(searchEl.value.trim()));
+    q.push('limit=200');
+
+    try {
+      const res = await axios.get('/api/scale-tickets?' + q.join('&'));
+      historyRows = res.data.tickets || [];
+      historyServerSummary = res.data.summary || {};
+      shPopulateHistoryFilters();
+      renderHistoryRows();
     } catch (err) {
       el.innerHTML = '<div class="p-4 text-center text-red-500 text-xs">Could not load tickets. <button onclick="loadTicketHistory()" class="underline">Retry</button></div>';
     }
@@ -4837,14 +5094,19 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   async function loadStats() {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const [openRes, compRes] = await Promise.all([axios.get('/api/scale-tickets?status=weighed_in,field_pending,field_complete'), axios.get('/api/scale-tickets?status=completed&date='+today)]);
+      // Local date: toISOString() is UTC and rolls the yard into tomorrow
+      // after 6pm Alberta time, emptying "today" for the evening shift.
+      const today = shLocalDate(new Date());
+      const [openRes, compRes] = await Promise.all([axios.get('/api/scale-tickets?status=weighed_in,field_pending,field_complete'), axios.get('/api/scale-tickets?status=completed&date_from='+today+'&date_to='+today+'&limit=500')]);
       const open = (openRes.data.tickets||[]).filter(t => t.status !== 'completed' && t.status !== 'voided');
       const comp = compRes.data.tickets || [];
       document.getElementById('stat-open').textContent = open.length;
       document.getElementById('stat-completed').textContent = comp.length;
       document.getElementById('stat-weight').textContent = comp.reduce((s,t) => s + (parseFloat(t.net_weight)||0), 0).toLocaleString('en-CA',{maximumFractionDigits:0});
-      document.getElementById('stat-revenue').textContent = '$' + comp.reduce((s,t) => s + (parseFloat(t.grand_total)||0), 0).toFixed(0);
+      document.getElementById('stat-revenue').textContent = '$' + comp.reduce((s,t) => s + (parseFloat(t.grand_total)||0), 0).toFixed(2);
+      shTodayRows = comp;
+      shRenderRecent();
+      if (activeModalId === 'sh-pay-modal' && shPayView.kind === 'list') shRenderPayList();
     } catch(err) {}
   }
 
@@ -4870,6 +5132,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     try {
       const res = await axios.get('/api/pricing'); pricingData = res.data.pricing || [];
       renderPricingPanel();
+      shRenderMaterial();
       // Keep ticket-creation dropdowns in sync with the current material list.
       refreshMaterialDropdowns();
     } catch(err) {}
@@ -5012,6 +5275,261 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       loadSettlement();
     } catch(err) { alert(err.response?.data?.error || 'Failed'); }
     finally { hideLoading(); }
+  }
+
+
+  // ══════════════════════════════════════════
+  // LAYOUT: tabs, station strip, co-pilot, material, payments
+  // ══════════════════════════════════════════
+  // Everything below drives the redesigned layout only. The workflows it
+  // points at -- capture, assign, weigh-out, receipts, Square, the agent --
+  // are the existing functions, called as they always were.
+  const SH_TABS = ['station', 'history', 'equipment'];
+  function shLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function shShowTab(name, focus) {
+    if (SH_TABS.indexOf(name) < 0) name = 'station';
+    SH_TABS.forEach(function (n) {
+      const panel = document.getElementById('sh-tab-' + n);
+      const btn = document.getElementById('sh-tabbtn-' + n);
+      const on = n === name;
+      if (panel) panel.style.display = on ? '' : 'none';
+      if (btn) { btn.setAttribute('aria-selected', on ? 'true' : 'false'); btn.tabIndex = on ? 0 : -1; if (on && focus) btn.focus(); }
+    });
+    try { localStorage.setItem('rc_sh_tab', name); } catch (e) {}
+    if (name === 'history') loadTicketHistory();
+  }
+  function shTabKey(e) {
+    const cur = SH_TABS.findIndex(function (n) { return document.getElementById('sh-tabbtn-' + n).getAttribute('aria-selected') === 'true'; });
+    let next = -1;
+    if (e.key === 'ArrowRight') next = (cur + 1) % SH_TABS.length;
+    else if (e.key === 'ArrowLeft') next = (cur + SH_TABS.length - 1) % SH_TABS.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = SH_TABS.length - 1;
+    if (next >= 0) { e.preventDefault(); shShowTab(SH_TABS[next], true); }
+  }
+
+  // Floating live-ticket cards: the pre-redesign view, now opt-in per station.
+  function shFloatingCardsOn() { try { return localStorage.getItem('rc_sh_floating') === '1'; } catch (e) { return false; } }
+  function shSetFloatingCards(on) {
+    try { localStorage.setItem('rc_sh_floating', on ? '1' : '0'); } catch (e) {}
+    renderLiveTicketCards();
+  }
+
+  function shDot(id, state) { const d = document.getElementById(id); if (d) d.className = 'sh-dot ' + (state || ''); }
+  function shText(id, txt) { const e = document.getElementById(id); if (e) e.textContent = txt; }
+  function shSyncStrip() {
+    const live = typeof isLive === 'function' && isLive();
+    shText('sh-strip-scale', live ? 'Scale connected' : 'Scale not connected');
+    shDot('sh-strip-scale-dot', live ? 'ok' : 'bad');
+    shText('sh-cp-scale', live ? 'Live' : 'Off');
+    const cam = ((document.getElementById('camera-status') || {}).textContent || 'OFF').trim();
+    const camLive = /live|on/i.test(cam) && !/off/i.test(cam);
+    shText('sh-strip-cam', 'Camera ' + cam.toLowerCase());
+    shDot('sh-strip-cam-dot', camLive ? 'ok' : 'warn');
+    const q = typeof receiptPrinterName === 'function' ? receiptPrinterName() : '';
+    const pst = document.getElementById('receipt-printer-status');
+    const pBad = pst && /red/.test(pst.className);
+    shText('sh-strip-printer', q ? (pBad ? 'Printer needs attention' : 'Printer ready') : 'Printer: browser dialog');
+    shDot('sh-strip-printer-dot', q ? (pBad ? 'bad' : 'ok') : 'warn');
+    const mode = agentSettings ? agentSettings.mode : 'off';
+    const modeLabel = { off: 'Manual mode', dry_run: 'Dry run', live: 'Auto mode' }[mode] || 'Manual mode';
+    shText('sh-strip-agent', modeLabel);
+    shDot('sh-strip-agent-dot', mode === 'live' ? 'ok' : (mode === 'dry_run' ? 'warn' : ''));
+    shRenderCopilot(mode, live);
+  }
+  function shRenderCopilot(mode, live) {
+    const man = document.getElementById('sh-cp-manual'), auto = document.getElementById('sh-cp-auto');
+    if (!man || !auto) return;
+    man.setAttribute('aria-pressed', mode === 'live' ? 'false' : 'true');
+    auto.setAttribute('aria-pressed', mode === 'live' ? 'true' : 'false');
+    const title = { off: 'You weigh, we keep the record', dry_run: 'Dry run: watching only', live: 'Watching your yard' }[mode] || 'You weigh, we keep the record';
+    const text = {
+      off: 'Manual: you capture each weight. The ticket, customer, receipt and payment stay together.',
+      dry_run: 'Dry run: the co-pilot shows what it would do but writes nothing. Weigh as you normally do.',
+      live: 'Auto: the co-pilot opens and closes tickets from the scale, prints the receipt and sends pickups to Square. Anything it is unsure of comes to you.'
+    }[mode];
+    shText('sh-cp-title', title);
+    shText('sh-cp-text', text || '');
+    const btn = document.getElementById('sh-cp-primary');
+    if (btn) {
+      if (mode === 'live') { btn.innerHTML = '<i class="fas fa-eye"></i> Show what it is doing'; btn.onclick = function () { shShowTab('equipment'); const l = document.getElementById('agent-log'); if (l) l.scrollIntoView({ block: 'center' }); }; btn.disabled = false; }
+      else { btn.innerHTML = '<i class="fas fa-camera"></i> Capture weight'; btn.onclick = function () { captureWeight(); }; btn.disabled = !live; btn.title = live ? '' : 'Connect the scale first'; }
+    }
+    shText('sh-cp-yard', String((openTickets || []).length));
+    shText('sh-cp-questions', String((typeof kindPromptQueue !== 'undefined' ? kindPromptQueue : []).length));
+  }
+  function shSetCopilot(mode) {
+    const cur = agentSettings ? agentSettings.mode : 'off';
+    if (cur === mode) return;
+    setAgentMode(mode);
+  }
+
+  // Material the co-pilot puts on the tickets it opens (scale agent setting).
+  function shRenderMaterial() {
+    const sel = document.getElementById('sh-material');
+    if (!sel || !pricingData.length) return;
+    const cur = (agentSettings && agentSettings.material) || 'mixed';
+    sel.innerHTML = pricingData.map(function (p) {
+      return '<option value="' + escAttr(p.material_type) + '">' + escHtml(getMaterialLabel(p.material_type)) + '</option>';
+    }).join('');
+    sel.value = cur;
+    const canEdit = ['admin', 'manager'].includes(currentUserRole);
+    sel.disabled = !canEdit;
+    sel.title = canEdit ? '' : 'Only an admin or manager can change this';
+    const p = pricingData.find(function (x) { return x.material_type === cur; });
+    const pick = p && p.pickup_price_per_kg !== null && p.pickup_price_per_kg !== undefined ? '$' + Number(p.pickup_price_per_kg).toFixed(2) + '/kg' : 'not set';
+    shText('sh-material-rate', 'Drop-off: no charge · Pickup: ' + pick);
+  }
+  async function shSetMaterial(v) {
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { material: v });
+      agentSettings = res.data.settings;
+      agentLog('material for new loads set to ' + getMaterialLabel(v));
+    } catch (e) {
+      alert('Could not change the material: ' + ((e.response && e.response.data && e.response.data.error) || e.message));
+    }
+    shRenderMaterial();
+  }
+
+  // ── Today's completed tickets: recent table + payments drill-down ──
+  let shTodayRows = [];
+  let shPayView = { kind: 'list', cat: 'all' };
+  function shPayCat(t) {
+    if (t.payment_status === 'paid') return t.payment_method === 'cash' ? 'cash' : 'card';
+    if (Number(t.grand_total) > 0) return 'unpaid';
+    return 'free';
+  }
+  function shPayPill(t) {
+    const c = shPayCat(t);
+    if (c === 'card') return '<span class="sh-pill sh-pill-paid">Paid · card</span>';
+    if (c === 'cash') return '<span class="sh-pill sh-pill-paid">Paid · cash</span>';
+    if (c === 'unpaid') return '<span class="sh-pill sh-pill-due">' + (t.payment_status === 'pending' ? 'On the terminal' : 'Payment due') + '</span>';
+    return '<span class="sh-pill sh-pill-free">No charge</span>';
+  }
+  function shMoney(v) { return '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function shKg(v) { return v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString('en-CA', { maximumFractionDigits: 1 }) + ' kg'; }
+  function shWhen(v) {
+    if (!v) return '';
+    const d = new Date(String(v).indexOf('T') > 0 ? v : String(v).replace(' ', 'T') + 'Z');
+    return isNaN(d.getTime()) ? String(v) : d.toLocaleString('en-CA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  function shRenderRecent() {
+    const el = document.getElementById('sh-recent');
+    shText('sh-today-date', new Date().toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }));
+    if (!el) return;
+    const rows = shTodayRows.slice(0, 6);
+    if (!rows.length) { el.innerHTML = '<div class="px-5 py-6 text-sm text-gray-400">No loads completed yet today.</div>'; return; }
+    el.innerHTML = '<table class="sh-table"><thead><tr><th>Ticket / time</th><th>Customer</th><th>Material</th><th class="text-right">Net weight</th><th class="text-right">Total</th><th>Status</th></tr></thead><tbody>'
+      + rows.map(function (t) {
+        return '<tr class="sh-click" tabindex="0" onclick="loadTicketDetail(' + t.id + ')" onkeydown="if(event.key===&quot;Enter&quot;)loadTicketDetail(' + t.id + ')">'
+          + '<td><div class="font-bold text-rc-green">' + escHtml(t.ticket_number) + '</div><div class="text-[11px] text-gray-400">' + shWhen(t.weight_out_at || t.created_at) + '</div></td>'
+          + '<td>' + escHtml(shCustomerKey(t)) + (t.vehicle_plate ? '<div class="text-[11px] text-gray-400">' + escHtml(t.vehicle_plate) + '</div>' : '') + '</td>'
+          + '<td>' + escHtml(getMaterialLabel(t.tire_type)) + ' ' + (ticketKind(t) === 'pickup' ? ticketKindChip(t) : '') + '</td>'
+          + '<td class="text-right tabular-nums">' + shKg(t.net_weight) + '</td>'
+          + '<td class="text-right tabular-nums">' + shMoney(t.grand_total) + '</td>'
+          + '<td>' + shPayPill(t) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+
+  function openPaymentsModal(cat) {
+    shPayView = { kind: 'list', cat: cat || 'all' };
+    shRenderPayList();
+    openModal('sh-pay-modal');
+    loadStats();
+  }
+  function shRenderPayList() {
+    const body = document.getElementById('sh-pay-body');
+    if (!body) return;
+    shText('sh-pay-title', 'Payments');
+    const cats = [['all', 'All'], ['card', 'Card'], ['cash', 'Cash'], ['unpaid', 'Unpaid']];
+    const inCat = function (c) { return shTodayRows.filter(function (t) { return c === 'all' || shPayCat(t) === c; }); };
+    const tabs = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4" role="group" aria-label="Payment categories">' + cats.map(function (c) {
+      const rows = inCat(c[0]);
+      const amt = rows.reduce(function (n, t) { return n + (Number(t.grand_total) || 0); }, 0);
+      const on = shPayView.cat === c[0];
+      return '<button type="button" aria-pressed="' + on + '" onclick="shPayView.cat=&quot;' + c[0] + '&quot;;shRenderPayList()" class="text-left rounded-xl border px-3 py-2 ' + (on ? 'border-transparent text-white' : 'border-gray-200 hover:bg-gray-50') + '"' + (on ? ' style="background:var(--sh-ink)"' : '') + '>'
+        + '<div class="text-[11px] ' + (on ? 'text-white/70' : 'text-gray-500') + '">' + c[1] + '</div><div class="font-bold tabular-nums">' + rows.length + ' · ' + shMoney(amt) + '</div></button>';
+    }).join('') + '</div>';
+    const rows = inCat(shPayView.cat);
+    const list = rows.length
+      ? '<table class="sh-table"><thead><tr><th>Ticket</th><th>Customer</th><th class="text-right">Amount</th><th>Status</th></tr></thead><tbody>' + rows.map(function (t) {
+          return '<tr class="sh-click" tabindex="0" onclick="shPayDetail(' + t.id + ')" onkeydown="if(event.key===&quot;Enter&quot;)shPayDetail(' + t.id + ')">'
+            + '<td><div class="font-bold text-rc-green">' + escHtml(t.ticket_number) + '</div><div class="text-[11px] text-gray-400">' + shWhen(t.weight_out_at || t.created_at) + '</div></td>'
+            + '<td>' + escHtml(shCustomerKey(t)) + '<div class="text-[11px] text-gray-400">' + escHtml(getMaterialLabel(t.tire_type)) + ' · ' + (ticketKind(t) === 'pickup' ? 'Pickup' : 'Drop-off') + '</div></td>'
+            + '<td class="text-right tabular-nums font-semibold">' + shMoney(t.grand_total) + '</td><td>' + shPayPill(t) + '</td></tr>';
+        }).join('') + '</tbody></table>'
+      : '<div class="py-8 text-center text-sm text-gray-400">Nothing in this category today.</div>';
+    body.innerHTML = tabs + '<div class="border border-gray-100 rounded-xl overflow-hidden">' + list + '</div>'
+      + '<p class="text-[11px] text-gray-400 mt-3">Drop-offs are never charged and show as No charge. Settling the day (Equipment &amp; settings) only totals paid tickets — it never marks an unpaid ticket as paid.</p>';
+  }
+  async function shPayDetail(id) {
+    shPayView = { kind: 'detail', cat: shPayView.cat, id: id };
+    const body = document.getElementById('sh-pay-body');
+    body.innerHTML = '<div class="py-8 text-center text-sm text-gray-400"><i class="fas fa-spinner fa-spin mr-1"></i>Loading…</div>';
+    try {
+      const res = await axios.get('/api/scale-tickets/' + id);
+      const t = res.data.ticket, audit = res.data.audit_trail || [];
+      const cat = shPayCat(t);
+      const pickup = ticketKind(t) === 'pickup';
+      const look = parseLook(t.appearance_in) || parseLook(t.appearance_out);
+      const nr = '<span class="text-gray-400">Not recorded</span>';
+      const row = function (l, v) { return '<div class="flex justify-between gap-3 py-1.5 border-b border-gray-50 text-sm"><span class="text-gray-500">' + l + '</span><span class="text-right font-medium">' + v + '</span></div>'; };
+      const payEvents = audit.filter(function (a) { return a.action === 'payment'; });
+      const lastPay = payEvents.length ? payEvents[payEvents.length - 1] : null;
+      const ref = t.square_payment_id || t.square_checkout_id || '';
+      const actions = []
+        .concat(['<button type="button" class="sh-btn" onclick="closeModal(&quot;sh-pay-modal&quot;);loadTicketDetail(' + t.id + ')"><i class="fas fa-receipt"></i> Open ticket</button>'])
+        .concat(['<button type="button" class="sh-btn" onclick="printReceipt(' + t.id + ')"><i class="fas fa-print"></i> Reprint receipt</button>'])
+        .concat(cat === 'unpaid' && pickup && t.payment_status !== 'pending'
+          ? ['<button type="button" class="sh-btn sh-btn-primary" onclick="closeModal(&quot;sh-pay-modal&quot;);sendToSquare(' + t.id + ')"><i class="fas fa-credit-card"></i> Collect on Square</button>',
+             '<button type="button" class="sh-btn" onclick="closeModal(&quot;sh-pay-modal&quot;);recordCash(' + t.id + ')"><i class="fas fa-money-bill-wave"></i> Record cash</button>']
+          : []);
+      shText('sh-pay-title', t.ticket_number);
+      body.innerHTML = '<button type="button" class="text-xs font-semibold text-rc-green hover:underline mb-3" onclick="shPayView.kind=&quot;list&quot;;shRenderPayList()">← All payments</button>'
+        + '<div class="flex items-center gap-2 mb-4">' + shPayPill(t) + ticketKindChip(t) + '</div>'
+        + '<div class="grid md:grid-cols-2 gap-6">'
+          + '<div><div class="sh-eyebrow mb-1">Ticket</div>'
+            + row('Customer', escHtml(shCustomerKey(t)))
+            + row('Material', escHtml(getMaterialLabel(t.tire_type)))
+            + row('Vehicle', [t.vehicle_plate ? escHtml(t.vehicle_plate) : '', look ? escHtml([look.color, look.make, look.body].filter(Boolean).join(' ')) : ''].filter(Boolean).join(' · ') || nr)
+            + row('Driver', t.driver_display_name ? escHtml(t.driver_display_name) + (t.driver_display_phone ? ' · ' + escHtml(t.driver_display_phone) : '') : nr)
+            + row(pickup ? 'Empty (in)' : 'Gross (in)', shKg(t.weight_in))
+            + row(pickup ? 'Loaded (out)' : 'Tare (out)', shKg(t.weight_out))
+            + row('Net', shKg(t.net_weight))
+          + '</div>'
+          + '<div><div class="sh-eyebrow mb-1">Payment</div>'
+            + row('Rate', pickup ? shMoney(t.price_per_kg) + '/kg' : 'No charge (drop-off)')
+            + row('Subtotal', shMoney(t.total_amount))
+            + row('GST', shMoney(t.tax_amount))
+            + row('<b>Total</b>', '<b>' + shMoney(t.grand_total) + '</b>')
+            + row('Status', escHtml(t.payment_status || 'unpaid') + (t.payment_method ? ' · ' + escHtml(t.payment_method) : ''))
+            + row('Reference', ref ? '<span class="font-mono text-xs">' + escHtml(ref) + '</span>' : nr)
+            + row('Recorded', lastPay ? shWhen(lastPay.created_at) + (lastPay.employee_name ? ' · ' + escHtml(lastPay.employee_name) : '') : nr)
+            + row('Notes', t.notes ? escHtml(t.notes) : nr)
+          + '</div>'
+        + '</div>'
+        + '<div class="flex flex-wrap gap-2 mt-5">' + actions.join('') + '</div>'
+        + '<div class="mt-5"><div class="sh-eyebrow mb-1">Activity</div>' + (audit.length
+            ? '<div class="space-y-1 max-h-40 overflow-y-auto">' + audit.map(function (a) {
+                return '<div class="flex justify-between gap-3 text-xs text-gray-500"><span>' + escHtml(String(a.action || '').replace(/_/g, ' ')) + (a.employee_name ? ' · ' + escHtml(a.employee_name) : '') + '</span><span class="text-gray-400">' + shWhen(a.created_at) + '</span></div>';
+              }).join('') + '</div>'
+            : '<div class="text-xs text-gray-400">No activity recorded.</div>') + '</div>';
+    } catch (e) {
+      body.innerHTML = '<div class="py-8 text-center text-sm text-red-500">Could not load this ticket. <button type="button" class="underline" onclick="shPayDetail(' + id + ')">Retry</button></div>';
+    }
+  }
+
+  function shInitLayout() {
+    let tab = 'station';
+    try { tab = localStorage.getItem('rc_sh_tab') || 'station'; } catch (e) {}
+    shShowTab(tab);
+    const fc = document.getElementById('sh-floating-cards');
+    if (fc) fc.checked = shFloatingCardsOn();
+    shRenderRecent();
+    shSyncStrip();
+    setInterval(shSyncStrip, 2000);
   }
 
   // ══════════════════════════════════════════
@@ -5670,6 +6188,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // ── Init ──
   (function init() {
     if (typeof axios !== 'undefined') {
+      shInitLayout();
       renderHistoryPeriods();
       restorePrintPhotos();
       restoreKindPromptSetting();
