@@ -778,6 +778,12 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             <span id="agent-state-text" class="text-[10px] text-gray-500">Idle</span>
           </div>
           <p class="text-[10px] text-gray-500 leading-snug">Wakes over <span id="agent-wake-label">100</span> kg, decides new load vs. weigh-out, closes the ticket and prints. Negatives are ignored. Anything it is unsure of goes to you.</p>
+          <div class="flex items-center gap-1.5 text-[10px] text-gray-600">
+            <label for="agent-trigger-kg" class="font-semibold">Trigger weight</label>
+            <input type="number" id="agent-trigger-kg" min="1" max="5000" step="1" class="w-16 px-1.5 py-1 border border-gray-200 rounded text-[11px] text-right" onkeydown="if(event.key==='Enter'){setAgentTrigger(this.value)}">
+            <span>kg</span>
+            <button onclick="setAgentTrigger(document.getElementById('agent-trigger-kg').value)" class="px-2 py-1 text-[10px] font-semibold rounded-lg border border-gray-200 hover:bg-gray-50">Save</button>
+          </div>
           <label class="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer">
             <input type="checkbox" id="agent-single-truck" onchange="setAgentSingleTruck(this.checked)" class="rounded mt-0.5">
             <span>One truck at a time <span class="text-gray-400">— needed only while plates are not being read; an unexpected second truck goes to you</span></span>
@@ -1430,11 +1436,18 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // ══════════════════════════════════════════
   // AUTO-STABLE-WEIGHT CAPTURE
   // ══════════════════════════════════════════
+  // One trigger weight for the whole station: the agent's wake threshold,
+  // set in Equipment & settings. 100 kg until the settings have loaded.
+  function triggerKg() {
+    const w = agentSettings ? Number(agentSettings.wake_threshold_kg) : NaN;
+    return isFinite(w) && w > 0 ? w : 100;
+  }
+
   function checkAutoCapture() {
     // Refuse to auto-prompt on stale data — currentLiveWeight could be a
     // 5-minute-old reading from before the bridge stalled.
     if (!isLive()) { autoPromptShown = false; return; }
-    if (isWeightStable && currentLiveWeight > 100 && !autoPromptShown) {
+    if (isWeightStable && currentLiveWeight > triggerKg() && !autoPromptShown) {
       if (!stableTimer) {
         stableStartWeight = currentLiveWeight;
         stableTimer = setTimeout(() => {
@@ -2845,7 +2858,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     updateCaptureButton();
     publishToWebBridge();
     agentOnWeight(currentLiveWeight);
-    if (isPrint && isWeightStable && currentLiveWeight > 100) {
+    if (isPrint && isWeightStable && currentLiveWeight > triggerKg()) {
       logSerial('>>> PRINT TRIGGER: ' + currentLiveWeight + ' kg');
       onPrintTrigger(currentLiveWeight);
     }
@@ -4054,6 +4067,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const mode = agentSettings ? agentSettings.mode : 'off';
     const wake = document.getElementById('agent-wake-label');
     if (wake && agentSettings) wake.textContent = Number(agentSettings.wake_threshold_kg).toFixed(0);
+    const trig = document.getElementById('agent-trigger-kg');
+    if (trig && agentSettings && document.activeElement !== trig) trig.value = Number(agentSettings.wake_threshold_kg).toFixed(0);
     const badge = document.getElementById('agent-mode-badge');
     if (badge) {
       const labels = { off: 'OFF', dry_run: 'DRY RUN', live: 'LIVE' };
@@ -4157,6 +4172,23 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       agentSettings = res.data.settings;
       applyAgentSettingsToUI();
       agentLog('before acting: ' + (sec === 0 ? 'instant' : sec + ' s cancel window'));
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      alert('Could not change that setting: ' + msg);
+      applyAgentSettingsToUI();
+    }
+  }
+
+  // The weight that starts everything: the agent wakes over it and a ticket
+  // can open at it. Wake and vehicle floor are kept as one number.
+  async function setAgentTrigger(v) {
+    const kg = Math.round(Number(v));
+    if (!isFinite(kg) || kg < 1 || kg > 5000) { alert('Trigger weight must be between 1 and 5000 kg.'); applyAgentSettingsToUI(); return; }
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { wake_threshold_kg: kg, vehicle_floor_kg: kg });
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      agentLog('trigger weight: ' + kg + ' kg');
     } catch (e) {
       const msg = (e.response && e.response.data && e.response.data.error) || e.message;
       alert('Could not change that setting: ' + msg);
