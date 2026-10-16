@@ -915,6 +915,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <label class="flex items-center gap-1.5 text-[10px] text-gray-600">
             <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out <span class="text-gray-400">(always on in Auto mode)</span>
           </label>
+          <label class="block text-xs text-gray-600 mt-2">Pickup receipts print on
+            <select id="pickup-receipt-dest" onchange="savePickupReceiptDest(this.value)" class="mt-1 w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs">
+              <option value="square">Square Terminal, after payment</option>
+              <option value="printer">This receipt printer</option>
+              <option value="both">Both</option>
+            </select>
+            <span class="block text-[10px] text-gray-400 mt-1 leading-snug">The Square Terminal can only print a receipt for a payment, so drop-offs always print here. A pickup that is not paid prints here instead.</span>
+          </label>
           <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer mt-1.5">
             <input type="checkbox" id="print-photos" checked onchange="savePrintPhotos(this.checked)" class="rounded"> Print scale photos on the receipt
           </label>
@@ -1851,14 +1859,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       + (pickup ? row('Rate', cfMoney(r.price_per_kg) + ' / kg') : '')
       + money
       + '<div class="cf-foot">' + (pickup ? (paid ? 'PAID · ' + escHtml(String(r.payment_method || '').toUpperCase()) : (due ? 'PAYMENT DUE' : 'NO PAYMENT DUE')) : 'NO CHARGE') + '<br>Thank you for recycling with us.</div></div>'
-      + '<p class="cf-note">' + (remote ? 'The receipt printed at the yard.' : 'The receipt printed automatically.') + '</p>'
+      + '<p class="cf-note">' + (due && pickupReceiptDest() === 'square' ? 'The receipt prints on the Square Terminal once it is paid.' : (remote ? 'The receipt printed at the yard.' : 'The receipt printed automatically.')) + '</p>'
       + '<div class="cf-actions">'
       + (remote ? '' : '<button type="button" class="mp-btn" onclick="cfReprint(' + ticketId + ')"><i class="fas fa-print mr-1"></i> Print again</button>')
       + (due ? '<button type="button" class="mp-btn mp-btn-primary" onclick="cfPayment(' + ticketId + ')">Take payment &#8594;</button>'
              : '<button type="button" class="mp-btn mp-btn-primary" onclick="closeModal(&quot;cf-modal&quot;)">Done</button>')
       + '</div>');
   }
-  async function cfReprint(ticketId) { await autoPrintReceipt(Number(ticketId)); }
+  async function cfReprint(ticketId) { await autoPrintReceipt(Number(ticketId), { force: true }); }
   async function cfPayment(ticketId) {
     let t;
     try { t = (await axios.get('/api/scale-tickets/' + ticketId)).data.ticket; } catch (e) { alert('Could not load the ticket.'); return; }
@@ -1869,8 +1877,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       + '<div class="cf-choices">'
       + '<button type="button" class="cf-choice" onclick="cfPayCard(' + t.id + ')"><span class="cf-ic"><i class="fas fa-credit-card"></i></span><span><strong>Card · Square Terminal</strong><small>' + (onTerminal ? 'The bill is already on the Square Terminal at the scale. Press to send it again.' : 'Send the bill to the Square Terminal at the scale.') + '</small></span><span class="cf-arrow">&#8594;</span></button>'
       + '<button type="button" class="cf-choice" onclick="cfPayCash(' + t.id + ')"><span class="cf-ic">$</span><span><strong>Cash</strong><small>Record ' + cfMoney(t.grand_total) + ' paid in cash.</small></span><span class="cf-arrow">&#8594;</span></button>'
-      + '<button type="button" class="cf-choice" onclick="closeModal(&quot;cf-modal&quot;)"><span class="cf-ic"><i class="far fa-clock"></i></span><span><strong>Pay later</strong><small>Keep this ticket unpaid for follow-up.</small></span><span class="cf-arrow">&#8594;</span></button>'
+      + '<button type="button" class="cf-choice" onclick="cfPayLater(' + t.id + ')"><span class="cf-ic"><i class="far fa-clock"></i></span><span><strong>Pay later</strong><small>Keep this ticket unpaid for follow-up.</small></span><span class="cf-arrow">&#8594;</span></button>'
       + '</div><div id="cf-pay-status"></div>');
+  }
+  function cfPayLater(ticketId) {
+    closeModal('cf-modal');
+    // No payment means no Square receipt, so give the driver the yard copy.
+    if (pickupReceiptDest() === 'square') autoPrintReceipt(Number(ticketId), { force: true });
   }
   async function cfPayCard(ticketId) {
     const st = document.getElementById('cf-pay-status');
@@ -1887,7 +1900,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const t = (await axios.get('/api/scale-tickets/' + ticketId)).data.ticket;
       if (t.payment_status === 'paid') { st.innerHTML = '<div class="cf-status">This ticket is already paid.</div>'; return; }
       if (!confirm('Record cash payment of ' + cfMoney(t.grand_total) + '?')) return;
-      await axios.post('/api/square/cash-payment', { scale_ticket_id: Number(ticketId), amount: Number(t.grand_total) || 0 });
+      const cr = await axios.post('/api/square/cash-payment', { scale_ticket_id: Number(ticketId), amount: Number(t.grand_total) || 0, print_on_terminal: pickupReceiptDest() !== 'printer' });
+      cashReceiptOutcome(Number(ticketId), cr.data);
       loadCompletedToday(); loadStats(); try { loadSettlement(); } catch (e) {}
       st.innerHTML = '<div class="cf-status">Paid in cash: ' + cfMoney(t.grand_total) + '.</div><div class="cf-actions"><button type="button" class="mp-btn mp-btn-primary" onclick="closeModal(&quot;cf-modal&quot;)">Done</button></div>';
     } catch (e) {
@@ -3986,7 +4000,31 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // with no paper and nothing anywhere would say why. A receipt that fails to
   // print is not a cosmetic problem -- it is the customer's copy of a weighed
   // transaction -- so every failure is now logged and put on screen.
-  async function autoPrintReceipt(ticketId) {
+  // Where a pickup's receipt prints. The Terminal prints Square's receipt once
+  // the payment lands (card or cash), so with 'square' the yard printer skips
+  // pickups at close and is only the fallback when nothing gets paid.
+  function pickupReceiptDest() {
+    try { const v = localStorage.getItem('rc_pickup_receipt'); return v === 'printer' || v === 'both' ? v : 'square'; } catch (e) { return 'square'; }
+  }
+  function savePickupReceiptDest(v) {
+    try { localStorage.setItem('rc_pickup_receipt', v); } catch (e) {}
+    agentLog('pickup receipts print on: ' + ({ square: 'Square Terminal', printer: 'receipt printer', both: 'both' }[v] || v));
+  }
+  // The Terminal's receipt for a paid pickup; falls back to this printer.
+  async function printPickupOnTerminal(ticketId, paymentId) {
+    if (pickupReceiptDest() === 'printer') return;
+    try {
+      await axios.post('/api/square/print-receipt', { payment_id: paymentId });
+      agentLog('receipt for #' + ticketId + ' printing on the Square Terminal');
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      agentLog('Square Terminal could not print the receipt: ' + msg);
+      if (pickupReceiptDest() === 'square') autoPrintReceipt(ticketId, { force: true });
+    }
+  }
+
+  async function autoPrintReceipt(ticketId, opts) {
+    opts = opts || {};
     const cb = document.getElementById('auto-print-receipt');
     // Auto mode always prints: nobody is at the screen to notice a missing
     // receipt, so the checkbox only applies to Manual mode.
@@ -3997,6 +4035,12 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     try {
       const res = await axios.get('/api/scale-tickets/' + ticketId + '/receipt');
+      const rr = res.data.receipt || {};
+      if (!opts.force && pickupReceiptDest() === 'square' && rr.ticket_type === 'pickup'
+          && Number(rr.grand_total) > 0 && rr.payment_status !== 'paid') {
+        agentLog('receipt for ' + (rr.ticket_number || '#' + ticketId) + ' prints on the Square Terminal once it is paid');
+        return true;
+      }
 
       // Same router as Test Print: thermal queue -> ESC/POS via the bridge,
       // any other queue -> PDF via the bridge, nothing chosen -> the browser
@@ -4082,13 +4126,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const id = el && el.dataset.ticketId;
     if (!id) return;
     dismissPrintFailure();
-    await autoPrintReceipt(id);
+    await autoPrintReceipt(id, { force: true });
   }
   // Reprint whatever came off the scale last, without hunting for it in
   // Ticket History.
   async function reprintLastReceipt() {
     if (!lastPrintedTicketId) { alert('Nothing has been printed from this station yet.'); return; }
-    await autoPrintReceipt(lastPrintedTicketId);
+    await autoPrintReceipt(lastPrintedTicketId, { force: true });
   }
   // Sample print to verify the Epson is set up correctly without burning a
   // real ticket number. Mirrors the live receipt layout exactly.
@@ -7089,7 +7133,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     agentLog(on ? 'will ask drop-off or pickup when a truck pulls on' : 'will not ask drop-off or pickup; every ticket starts as a drop-off');
     if (!on) hideKindPrompt();
   }
+  function restorePickupReceiptDest() { const el = document.getElementById('pickup-receipt-dest'); if (el) el.value = pickupReceiptDest(); }
   function restoreKindPromptSetting() {
+    restorePickupReceiptDest();
     const cb = document.getElementById('kind-prompt-on');
     if (cb) cb.checked = kindPromptEnabled();
     renderKindPendingPill();
@@ -7424,10 +7470,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       }
       const amount = '$' + total.toFixed(2);
       showSquareCard(ticketId, 'sending', 'Sending ' + amount + ' to Square', num + ' · ' + (t.company_name || 'Walk-in'));
-      const sq = await axios.post('/api/square/terminal-checkout', {
-        amount_cents: Math.round(total * 100), ticket_number: t.ticket_number,
-        customer_name: t.company_name || 'Walk-in', note: 'Pickup ' + t.ticket_number
-      });
+      const sq = await axios.post('/api/square/ticket-checkout', { scale_ticket_id: Number(ticketId) });
       if (!sq.data || !sq.data.success) throw new Error('Square did not accept the checkout');
       checkoutId = sq.data.checkout_id;
       document.getElementById('square-card').dataset.checkoutId = checkoutId;
@@ -7441,6 +7484,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         await axios.post('/api/scale-tickets/' + ticketId + '/payment', { payment_status: 'paid', payment_method: 'card', square_checkout_id: checkoutId, square_payment_id: paymentId });
         agentLog('square: ' + num + ' PAID ' + amount);
         showSquareCard(ticketId, 'paid', 'Paid ' + amount, num + ' · card');
+        if (paymentId) printPickupOnTerminal(ticketId, paymentId);
         loadCompletedToday(); loadStats(); loadSettlement();
         return;
       }
@@ -7453,6 +7497,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         : 'Square ended in status ' + result.status + '.';
       agentLog('square: ' + num + ' not paid — ' + why);
       showSquareCard(ticketId, 'problem', num + ' is not paid', why + ' Send it again, or take cash.');
+      // Nothing was paid, so the Terminal has no receipt to print.
+      if (pickupReceiptDest() === 'square') autoPrintReceipt(ticketId, { force: true });
     } catch (e) {
       const msg = (e.response && e.response.data && e.response.data.error) || e.message || 'unknown error';
       agentLog('square FAILED for ' + num + ': ' + msg);
@@ -7460,6 +7506,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         try { await axios.post('/api/scale-tickets/' + ticketId + '/payment', { payment_status: 'unpaid', payment_method: 'card', square_checkout_id: checkoutId }); } catch (ignore) {}
       }
       showSquareCard(ticketId, 'problem', 'Square could not take ' + num, msg);
+      if (pickupReceiptDest() === 'square') autoPrintReceipt(ticketId, { force: true });
     } finally {
       delete squareBusy[ticketId];
     }
@@ -7488,12 +7535,22 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     return { status: 'TIMED_OUT' };
   }
 
+  function cashReceiptOutcome(ticketId, data) {
+    const tr = data && data.terminal_receipt;
+    if (!tr) return;
+    if (tr.ok) { agentLog('cash receipt for #' + ticketId + ' printing on the Square Terminal'); return; }
+    agentLog('Square Terminal could not print the cash receipt: ' + (tr.error || 'unknown'));
+    if (pickupReceiptDest() === 'square') autoPrintReceipt(ticketId, { force: true });
+  }
+
   async function recordCash(ticketId) {
     try {
       const res = await axios.get('/api/scale-tickets/'+ticketId);
       const total = parseFloat(res.data.ticket.grand_total)||0;
       if (!confirm('Record cash payment of $'+total.toFixed(2)+'?')) return;
-      showLoading('Recording...'); await axios.post('/api/square/cash-payment', { scale_ticket_id: ticketId, amount: total });
+      showLoading('Recording...');
+      const cr = await axios.post('/api/square/cash-payment', { scale_ticket_id: ticketId, amount: total, print_on_terminal: pickupReceiptDest() !== 'printer' });
+      cashReceiptOutcome(ticketId, cr.data);
       // Deliberately NO print here. The receipt is printed once, when the
       // truck weighs out and leaves -- payment is taken seconds later at the
       // same window, so printing again just hands the driver a second copy of
