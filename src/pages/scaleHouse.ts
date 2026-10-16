@@ -590,6 +590,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             </div>
             <p id="agent-prompt-hint" class="text-[9px] text-gray-400 leading-snug mt-1"></p>
           </div>
+          <label class="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer pt-1 border-t border-gray-100">
+            <input type="checkbox" id="kind-prompt-on" checked onchange="saveKindPromptSetting(this.checked)" class="rounded mt-0.5">
+            <span>Ask <b>Drop-off or Pickup</b> when a truck pulls on <span class="text-gray-400">— if nobody answers it stays a drop-off</span></span>
+          </label>
           <div class="pt-1 border-t border-gray-100">
             <div class="text-[10px] font-semibold text-gray-600 mb-1">Before it acts</div>
             <div class="grid grid-cols-3 gap-1">
@@ -844,6 +848,39 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       </div>
     </div>
   </div>
+
+  <!-- Drop-off or Pickup? Pops up the moment a truck opens a ticket. Never
+       blocks the scale: unanswered, the ticket stays a drop-off, and it
+       closes itself if that truck weighs out first. -->
+  <div id="kind-prompt-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[55] items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl shadow-modal modal-enter w-full max-w-xl overflow-hidden">
+      <div class="bg-gradient-to-r from-rc-green to-emerald-600 text-white px-6 py-4 flex items-center justify-between">
+        <div>
+          <div id="kp-head" class="text-xs uppercase tracking-wider font-bold opacity-80">Truck on the scale</div>
+          <div class="text-xl font-bold"><span id="kp-number" class="font-mono"></span> &middot; <span id="kp-weight" class="font-mono"></span> kg</div>
+        </div>
+        <div id="kp-queue" class="text-xs font-semibold bg-white/20 rounded-full px-3 py-1" style="display:none;"></div>
+      </div>
+      <div class="p-6">
+        <div id="kp-photo-wrap" class="mb-4 rounded-xl overflow-hidden border border-gray-200 bg-gray-50" style="display:none;"><img id="kp-photo" class="w-full max-h-56 object-cover" /></div>
+        <div id="kp-question" class="text-center text-lg font-bold text-gray-800 mb-4">Is this truck dropping off or picking up?</div>
+        <div class="grid grid-cols-2 gap-4">
+          <button onclick="answerKindPrompt('dropoff')" class="py-8 rounded-2xl bg-gray-800 hover:bg-gray-900 text-white btn-press flex flex-col items-center gap-2">
+            <i class="fas fa-arrow-down text-3xl"></i><span class="text-2xl font-bold">Drop-off</span><span id="kp-drop-sub" class="text-xs opacity-70">No charge &middot; press D</span>
+          </button>
+          <button onclick="answerKindPrompt('pickup')" class="py-8 rounded-2xl bg-purple-600 hover:bg-purple-700 text-white btn-press flex flex-col items-center gap-2">
+            <i class="fas fa-arrow-up text-3xl"></i><span class="text-2xl font-bold">Pickup</span><span id="kp-pick-sub" class="text-xs opacity-80">Charged on Square &middot; press P</span>
+          </button>
+        </div>
+        <div id="kp-error" class="text-sm text-red-600 font-semibold text-center mt-3"></div>
+        <div class="text-center mt-4"><button onclick="laterKindPrompt()" class="text-xs text-gray-400 hover:text-gray-600 underline">Answer later — the ticket is saved and this question waits in the corner</button></div>
+      </div>
+    </div>
+  </div>
+  <!-- Unanswered Drop-off / Pickup questions, waiting. -->
+  <button id="kind-pending-pill" onclick="reopenKindPrompt()" class="fixed bottom-4 right-4 z-[50] items-center gap-2 px-4 py-3 rounded-full bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold shadow-2xl btn-press" style="display:none;">
+    <i class="fas fa-circle-question"></i><span id="kind-pending-count"></span>
+  </button>
 
   <!-- Pickup price editor. Stacks above the Assign / ticket windows. -->
   <div id="pickup-price-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] items-center justify-center p-4" style="display:none;">
@@ -3930,6 +3967,25 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       if (d.action === 'defer') {
         agentLog('defer (' + d.rule + ')');
         agentSetState('cooldown');
+        // The one open ticket was never marked, and its truck is back HEAVIER
+        // than it arrived. A drop-off cannot do that, but an unmarked pickup
+        // does exactly that -- so ask, instead of throwing the orange card at
+        // the operator. The weigh-out is recorded in the question, so it can
+        // be answered after the truck has gone.
+        const c0 = Array.isArray(d.candidates) && d.candidates.length === 1 ? d.candidates[0] : null;
+        if (d.mode === 'live' && kindPromptEnabled() && c0 && ticketKind(c0) === 'dropoff' && weight > Number(c0.weight_in)
+            && (d.rule === 'single_truck_unexpected_arrival' || d.rule === 'plate_match_not_lighter')) {
+          agentLog(c0.ticket_number + ' is leaving heavier than it arrived — asking whether it was a pickup');
+          promptTicketKind({
+            id: c0.id, number: c0.ticket_number, weight: Number(c0.weight_in),
+            weighOut: {
+              weight: weight, photo: photo || null, decision_id: d.decision_id || null,
+              plate: (plateRead && plateRead.plate) || '', plate_confidence: (plateRead && plateRead.confidence) || 0,
+              appearance: (plateRead && plateRead.appearance) || null
+            }
+          });
+          return;
+        }
         // Under the vehicle floor is a person, a bird or debris, not a truck.
         // Anything else goes to the operator on the existing orange card,
         // which is exactly the behaviour before the agent existed.
@@ -4092,6 +4148,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         // the screen. Attribution happens at weigh-out instead, when the visit
         // is over and there is time -- see the close branch below.
         agentPendingAssign = { id: res.data.id, number: res.data.ticket_number, weight: p.weight };
+        // The one question asked at arrival: is this truck dropping off or
+        // picking up. It decides which way the weigh-out is measured, so it
+        // has to be settled before the truck comes back -- and it is optional,
+        // the agent never waits on it.
+        promptTicketKind({ id: res.data.id, number: res.data.ticket_number, weight: p.weight, photo: p.photo || null });
       } else {
         await axios.post('/api/scale-tickets/' + d.ticket.id + '/merge-out', {
           weight: p.weight, photo: p.photo || null,
@@ -4101,6 +4162,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         });
         agentLog('closed ' + d.ticket.ticket_number + ' net ' + (d.preview ? Number(d.preview.net_weight).toFixed(1) : '?') + ' kg');
         await agentReport(d.decision_id, 'acted', d.ticket.id);
+        markKindQuestionClosed(d.ticket.id);
         // A pickup's bill goes to the Square Terminal now, in the background:
         // the customer can tap while the receipt prints. A drop-off returns
         // from this without doing anything.
@@ -4768,7 +4830,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const id = document.getElementById('void-ticket-id').value, reason = document.getElementById('void-reason').value.trim();
     if (!reason) { alert('Enter a reason'); return; }
     showLoading('Voiding...');
-    try { await axios.post('/api/scale-tickets/'+id+'/void', { reason }); closeVoidModal(); loadOpenTickets(); loadStats(); }
+    try { await axios.post('/api/scale-tickets/'+id+'/void', { reason }); closeVoidModal(); forgetKindQuestion(Number(id)); loadOpenTickets(); loadStats(); }
     catch(err) { alert(err.response?.data?.error || 'Failed'); }
     finally { hideLoading(); }
   }
@@ -4982,7 +5044,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   let detailTicketId = null;
   const ticketTypeBusy = {};
-  async function setTicketType(id, kind) {
+  async function setTicketType(id, kind, onDone) {
     if (ticketTypeBusy[id]) return false;
     ticketTypeBusy[id] = true;
     try {
@@ -5006,12 +5068,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         }
       }
       if (detailTicketId === id && activeModalId === 'detail-modal') loadTicketDetail(id);
+      // Answered here, so it is no longer an open question.
+      if (typeof forgetKindQuestion === 'function') forgetKindQuestion(id);
       loadOpenTickets();
+      if (onDone) onDone();
       return true;
     } catch (e) {
       const data = (e.response && e.response.data) || {};
       if (data.needs_price) {
-        openPickupPriceModal(data.needs_price, function () { setTicketType(id, kind); });
+        openPickupPriceModal(data.needs_price, function () { setTicketType(id, kind, onDone); });
       } else {
         alert(data.error || 'Could not change the ticket type');
       }
@@ -5020,6 +5085,203 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       delete ticketTypeBusy[id];
     }
   }
+
+  // ── "Drop-off or Pickup?" when a truck pulls on ──
+  // One question per truck, asked of whoever is inside. The ticket is written
+  // at weigh-in no matter what, so the question never holds anything up: if
+  // the truck pulls off before anyone answers, the question waits -- through
+  // weigh-out and a page reload (kept in localStorage) -- until somebody
+  // answers it or puts it aside, and an answer given late still counts. An
+  // unanswered ticket is a drop-off, which is never billed.
+  //
+  // Entries: { id, number, weight, photo, closed, weighOut }. weighOut is set
+  // when an UNMARKED ticket's truck came back heavier than it arrived -- which
+  // a drop-off cannot do -- so the agent asks instead of guessing; answering
+  // Pickup closes the ticket at that recorded weight even if the truck is gone.
+  const KIND_STORE = 'rc_kind_questions';
+  let kindPromptQueue = [], kindPromptPrevModal = null;
+  (function () {
+    try { kindPromptQueue = JSON.parse(localStorage.getItem(KIND_STORE) || '[]') || []; } catch (e) { kindPromptQueue = []; }
+  })();
+  function saveKindQueue() {
+    // The arrival photo is only for the window itself and is the bulk of the
+    // payload, so it is not kept across reloads; the weigh-out photo is,
+    // because it becomes the ticket's evidence when the answer closes it.
+    try { localStorage.setItem(KIND_STORE, JSON.stringify(kindPromptQueue.map(function (q) { return Object.assign({}, q, { photo: null }); }))); } catch (e) {}
+    renderKindPendingPill();
+  }
+  function kindPromptEnabled() {
+    try { return localStorage.getItem('rc_kind_prompt') !== '0'; } catch (e) { return true; }
+  }
+  function saveKindPromptSetting(on) {
+    try { localStorage.setItem('rc_kind_prompt', on ? '1' : '0'); } catch (e) {}
+    agentLog(on ? 'will ask drop-off or pickup when a truck pulls on' : 'will not ask drop-off or pickup; every ticket starts as a drop-off');
+    if (!on) hideKindPrompt();
+  }
+  function restoreKindPromptSetting() {
+    const cb = document.getElementById('kind-prompt-on');
+    if (cb) cb.checked = kindPromptEnabled();
+    renderKindPendingPill();
+  }
+  function kindPromptOpen() {
+    const el = document.getElementById('kind-prompt-modal');
+    return !!el && el.style.display !== 'none';
+  }
+  // New questions go to the FRONT: the truck on the scale right now is the
+  // one the person inside is looking at.
+  function promptTicketKind(entry) {
+    if (!kindPromptEnabled() || !entry || !entry.id) return;
+    const old = kindPromptQueue.find(function (q) { return q.id === entry.id; });
+    kindPromptQueue = kindPromptQueue.filter(function (q) { return q.id !== entry.id; });
+    kindPromptQueue.unshift(Object.assign({}, old || {}, entry));
+    saveKindQueue();
+    showKindPrompt();
+  }
+  function renderKindPendingPill() {
+    const pill = document.getElementById('kind-pending-pill');
+    if (!pill) return;
+    const n = kindPromptQueue.length;
+    if (!n || kindPromptOpen()) { pill.style.display = 'none'; return; }
+    document.getElementById('kind-pending-count').textContent = n === 1
+      ? '1 ticket needs Drop-off or Pickup'
+      : n + ' tickets need Drop-off or Pickup';
+    pill.style.display = 'flex';
+  }
+  function showKindPrompt() {
+    const q = kindPromptQueue[0];
+    if (!q) { hideKindPrompt(); return; }
+    const kg = function (v) { return Number(v || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); };
+    document.getElementById('kp-number').textContent = q.number || ('#' + q.id);
+    document.getElementById('kp-weight').textContent = kg(q.weight);
+    const heavier = !!q.weighOut;
+    document.getElementById('kp-head').textContent = heavier ? 'Leaving heavier than it arrived'
+      : (q.closed ? 'Already weighed out' : 'Truck on the scale');
+    document.getElementById('kp-question').textContent = heavier
+      ? 'It came in at ' + kg(q.weight) + ' kg and is leaving at ' + kg(q.weighOut.weight) + ' kg. Was it a pickup?'
+      : (q.closed ? 'This truck has left. Was it dropping off or picking up?' : 'Is this truck dropping off or picking up?');
+    document.getElementById('kp-drop-sub').textContent = heavier ? 'No, let me check it' : 'No charge · press D';
+    document.getElementById('kp-pick-sub').textContent = heavier
+      ? 'Close it and charge Square · press P'
+      : (q.closed ? 'Bill it and charge Square · press P' : 'Charged on Square · press P');
+    const shown = (q.weighOut && q.weighOut.photo) || q.photo;
+    const wrap = document.getElementById('kp-photo-wrap');
+    if (shown) { document.getElementById('kp-photo').src = shown; wrap.style.display = ''; } else { wrap.style.display = 'none'; }
+    const more = document.getElementById('kp-queue');
+    if (kindPromptQueue.length > 1) { more.textContent = (kindPromptQueue.length - 1) + ' more waiting'; more.style.display = ''; } else { more.style.display = 'none'; }
+    document.getElementById('kp-error').textContent = '';
+    const el = document.getElementById('kind-prompt-modal');
+    if (el.style.display === 'none') {
+      // Sits above whatever was open (often the previous truck's Assign
+      // window) without taking its place as the active modal for good.
+      kindPromptPrevModal = activeModalId === 'kind-prompt-modal' ? null : activeModalId;
+      el.style.display = 'flex';
+      activeModalId = 'kind-prompt-modal';
+    }
+    renderKindPendingPill();
+  }
+  function hideKindPrompt() {
+    const el = document.getElementById('kind-prompt-modal');
+    if (el && el.style.display !== 'none') {
+      el.style.display = 'none';
+      if (activeModalId === 'kind-prompt-modal') activeModalId = kindPromptPrevModal;
+      kindPromptPrevModal = null;
+    }
+    renderKindPendingPill();
+  }
+  function forgetKindQuestion(ticketId) {
+    kindPromptQueue = kindPromptQueue.filter(function (q) { return q.id !== ticketId; });
+    saveKindQueue();
+  }
+  function afterKindAnswer() {
+    if (kindPromptQueue.length) showKindPrompt(); else hideKindPrompt();
+  }
+  // The agent closed this ticket before anyone answered. The question stays;
+  // answering Pickup afterwards re-prices it and sends it to Square.
+  function markKindQuestionClosed(ticketId) {
+    const q = kindPromptQueue.find(function (x) { return x.id === ticketId; });
+    if (!q) return;
+    q.closed = true;
+    saveKindQueue();
+    if (kindPromptOpen() && kindPromptQueue[0] && kindPromptQueue[0].id === ticketId) showKindPrompt();
+  }
+  async function answerKindPrompt(kind) {
+    const q = kindPromptQueue[0];
+    if (!q) { hideKindPrompt(); return; }
+    if (kind === 'dropoff') {
+      forgetKindQuestion(q.id);
+      if (q.weighOut) {
+        // A drop-off that left heavier is not something to close quietly:
+        // hand that weigh-out to the orange card for the operator to sort out.
+        agentLog(q.number + ': not a pickup — weigh-out of ' + Number(q.weighOut.weight).toFixed(1) + ' kg sent to the operator card');
+        hideKindPrompt();
+        lastPrintWeight = q.weighOut.weight;
+        onPrintTrigger(q.weighOut.weight, true);
+        return;
+      }
+      const ot = openTickets.find(function (t) { return t.id === q.id; });
+      if (ot && ticketKind(ot) === 'pickup') await setTicketType(q.id, 'dropoff');
+      agentLog(q.number + ': drop-off');
+      afterKindAnswer();
+      return;
+    }
+    // Hide while the request runs so a pickup-price editor can open on top;
+    // the question comes back only if the switch did not go through.
+    hideKindPrompt();
+    const finish = q.weighOut ? function () { closeAsPickup(q); } : null;
+    const ok = await setTicketType(q.id, 'pickup', finish);
+    const priceEditorUp = document.getElementById('pickup-price-modal').style.display === 'flex';
+    if (ok || priceEditorUp) {
+      // With the price editor up, saving a price finishes the switch (and the
+      // close, if there is one). Closing it without saving leaves the ticket a
+      // drop-off with its live-card switch -- the question is not lost there.
+      forgetKindQuestion(q.id);
+      if (!priceEditorUp) afterKindAnswer();
+    } else {
+      showKindPrompt();
+      document.getElementById('kp-error').textContent = 'Could not mark it a pickup. Try again, or use the switch on its ticket.';
+    }
+  }
+  // Answering Pickup for a truck that already came back heavier: close the
+  // ticket at the weight the scale recorded then. Same route, same audit,
+  // same receipt and Square path as every other weigh-out.
+  async function closeAsPickup(q) {
+    const w = q.weighOut;
+    try {
+      const res = await axios.post('/api/scale-tickets/' + q.id + '/merge-out', {
+        weight: w.weight, photo: w.photo || null,
+        plate: w.plate || '', plate_confidence: w.plate_confidence || 0, appearance: w.appearance || null
+      });
+      agentLog('closed ' + q.number + ' as a PICKUP: ' + Number(res.data.net_weight).toFixed(1) + ' kg, $' + Number(res.data.grand_total).toFixed(2));
+      if (w.decision_id) agentReport(w.decision_id, 'acted', q.id);
+      loadOpenTickets(); loadCompletedToday(); loadStats();
+      autoChargeSquare(q.id);
+      await autoPrintReceipt(q.id);
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      agentLog('could not close ' + q.number + ' as a pickup: ' + msg);
+      alert('Could not close ' + q.number + ' as a pickup: ' + msg);
+    }
+  }
+  // "Later": hide the window, keep the question. The pill in the corner
+  // brings it back; a new truck brings it back by itself.
+  function laterKindPrompt() {
+    const q = kindPromptQueue.shift();
+    if (q) kindPromptQueue.push(q);
+    saveKindQueue();
+    hideKindPrompt();
+  }
+  function reopenKindPrompt() { if (kindPromptQueue.length) showKindPrompt(); }
+  document.addEventListener('keydown', function (e) {
+    if (!kindPromptOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement && document.activeElement.tagName)) return;
+    const k = (e.key || '').toLowerCase();
+    if (k === 'd' || k === 'p' || k === 'escape') {
+      e.preventDefault(); e.stopPropagation();
+      if (k === 'd') answerKindPrompt('dropoff');
+      else if (k === 'p') answerKindPrompt('pickup');
+      else laterKindPrompt();
+    }
+  }, true);
 
   // The Assign window carries the same switch, so it has to follow changes
   // made from anywhere -- and in post-close mode the net and total it shows
@@ -5410,6 +5672,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (typeof axios !== 'undefined') {
       renderHistoryPeriods();
       restorePrintPhotos();
+      restoreKindPromptSetting();
       renderTestLoad();
       loadOpenTickets(); loadCompletedToday(); loadPricing(); loadStats(); loadSettlement();
       loadBridgePrinters();
