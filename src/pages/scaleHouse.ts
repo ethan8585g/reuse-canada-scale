@@ -959,7 +959,12 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fab fa-square text-blue-600"></i> Square</h3>
         </div>
         <div class="p-3">
-          <div class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i> Payment amounts sent to Square Reader.</div>
+          <div id="sq-status" class="text-xs text-gray-600 leading-relaxed">Checking Square…</div>
+          <div class="flex flex-wrap gap-2 mt-3">
+            <button type="button" onclick="sqLoadStatus()" class="sh-btn"><i class="fas fa-rotate"></i> Check again</button>
+            <button type="button" id="sq-pair-btn" onclick="sqPair()" class="sh-btn sh-btn-primary"><i class="fas fa-link"></i> Get pairing code</button>
+          </div>
+          <div id="sq-code" class="mt-3" style="display:none;"></div>
         </div>
       </div>
       <!-- End of Day Settlement -->
@@ -6419,6 +6424,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     shSettingsOpen = key;
     if (key === 'camera') renderCamsList();
     if (key === 'pricing') mpReset();
+    if (key === 'square') sqLoadStatus();
     if (key === 'branding' && brandSaved) { brandDirty = false; brandFill(brandSaved); }
     openModal('settings-modal');
   }
@@ -7541,6 +7547,47 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (tr.ok) { agentLog('cash receipt for #' + ticketId + ' printing on the Square Terminal'); return; }
     agentLog('Square Terminal could not print the cash receipt: ' + (tr.error || 'unknown'));
     if (pickupReceiptDest() === 'square') autoPrintReceipt(ticketId, { force: true });
+  }
+
+  // ── Square Terminal connection (Equipment & settings > Square) ──
+  let sqPairTimer = null;
+  async function sqLoadStatus() {
+    const el = document.getElementById('sq-status');
+    if (!el) return null;
+    try {
+      const d = (await axios.get('/api/square/terminal-status')).data;
+      if (!d.account_ok) { el.innerHTML = '<span class="text-red-600 font-semibold">Square account not connected:</span> ' + escHtml(d.error || 'unknown'); return d; }
+      const loc = (d.locations || [])[0];
+      const p = (d.paired || [])[0];
+      el.innerHTML = '<div><i class="fas fa-check text-green-600 mr-1"></i>Square account connected' + (loc ? ': <b>' + escHtml(loc.name) + '</b> (' + escHtml(loc.country || '') + ', ' + escHtml(loc.currency || '') + ')' : '') + '</div>'
+        + (p ? '<div class="mt-1"><i class="fas fa-check text-green-600 mr-1"></i>Terminal paired: <b>' + escHtml(p.name || 'Terminal') + '</b>' + (p.paired_at ? ' since ' + escHtml(String(p.paired_at).slice(0, 10)) : '') + '. Pickups are charged and printed on it.</div>'
+             : '<div class="mt-1 text-amber-700"><i class="fas fa-triangle-exclamation mr-1"></i>No Terminal is paired for the app yet. Press <b>Get pairing code</b>.</div>');
+      if (p) { const box = document.getElementById('sq-code'); if (box) box.style.display = 'none'; if (sqPairTimer) { clearInterval(sqPairTimer); sqPairTimer = null; } }
+      return d;
+    } catch (e) {
+      el.textContent = 'Could not check Square: ' + ((e.response && e.response.data && e.response.data.error) || e.message);
+      return null;
+    }
+  }
+  async function sqPair() {
+    const box = document.getElementById('sq-code');
+    try {
+      const d = (await axios.post('/api/square/pair', {})).data;
+      box.style.display = '';
+      box.innerHTML = '<div class="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 text-center">'
+        + '<div class="text-xs text-blue-800 font-semibold">On the Square Terminal, choose <b>Sign in with device code</b> and enter:</div>'
+        + '<div class="text-4xl font-mono font-bold tracking-[0.3em] text-blue-900 my-2">' + escHtml(d.code || '') + '</div>'
+        + '<div class="text-[11px] text-blue-700">Use it within 5 minutes' + (d.pair_by ? ' (by ' + escHtml(new Date(d.pair_by).toLocaleTimeString()) + ')' : '') + '. This page notices by itself when it pairs.</div></div>';
+      if (sqPairTimer) clearInterval(sqPairTimer);
+      const started = Date.now();
+      sqPairTimer = setInterval(async function () {
+        const s = await sqLoadStatus();
+        if ((s && s.paired && s.paired.length) || Date.now() - started > 6 * 60000) { clearInterval(sqPairTimer); sqPairTimer = null; }
+      }, 4000);
+    } catch (e) {
+      box.style.display = '';
+      box.innerHTML = '<div class="text-xs text-red-600">Could not get a pairing code: ' + escHtml((e.response && e.response.data && e.response.data.error) || e.message) + '</div>';
+    }
   }
 
   async function recordCash(ticketId) {

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { authMiddleware, employeeOnly } from '../middleware/auth'
+import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 
 type Bindings = {
   DB: D1Database
@@ -114,6 +114,54 @@ async function printOnTerminal(token: string, deviceId: string, paymentId: strin
     return { ok: false, error: e?.message || 'Square could not be reached' }
   }
 }
+
+// ─── Connecting the Terminal ───
+// Is the Square account reachable, which location, and is a Terminal paired
+// for the API. Shown in Equipment & settings > Square Terminal.
+squareRoutes.get('/terminal-status', async (c) => {
+  const token = c.env.SQUARE_ACCESS_TOKEN
+  if (!token) return c.json({ account_ok: false, error: 'No Square access token is set on the server.' })
+  try {
+    const lr = await fetch(`${SQUARE_BASE}/locations`, { headers: sqHeaders(token) })
+    const ld = await lr.json() as any
+    if (!lr.ok) return c.json({ account_ok: false, error: ld.errors?.[0]?.detail || 'Square refused the access token.' })
+    const locations = (ld.locations || []).filter((l: any) => l.status === 'ACTIVE').map((l: any) => ({ id: l.id, name: l.name, country: l.country, currency: l.currency }))
+    const dr = await fetch(`${SQUARE_BASE}/devices/codes?product_type=TERMINAL_API`, { headers: sqHeaders(token) })
+    const dd = await dr.json() as any
+    const codes = (dd.device_codes || []).map((d: any) => ({ id: d.id, code: d.code, name: d.name, status: d.status, device_id: d.device_id || null, location_id: d.location_id, pair_by: d.pair_by, paired_at: d.paired_at }))
+    const paired = codes.filter((d: any) => d.status === 'PAIRED' && d.device_id)
+    return c.json({ account_ok: true, locations, paired, pending: codes.filter((d: any) => d.status === 'UNPAIRED') })
+  } catch (e: any) {
+    return c.json({ account_ok: false, error: e?.message || 'Square could not be reached.' })
+  }
+})
+
+// Make a one-time code to sign the Terminal in for the API. Codes expire
+// after a few minutes; the Terminal shows "Sign in with device code".
+squareRoutes.post('/pair', roleRequired('admin', 'manager'), async (c) => {
+  const token = c.env.SQUARE_ACCESS_TOKEN
+  try {
+    const body = await c.req.json().catch(() => ({})) as any
+    let locationId = typeof body?.location_id === 'string' ? body.location_id : ''
+    if (!locationId) {
+      const lr = await fetch(`${SQUARE_BASE}/locations`, { headers: sqHeaders(token) })
+      const ld = await lr.json() as any
+      if (!lr.ok) return c.json({ error: ld.errors?.[0]?.detail || 'Square refused the access token.' }, 502)
+      const loc = (ld.locations || []).find((l: any) => l.status === 'ACTIVE')
+      if (!loc) return c.json({ error: 'This Square account has no active location.' }, 409)
+      locationId = loc.id
+    }
+    const res = await fetch(`${SQUARE_BASE}/devices/codes`, {
+      method: 'POST', headers: sqHeaders(token),
+      body: JSON.stringify({ idempotency_key: crypto.randomUUID(), device_code: { product_type: 'TERMINAL_API', location_id: locationId, name: 'Scale House' } }),
+    })
+    const data = await res.json() as any
+    if (!res.ok) return c.json({ error: data.errors?.[0]?.detail || 'Square would not create a pairing code.' }, 502)
+    return c.json({ code: data.device_code?.code, pair_by: data.device_code?.pair_by, id: data.device_code?.id })
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Square could not be reached.' }, 500)
+  }
+})
 
 // Bill a closed pickup on the Terminal. The amount comes from the ticket in
 // the database, never from the page.
