@@ -888,7 +888,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </div>
           <button type="button" onclick="if(shSettingsOpen)closeSettings();openModal('printer-add-modal')" class="w-full px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-dashed border-gray-300 text-gray-600 hover:bg-gray-50"><i class="fas fa-plus mr-1"></i> Add printer</button>
           <label class="flex items-center gap-1.5 text-[10px] text-gray-600">
-            <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out
+            <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out <span class="text-gray-400">(always on in Auto mode)</span>
           </label>
           <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer mt-1.5">
             <input type="checkbox" id="print-photos" checked onchange="savePrintPhotos(this.checked)" class="rounded"> Print scale photos on the receipt
@@ -3800,7 +3800,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // transaction -- so every failure is now logged and put on screen.
   async function autoPrintReceipt(ticketId) {
     const cb = document.getElementById('auto-print-receipt');
-    if (cb && !cb.checked) {
+    // Auto mode always prints: nobody is at the screen to notice a missing
+    // receipt, so the checkbox only applies to Manual mode.
+    const autoMode = !!(agentSettings && agentSettings.mode === 'live');
+    if (cb && !cb.checked && !autoMode) {
       agentLog('auto-print is switched OFF — no receipt printed');
       return false;
     }
