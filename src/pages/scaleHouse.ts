@@ -1399,6 +1399,59 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       }).catch(() => { /* fire-and-forget — network blips must not stall the scale UI */ });
     } catch (e) { /* never throw from the hot path */ }
   }
+  // Remote scale view. Only one computer needs to be connected to the scale
+  // (Bluetooth, USB or the bridge); it publishes every reading to the server
+  // (publishToWebBridge above). Every other logged-in screen with no live
+  // scale of its own shows that reading here. It is VIEW ONLY: isLive() stays
+  // false on a viewer, so capture, weigh-out and the agent all refuse, and
+  // only the connected computer ever opens or closes a ticket.
+  let remoteScale = null;
+  let remotePollBusy = false, remotePollTimer = null;
+  const REMOTE_MAX_AGE_S = 6;
+  function remoteScaleMsg(fallback) {
+    if (!remoteScale) return fallback;
+    return 'This screen is showing the scale from ' + (remoteScale.publisher_name || 'another computer') + "'s station, view only. Capture and weigh out on the computer connected to the scale.";
+  }
+  function showRemoteReading(d) {
+    remoteScale = d;
+    currentLiveWeight = Math.max(0, Math.round(Number(d.weight_kg) * 10) / 10) || 0;
+    isWeightStable = !!d.is_stable;
+    updateLiveWeightDisplay();
+    updateCaptureButton();
+    const dot = document.getElementById('scale-status-dot'), text = document.getElementById('scale-status-text');
+    if (dot) dot.className = 'w-3 h-3 rounded-full bg-green-400 pulse-green';
+    if (text) { text.textContent = 'Live from ' + (d.publisher_name || 'another computer') + ' · view only'; text.className = 'text-sm text-green-400 font-medium'; }
+    const mp = document.getElementById('manual-entry-panel'); if (mp) mp.classList.add('hidden');
+    try { hideSetupBanner(); } catch (e) {}
+    const btn = document.getElementById('btn-capture-weight');
+    if (btn) btn.title = 'Capture on the computer connected to the scale';
+  }
+  function endRemoteView() {
+    if (!remoteScale) return;
+    remoteScale = null;
+    const btn = document.getElementById('btn-capture-weight'); if (btn) btn.title = '';
+    if (!isLive()) updateScaleUI('disconnected');
+  }
+  async function pollRemoteScale() {
+    if (remotePollBusy) return;
+    if (isLive()) { endRemoteView(); return; }
+    remotePollBusy = true;
+    try {
+      const res = await axios.get('/api/scale-bridge/current', { timeout: 5000 });
+      const d = res.data || {};
+      const fresh = d.connection_mode && d.connection_mode !== 'sim' && typeof d.age_seconds === 'number' && d.age_seconds >= 0 && d.age_seconds <= REMOTE_MAX_AGE_S;
+      if (fresh && !isLive()) showRemoteReading(d); else endRemoteView();
+    } catch (e) { endRemoteView(); }
+    finally { remotePollBusy = false; }
+  }
+  function startRemoteScaleView() {
+    if (remotePollTimer) return;
+    const tick = function () {
+      pollRemoteScale();
+      remotePollTimer = setTimeout(tick, document.hidden ? 5000 : 1000);
+    };
+    remotePollTimer = setTimeout(tick, 1500);
+  }
   let isKioskMode = window.location.search.includes('kiosk');
   let activeModalId = null;
   // Not "userRole": employeeLayout's sidebar script declares a top-level
@@ -1518,7 +1571,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   async function captureWeight() {
     if (currentLiveWeight <= 0) return;
     if (!isLive() && connectionMode !== 'sim') {
-      alert('Live weight is stale — reconnect the scale or use Manual Entry.');
+      alert(remoteScaleMsg('Live weight is stale — reconnect the scale or use Manual Entry.'));
       return;
     }
     // Debounce double-clicks: 3s window matches the indicator's typical
@@ -3098,6 +3151,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
 
   function updateScaleUI(state, info) {
+    if (remoteScale && !isLive() && (state === 'disconnected' || state === 'stale')) return;
     const dot = document.getElementById('scale-status-dot'), text = document.getElementById('scale-status-text');
     const bU = document.getElementById('btn-connect-usb'), bB = document.getElementById('btn-connect-bt');
     const bD = document.getElementById('btn-disconnect-scale'), bR = document.getElementById('btn-reconnect');
@@ -3946,7 +4000,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const customerId = document.getElementById('assign-customer').value;
     const tireType = document.getElementById('assign-material').value;
     if (!isLive() && connectionMode !== 'sim') {
-      alert('Scale is disconnected or stale — reconnect to use the live weight as tare.');
+      alert(remoteScaleMsg('Scale is disconnected or stale — reconnect to use the live weight as tare.'));
       return;
     }
     if (!currentLiveWeight || currentLiveWeight <= 0) {
@@ -4641,6 +4695,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // modal or manual card open. Otherwise try again on the next tick.
   let versionCheckBusy = false;
   function quietEnough() {
+    // Chrome needs a click to reconnect Bluetooth or USB after a reload, so a
+    // station holding the scale that way never reloads itself.
+    if ((connectionMode === 'bluetooth' || connectionMode === 'usb') && isLive()) return false;
     const card = document.getElementById('print-trigger-card');
     const banner = document.getElementById('agent-banner');
     return (agentState === 'idle' || agentState === 'cooldown')
@@ -4920,7 +4977,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // confirm flow so the operator can verify net weight + total before printing.
   async function connectToTruckOnScale(ticketId) {
     if (!isLive() && connectionMode !== 'sim') {
-      alert('Scale is disconnected or stale — reconnect to capture the outbound weight.');
+      alert(remoteScaleMsg('Scale is disconnected or stale — reconnect to capture the outbound weight.'));
       return;
     }
     if (!currentLiveWeight || currentLiveWeight <= 0) {
@@ -5669,8 +5726,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   function shText(id, txt) { const e = document.getElementById(id); if (e) e.textContent = txt; }
   function shSyncStrip() {
     const live = typeof isLive === 'function' && isLive();
-    shText('sh-strip-scale', live ? 'Scale connected' : 'Scale not connected');
-    shDot('sh-strip-scale-dot', live ? 'ok' : 'bad');
+    shText('sh-strip-scale', live ? 'Scale connected' : (remoteScale ? 'Scale live · from ' + (remoteScale.publisher_name || 'another computer') : 'Scale not connected'));
+    shDot('sh-strip-scale-dot', live || remoteScale ? 'ok' : 'bad');
     shText('sh-cp-scale', live ? 'Live' : 'Off');
     const cam = ((document.getElementById('camera-status') || {}).textContent || 'OFF').trim();
     const camLive = /live|on/i.test(cam) && !/off/i.test(cam);
@@ -7233,6 +7290,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       startVerifySweep();
       bootstrapScale();
       startStaleWatchdog();
+      startRemoteScaleView();
       // Reveal price-management button only to roles permitted by the backend
       // (mirrors roleRequired('admin','manager') on POST/DELETE /api/pricing).
       if (['admin','manager'].includes(currentUserRole)) {
