@@ -21,7 +21,8 @@ async function pairedTerminalId(token: string): Promise<string | null> {
     })
     if (!res.ok) return null
     const data = await res.json() as any
-    const code = (data.device_codes || []).find((d: any) => d.device_id)
+    const code = (data.device_codes || []).filter((d: any) => d.device_id)
+      .sort((a: any, b: any) => String(b.paired_at || '').localeCompare(String(a.paired_at || '')))[0]
     return code ? String(code.device_id) : null
   } catch {
     return null
@@ -46,7 +47,9 @@ async function pairedTerminal(token: string): Promise<{ device_id: string, locat
     const res = await fetch(`${SQUARE_BASE}/devices/codes?status=PAIRED&product_type=TERMINAL_API`, { headers: sqHeaders(token) })
     if (!res.ok) return null
     const data = await res.json() as any
-    const code = (data.device_codes || []).find((d: any) => d.device_id)
+    // Newest pairing wins: re-pairing leaves the older code PAIRED too.
+    const code = (data.device_codes || []).filter((d: any) => d.device_id)
+      .sort((a: any, b: any) => String(b.paired_at || '').localeCompare(String(a.paired_at || '')))[0]
     return code ? { device_id: String(code.device_id), location_id: code.location_id ? String(code.location_id) : null } : null
   } catch {
     return null
@@ -130,6 +133,7 @@ squareRoutes.get('/terminal-status', async (c) => {
     const dd = await dr.json() as any
     const codes = (dd.device_codes || []).map((d: any) => ({ id: d.id, code: d.code, name: d.name, status: d.status, device_id: d.device_id || null, location_id: d.location_id, pair_by: d.pair_by, paired_at: d.paired_at }))
     const paired = codes.filter((d: any) => d.status === 'PAIRED' && d.device_id)
+      .sort((a: any, b: any) => String(b.paired_at || '').localeCompare(String(a.paired_at || '')))
     return c.json({ account_ok: true, locations, paired, pending: codes.filter((d: any) => d.status === 'UNPAIRED') })
   } catch (e: any) {
     return c.json({ account_ok: false, error: e?.message || 'Square could not be reached.' })

@@ -7550,7 +7550,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
 
   // ── Square Terminal connection (Equipment & settings > Square) ──
-  let sqPairTimer = null;
+  let sqPairTimer = null, sqPairCodeId = null;
   async function sqLoadStatus() {
     const el = document.getElementById('sq-status');
     if (!el) return null;
@@ -7562,7 +7562,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       el.innerHTML = '<div><i class="fas fa-check text-green-600 mr-1"></i>Square account connected' + (loc ? ': <b>' + escHtml(loc.name) + '</b> (' + escHtml(loc.country || '') + ', ' + escHtml(loc.currency || '') + ')' : '') + '</div>'
         + (p ? '<div class="mt-1"><i class="fas fa-check text-green-600 mr-1"></i>Terminal paired: <b>' + escHtml(p.name || 'Terminal') + '</b>' + (p.paired_at ? ' since ' + escHtml(String(p.paired_at).slice(0, 10)) : '') + '. Pickups are charged and printed on it.</div>'
              : '<div class="mt-1 text-amber-700"><i class="fas fa-triangle-exclamation mr-1"></i>No Terminal is paired for the app yet. Press <b>Get pairing code</b>.</div>');
-      if (p) { const box = document.getElementById('sq-code'); if (box) box.style.display = 'none'; if (sqPairTimer) { clearInterval(sqPairTimer); sqPairTimer = null; } }
+      // The code box stays until the code just shown is actually used.
+      if (sqPairCodeId && (d.paired || []).some(function (x) { return x.id === sqPairCodeId; })) {
+        const box = document.getElementById('sq-code');
+        if (box) box.innerHTML = '<div class="rounded-xl border-2 border-green-200 bg-green-50 p-3 text-sm text-green-800 font-semibold text-center"><i class="fas fa-check mr-1"></i>Paired. The Terminal now waits on a black Square screen until a pickup is charged.</div>';
+        sqPairCodeId = null;
+        if (sqPairTimer) { clearInterval(sqPairTimer); sqPairTimer = null; }
+      }
       return d;
     } catch (e) {
       el.textContent = 'Could not check Square: ' + ((e.response && e.response.data && e.response.data.error) || e.message);
@@ -7573,6 +7579,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const box = document.getElementById('sq-code');
     try {
       const d = (await axios.post('/api/square/pair', {})).data;
+      sqPairCodeId = d.id || null;
       box.style.display = '';
       box.innerHTML = '<div class="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 text-center">'
         + '<div class="text-xs text-blue-800 font-semibold">On the Square Terminal, choose <b>Sign in with device code</b> and enter:</div>'
@@ -7582,7 +7589,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const started = Date.now();
       sqPairTimer = setInterval(async function () {
         const s = await sqLoadStatus();
-        if ((s && s.paired && s.paired.length) || Date.now() - started > 6 * 60000) { clearInterval(sqPairTimer); sqPairTimer = null; }
+        if (!sqPairCodeId || Date.now() - started > 6 * 60000) { clearInterval(sqPairTimer); sqPairTimer = null; }
       }, 4000);
     } catch (e) {
       box.style.display = '';
