@@ -13,6 +13,21 @@ squareRoutes.use('*', authMiddleware, employeeOnly)
 
 const SQUARE_BASE = 'https://connect.squareup.com/v2'
 
+// The device_id of the first PAIRED Square Terminal, or null.
+async function pairedTerminalId(token: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${SQUARE_BASE}/devices/codes?status=PAIRED&product_type=TERMINAL_API`, {
+      headers: { 'Square-Version': '2024-12-18', 'Authorization': `Bearer ${token}` },
+    })
+    if (!res.ok) return null
+    const data = await res.json() as any
+    const code = (data.device_codes || []).find((d: any) => d.device_id)
+    return code ? String(code.device_id) : null
+  } catch {
+    return null
+  }
+}
+
 // Create a terminal checkout (sends payment to Square Terminal reader)
 squareRoutes.post('/terminal-checkout', async (c) => {
   try {
@@ -42,10 +57,15 @@ squareRoutes.post('/terminal-checkout', async (c) => {
       }
     }
 
-    // If a device_id is specified, target that specific terminal
-    if (device_id) {
-      body.checkout.device_options.device_id = device_id
+    // Square requires the target terminal on every checkout. Nothing on the
+    // page ever chose one, so when the caller does not name a device, use the
+    // terminal paired to this account (Square's documented source for a
+    // checkout's device_id is DeviceCode.device_id on a PAIRED code).
+    const targetDevice = device_id || await pairedTerminalId(c.env.SQUARE_ACCESS_TOKEN)
+    if (!targetDevice) {
+      return c.json({ error: 'No paired Square Terminal was found on this Square account. Pair the Terminal in the Square app, then try again.' }, 409)
     }
+    body.checkout.device_options.device_id = targetDevice
 
     const res = await fetch(`${SQUARE_BASE}/terminals/checkouts`, {
       method: 'POST',

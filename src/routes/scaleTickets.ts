@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { photoOversize } from '../utils/photo'
 import { GST_RATE, cents, billableKg } from '../utils/money'
+import { parseTicketType, ticketTypeOf, ticketNet, pickupRate, priceTicket } from '../utils/ticketPricing'
 import { todayEdmonton } from '../utils/date'
 import { hashPassword } from '../utils/passwords'
 import { normalizeAppearance } from './scaleAgent'
@@ -154,6 +155,11 @@ scaleTicketRoutes.get('/', async (c) => {
       sql += ' AND st.tire_type = ?'
       params.push(material)
     }
+    const typeFilter = parseTicketType(c.req.query('type'))
+    if (typeFilter) {
+      sql += ' AND st.ticket_type = ?'
+      params.push(typeFilter)
+    }
 
     // The totals are computed over the WHOLE filtered set, not over the page of
     // rows returned, so "this month" reports the real month even when the list
@@ -290,21 +296,25 @@ scaleTicketRoutes.get('/:id', async (c) => {
 // Create new scale ticket (from office/yard)
 scaleTicketRoutes.post('/', async (c) => {
   try {
-    const { customer_id, tire_type, notes, vehicle_plate, vehicle_id, driver_name, driver_phone } = await c.req.json()
+    const { customer_id, tire_type, notes, vehicle_plate, vehicle_id, driver_name, driver_phone, ticket_type } = await c.req.json()
     const employeeId = c.get('userId')
 
     if (!customer_id) {
       return c.json({ error: 'Customer is required' }, 400)
     }
+    const type = ticketTypeOf(ticket_type)
+    if (type === 'pickup' && (await pickupRate(c.env.DB, tire_type || 'mixed')) === null) {
+      return c.json({ error: `No pickup price is set for ${tire_type || 'mixed'}. Set one under Pickup Prices in Scale House first.` }, 400)
+    }
 
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
-      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, vehicle_id, driver_name, driver_phone, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'field_pending')`,
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, notes, vehicle_plate, vehicle_id, driver_name, driver_phone, ticket_type, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'field_pending')`,
       params: [tn, customer_id, employeeId, tire_type || 'mixed', notes || null, vehicle_plate || null,
-               vehicle_id || null, driver_name || null, driver_phone || null],
+               vehicle_id || null, driver_name || null, driver_phone || null, type],
     }))
 
-    await auditLog(c.env.DB, ticketId, 'created', employeeId, { source: 'office', customer_id, tire_type })
+    await auditLog(c.env.DB, ticketId, 'created', employeeId, { source: 'office', customer_id, tire_type, ticket_type: type })
 
     return c.json({ success: true, id: ticketId, ticket_number: ticketNumber })
   } catch (err: any) {
@@ -384,8 +394,11 @@ scaleTicketRoutes.post('/field', async (c) => {
 // Quick-create ticket from scale PRINT trigger (weight-in only, no customer yet)
 scaleTicketRoutes.post('/print-trigger', async (c) => {
   try {
-    const { weight, photo, material, source, plate, plate_confidence, appearance, test_offset_kg } = await c.req.json()
+    const { weight, photo, material, source, plate, plate_confidence, appearance, test_offset_kg, ticket_type } = await c.req.json()
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+    // Drop-off unless the operator says otherwise: the agent never knows, and
+    // a drop-off is never billed, so the default can't charge anybody.
+    const type = ticketTypeOf(ticket_type)
 
     // Simulated load, for proving the loop end to end when there is no real
     // load to drop. This writes a weight the scale never reported, so it is
@@ -429,17 +442,20 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
       if (!known) return c.json({ error: `Unknown or inactive material: ${material}` }, 400)
       tireType = material.trim()
     }
+    if (type === 'pickup' && (await pickupRate(c.env.DB, tireType)) === null) {
+      return c.json({ error: `No pickup price is set for ${tireType}. Set one under Pickup Prices first.` }, 400)
+    }
 
     const { ticketNumber, ticketId } = await insertTicketWithRetry(c.env.DB, (tn) => ({
-      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, vehicle_plate, plate_in_confidence, plate_source, appearance_in, notes, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
+      sql: `INSERT INTO scale_tickets (ticket_number, customer_id, employee_id, tire_type, weight_in, weight_in_at, photo_in, photo_in_at, vehicle_plate, plate_in_confidence, plate_source, appearance_in, notes, ticket_type, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weighed_in')`,
       params: [tn, walkInId, employeeId, tireType, recordedWeight, now, photo || null, photo ? now : null,
                normPlate || null, normPlate ? (Number(plate_confidence) || null) : null, normPlate ? 'vision' : null,
-               lookIn, testNote],
+               lookIn, testNote, type],
     }))
 
     await auditLog(c.env.DB, ticketId, 'weighed_in', employeeId, {
-      weight: recordedWeight, has_photo: !!photo, material: tireType,
+      weight: recordedWeight, has_photo: !!photo, material: tireType, ticket_type: type,
       source: source === 'agent' ? 'agent' : 'operator',
       ...(offset ? { test_offset_kg: offset, actual_scale_weight: actualWeight } : {}),
     })
@@ -522,11 +538,23 @@ scaleTicketRoutes.post('/:id/weight', async (c) => {
       ).bind(weight, now, photo || null, photo ? now : null, id).run()
       await auditLog(c.env.DB, parseInt(id), 'weighed_in', employeeId, { weight })
     } else if (type === 'out') {
-      const netWeight = (ticket.weight_in as number) - weight
+      if (!ticket.weight_in) return c.json({ error: 'Ticket has no weight-in recorded' }, 400)
+      // Priced here like every other weigh-out. This path used to record the
+      // weight and nothing else, which was harmless while drop-offs carried
+      // the bill -- a pickup closed from Ticket History would leave at $0.
+      const m = await priceTicket(c.env.DB, ticket.ticket_type, ticket.tire_type as string, ticket.weight_in as number, weight)
+      const netWeight = m.net_weight
       await c.env.DB.prepare(
-        `UPDATE scale_tickets SET weight_out = ?, weight_out_at = ?, net_weight = ?, photo_out = COALESCE(?, photo_out), photo_out_at = COALESCE(?, photo_out_at), completed_by = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?`
-      ).bind(weight, now, netWeight, photo || null, photo ? now : null, employeeId, id).run()
-      await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, { weight, net_weight: netWeight })
+        `UPDATE scale_tickets SET weight_out = ?, weight_out_at = ?, net_weight = ?, photo_out = COALESCE(?, photo_out), photo_out_at = COALESCE(?, photo_out_at),
+                price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
+                completed_by = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?`
+      ).bind(weight, now, netWeight, photo || null, photo ? now : null,
+             m.price_per_kg, m.subtotal, GST_RATE, m.tax_amount, m.grand_total, employeeId, id).run()
+      await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
+        weight, net_weight: netWeight, ticket_type: ticketTypeOf(ticket.ticket_type), grand_total: m.grand_total,
+        ...(m.priced ? {} : { unpriced: 'no pickup price set for this material' }),
+      })
+      await detectAnomalies(c.env.DB, parseInt(id), ticket.weight_in as number, weight, netWeight, ticket.ticket_type)
 
       if (ticket.pickup_request_id) {
         await c.env.DB.prepare(
@@ -621,21 +649,18 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
       return c.json({ error: `Cannot merge weight-out into a ${ticket.status} ticket` }, 409)
     }
 
-    // Don't Math.abs the net weight — a negative net (weight_out > weight_in)
-    // is a real anomaly and should reach detectAnomalies, not be silently
-    // squashed to a positive number that prices a swapped weigh-in/out
-    // exactly as if it were correct.
-    const netWeight = (ticket.weight_in as number) - weight
+    // Don't Math.abs the net weight — a negative net (a drop-off leaving
+    // heavier, a pickup leaving lighter) is a real anomaly and should reach
+    // detectAnomalies, not be silently squashed to a positive number that
+    // prices a swapped weigh-in/out exactly as if it were correct. Which way
+    // the weight runs, and whether it is billed at all, is the ticket type's.
+    const m = await priceTicket(c.env.DB, ticket.ticket_type, ticket.tire_type as string, ticket.weight_in as number, weight)
+    const netWeight = m.net_weight
     const now = new Date().toISOString()
-
-    // Get pricing for this material
-    const pricing = await c.env.DB.prepare(
-      'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
-    ).bind(ticket.tire_type || 'mixed').first()
-    const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
-    const subtotal = cents(billableKg(netWeight) * pricePerKg)
-    const tax = cents(subtotal * GST_RATE)
-    const grandTotal = cents(subtotal + tax)
+    const pricePerKg = m.price_per_kg
+    const subtotal = m.subtotal
+    const tax = m.tax_amount
+    const grandTotal = m.grand_total
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
@@ -654,11 +679,12 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
 
     await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
       weight_out: weight, net_weight: netWeight, price_per_kg: pricePerKg, grand_total: grandTotal,
-      has_photo: !!photo, plate_out: outPlate || null
+      has_photo: !!photo, plate_out: outPlate || null, ticket_type: ticketTypeOf(ticket.ticket_type),
+      ...(m.priced ? {} : { unpriced: 'no pickup price set for this material' }),
     })
 
     // Fraud detection
-    await detectAnomalies(c.env.DB, parseInt(id), ticket.weight_in as number, weight, netWeight)
+    await detectAnomalies(c.env.DB, parseInt(id), ticket.weight_in as number, weight, netWeight, ticket.ticket_type)
 
     if (ticket.pickup_request_id) {
       await c.env.DB.prepare(
@@ -668,9 +694,11 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
 
     return c.json({
       success: true,
+      ticket_type: ticketTypeOf(ticket.ticket_type),
       net_weight: netWeight,
       price_per_kg: pricePerKg,
-      subtotal, tax, grand_total: grandTotal
+      subtotal, tax, grand_total: grandTotal,
+      unpriced: !m.priced,
     })
   } catch (err: any) {
     console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
@@ -690,6 +718,12 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
     if (ticket.status === 'voided' || ticket.status === 'completed') {
       return c.json({ error: `Cannot apply stored tare to a ${ticket.status} ticket` }, 409)
     }
+    // A stored tare is the EMPTY truck, which is the weigh-out of a drop-off
+    // but the weigh-in of a pickup. A pickup's weigh-in already IS its empty
+    // weight, so a stored tare has nothing to add there.
+    if (ticketTypeOf(ticket.ticket_type) === 'pickup') {
+      return c.json({ error: 'A pickup leaves loaded, so it has to be weighed out on the scale -- a stored empty weight cannot stand in for it.' }, 409)
+    }
 
     const vehicle = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ? AND is_active = 1').bind(vehicle_id).first()
     if (!vehicle || !vehicle.stored_tare_weight) return c.json({ error: 'Vehicle has no stored tare weight' }, 400)
@@ -697,16 +731,13 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
     const tareWeight = vehicle.stored_tare_weight as number
     // No Math.abs — let detectAnomalies see a negative net if the truck's
     // stored tare exceeds the gross-in (e.g. wrong vehicle picked).
-    const netWeight = (ticket.weight_in as number) - tareWeight
+    const m = await priceTicket(c.env.DB, ticket.ticket_type, ticket.tire_type as string, ticket.weight_in as number, tareWeight)
+    const netWeight = m.net_weight
     const now = new Date().toISOString()
-
-    const pricing = await c.env.DB.prepare(
-      'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
-    ).bind(ticket.tire_type || 'mixed').first()
-    const pricePerKg = pricing ? (pricing.price_per_kg as number) : 0.14
-    const subtotal = cents(billableKg(netWeight) * pricePerKg)
-    const tax = cents(subtotal * GST_RATE)
-    const grandTotal = cents(subtotal + tax)
+    const pricePerKg = m.price_per_kg
+    const subtotal = m.subtotal
+    const tax = m.tax_amount
+    const grandTotal = m.grand_total
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
@@ -721,7 +752,7 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
       method: 'stored_tare', vehicle_id, tare_weight: tareWeight, net_weight: netWeight, grand_total: grandTotal
     })
 
-    await detectAnomalies(c.env.DB, parseInt(id), ticket.weight_in as number, tareWeight, netWeight)
+    await detectAnomalies(c.env.DB, parseInt(id), ticket.weight_in as number, tareWeight, netWeight, ticket.ticket_type)
 
     if (ticket.pickup_request_id) {
       await c.env.DB.prepare(
@@ -777,8 +808,21 @@ scaleTicketRoutes.post('/:id/assign', async (c) => {
     // Snapshot the row before mutation — customer reassignment is a likely
     // fraud surface ("did somebody re-attribute this ticket later?").
     const prev = await c.env.DB.prepare(
-      'SELECT customer_id, tire_type, vehicle_id FROM scale_tickets WHERE id = ?'
+      'SELECT customer_id, tire_type, vehicle_id, ticket_type, status, payment_status FROM scale_tickets WHERE id = ?'
     ).bind(id).first()
+    if (!prev) return c.json({ error: 'Ticket not found' }, 404)
+
+    // A pickup is billed by its material, so it may only move to a material
+    // that has a pickup price -- and not at all once the customer has paid or
+    // a card payment is in flight, since that would change a settled amount.
+    if (tire_type && tire_type !== prev.tire_type && ticketTypeOf(prev.ticket_type) === 'pickup') {
+      if (prev.status === 'completed' && (prev.payment_status === 'paid' || prev.payment_status === 'pending')) {
+        return c.json({ error: 'This pickup has already been paid, so its material cannot change.' }, 409)
+      }
+      if ((await pickupRate(c.env.DB, tire_type)) === null) {
+        return c.json({ error: `No pickup price is set for ${tire_type}. Set one under Pickup Prices first.` }, 400)
+      }
+    }
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
@@ -806,35 +850,81 @@ scaleTicketRoutes.post('/:id/assign', async (c) => {
     // the ticket had at the time -- changing it here would leave the price,
     // GST and total describing a material the ticket no longer has. Re-price.
     let repriced: any = null
-    const after = await c.env.DB.prepare(
-      'SELECT status, tire_type, net_weight FROM scale_tickets WHERE id = ?'
-    ).bind(id).first()
-    if (after && after.status === 'completed' &&
-        after.tire_type !== prev?.tire_type &&
-        Number.isFinite(Number(after.net_weight))) {
-      const pricing = await c.env.DB.prepare(
-        'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
-      ).bind(after.tire_type).first()
-      const ppk = pricing ? Number(pricing.price_per_kg) : 0.14
-      const subtotal = cents(Number(after.net_weight) * ppk)
-      const tax = cents(subtotal * GST_RATE)
-      const grandTotal = cents(subtotal + tax)
-      await c.env.DB.prepare(
-        `UPDATE scale_tickets SET price_per_kg = ?, total_amount = ?, tax_rate = ?,
-                                  tax_amount = ?, grand_total = ?, updated_at = datetime('now')
-         WHERE id = ?`
-      ).bind(ppk, subtotal, GST_RATE, tax, grandTotal, id).run()
-      await auditLog(c.env.DB, parseInt(id), 'repriced', employeeId, {
-        reason: 'material changed after completion',
-        from: prev?.tire_type, to: after.tire_type,
-        price_per_kg: ppk, grand_total: grandTotal,
+    if (prev.status === 'completed' && tire_type && tire_type !== prev.tire_type) {
+      repriced = await repriceCompleted(c.env.DB, parseInt(id), employeeId, {
+        reason: 'material changed after completion', from: prev.tire_type, to: tire_type,
       })
-      repriced = { price_per_kg: ppk, subtotal, tax_amount: tax, grand_total: grandTotal }
     }
 
     return c.json({ success: true, repriced })
   } catch (err: any) {
     console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// Re-price a COMPLETED ticket from its stored weights, type and material. The
+// one place that rewrites money after weigh-out, so a material change and a
+// drop-off/pickup switch cannot price the same ticket two different ways.
+async function repriceCompleted(db: D1Database, id: number, employeeId: number, why: Record<string, any>) {
+  const t = await db.prepare(
+    'SELECT ticket_type, tire_type, weight_in, weight_out FROM scale_tickets WHERE id = ?'
+  ).bind(id).first<any>()
+  if (!t || !Number.isFinite(Number(t.weight_in)) || !Number.isFinite(Number(t.weight_out))) return null
+  const m = await priceTicket(db, t.ticket_type, t.tire_type, Number(t.weight_in), Number(t.weight_out))
+  await db.prepare(
+    `UPDATE scale_tickets SET net_weight = ?, price_per_kg = ?, total_amount = ?, tax_rate = ?,
+                              tax_amount = ?, grand_total = ?, updated_at = datetime('now')
+     WHERE id = ?`
+  ).bind(m.net_weight, m.price_per_kg, m.subtotal, GST_RATE, m.tax_amount, m.grand_total, id).run()
+  await auditLog(db, id, 'repriced', employeeId, {
+    ...why, ticket_type: ticketTypeOf(t.ticket_type), net_weight: m.net_weight,
+    price_per_kg: m.price_per_kg, grand_total: m.grand_total,
+  })
+  return { net_weight: m.net_weight, price_per_kg: m.price_per_kg, subtotal: m.subtotal, tax_amount: m.tax_amount, grand_total: m.grand_total }
+}
+
+// ─── POST /:id/type ───
+// Body: { ticket_type: 'dropoff' | 'pickup' }
+// The operator's Drop-off / Pickup switch. Usable while the truck is in the
+// yard (decides which way the weigh-out is measured and whether it is billed)
+// and after an automatic close (the agent closes everything as a drop-off, so
+// this is how a pickup it closed gets its bill). Refused once money has moved.
+scaleTicketRoutes.post('/:id/type', async (c) => {
+  const id = c.req.param('id')
+  try {
+    const { ticket_type } = await c.req.json()
+    const type = parseTicketType(ticket_type)
+    if (!type) return c.json({ error: 'ticket_type must be "dropoff" or "pickup"' }, 400)
+    const employeeId = c.get('userId')
+
+    const t = await c.env.DB.prepare(
+      'SELECT id, status, ticket_type, tire_type, payment_status FROM scale_tickets WHERE id = ?'
+    ).bind(id).first<any>()
+    if (!t) return c.json({ error: 'Ticket not found' }, 404)
+    if (t.status === 'voided') return c.json({ error: 'This ticket is voided' }, 409)
+    const prevType = ticketTypeOf(t.ticket_type)
+    if (prevType === type) return c.json({ success: true, ticket_type: type, changed: false })
+
+    if (t.status === 'completed' && (t.payment_status === 'paid' || t.payment_status === 'pending')) {
+      return c.json({ error: t.payment_status === 'paid'
+        ? 'This ticket has already been paid, so it cannot be switched.'
+        : 'A card payment is in progress on the Square Terminal for this ticket. Finish or cancel it first.' }, 409)
+    }
+    if (type === 'pickup' && (await pickupRate(c.env.DB, t.tire_type)) === null) {
+      return c.json({ error: `No pickup price is set for ${t.tire_type || 'mixed'}. Set one under Pickup Prices, then mark it a pickup.`, needs_price: t.tire_type || 'mixed' }, 400)
+    }
+
+    await c.env.DB.prepare(
+      `UPDATE scale_tickets SET ticket_type = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(type, id).run()
+    await auditLog(c.env.DB, parseInt(id), 'type_changed', employeeId, { from: prevType, to: type, status: t.status })
+
+    const repriced = t.status === 'completed'
+      ? await repriceCompleted(c.env.DB, parseInt(id), employeeId, { reason: 'switched ' + prevType + ' to ' + type + ' after completion' })
+      : null
+    return c.json({ success: true, ticket_type: type, changed: true, status: t.status, repriced })
+  } catch (err: any) {
+    console.error('scaleTickets type error:', err); return c.json({ error: 'Server error' }, 500)
   }
 })
 
@@ -915,8 +1005,13 @@ scaleTicketRoutes.post('/:id/payment', async (c) => {
 
     // Idempotency: skip the payment_log insert when this square_payment_id has
     // already been recorded. Backed by the partial UNIQUE index in 0009.
-    let already = false
-    if (square_payment_id) {
+    // Only money actually received goes in payment_log. 'pending' (a card
+    // checkout sitting on the Terminal) and 'unpaid' (one that was cancelled)
+    // used to write a 'completed' row too, so every card payment was logged
+    // twice -- once when it was sent and again when it was tapped.
+    const isPaid = (payment_status || 'paid') === 'paid'
+    let already = !isPaid
+    if (isPaid && square_payment_id) {
       const dup = await c.env.DB.prepare(
         'SELECT id FROM payment_log WHERE square_payment_id = ? LIMIT 1'
       ).bind(square_payment_id).first()
@@ -940,7 +1035,8 @@ scaleTicketRoutes.post('/:id/payment', async (c) => {
     await auditLog(c.env.DB, parseInt(id), 'payment', employeeId, {
       method: payment_method || 'card',
       amount: ticket?.grand_total,
-      idempotent_skip: already,
+      status: payment_status || 'paid',
+      idempotent_skip: isPaid && already,
       prev_payment_status: prev?.payment_status,
       prev_payment_method: prev?.payment_method,
       prev_square_payment_id: prev?.square_payment_id,
@@ -1005,6 +1101,7 @@ scaleTicketRoutes.get('/:id/receipt', async (c) => {
         address: ticket.address,
         city: ticket.city,
         material: ticket.tire_type,
+        ticket_type: ticketTypeOf(ticket.ticket_type),
         weight_in: ticket.weight_in,
         weight_in_at: ticket.weight_in_at,
         weight_out: ticket.weight_out,
@@ -1102,13 +1199,15 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
     // exist, net = in - out (signed — Math.abs would mask a swapped weigh-in).
     const weightIn = field === 'weight_in' ? new_value : (ticket.weight_in as number | null)
     const weightOut = field === 'weight_out' ? new_value : (ticket.weight_out as number | null)
-    const netWeight = (weightIn && weightOut) ? (weightIn - weightOut) : null
+    const netWeight = (weightIn && weightOut) ? ticketNet(ticket.ticket_type, weightIn, weightOut) : null
 
     let pricePerKg = ticket.price_per_kg as number
     let subtotal = ticket.total_amount as number
     let tax = ticket.tax_amount as number
     let grandTotal = ticket.grand_total as number
 
+    // Re-priced at the rate the ticket was closed at, not today's: an edit
+    // corrects a weight, it does not re-open the price.
     if (netWeight !== ticket.net_weight && ticket.status === 'completed' && pricePerKg > 0 && netWeight) {
       subtotal = cents(billableKg(netWeight) * pricePerKg)
       tax = cents(subtotal * GST_RATE)
@@ -1124,7 +1223,7 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
     })
 
     // Check for anomalies on new values
-    await detectAnomalies(c.env.DB, parseInt(id), weightIn, weightOut, netWeight)
+    await detectAnomalies(c.env.DB, parseInt(id), weightIn, weightOut, netWeight, ticket.ticket_type)
 
     return c.json({ success: true, net_weight: netWeight, grand_total: grandTotal })
   } catch (err: any) {
@@ -1137,11 +1236,13 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
 // ═══════════════════════════════════════
 
 // Anomaly detection helper
-async function detectAnomalies(db: D1Database, ticketId: number, weightIn: number, weightOut: number, netWeight: number) {
+async function detectAnomalies(db: D1Database, ticketId: number, weightIn: number, weightOut: number, netWeight: number, ticketType?: unknown) {
   const anomalies: { type: string, severity: string, description: string }[] = []
 
   if (netWeight < 0) {
-    anomalies.push({ type: 'negative_net', severity: 'high', description: 'Net weight is negative (' + netWeight.toFixed(1) + ' kg). Weight out exceeds weight in.' })
+    anomalies.push({ type: 'negative_net', severity: 'high', description: 'Net weight is negative (' + netWeight.toFixed(1) + ' kg). ' + (ticketTypeOf(ticketType) === 'pickup'
+      ? 'This pickup left lighter than it arrived.'
+      : 'Weight out exceeds weight in.') })
   }
   if (netWeight >= 0 && netWeight < 10) {
     anomalies.push({ type: 'zero_net', severity: 'medium', description: 'Net weight is near zero (' + netWeight.toFixed(1) + ' kg). Possible empty load.' })

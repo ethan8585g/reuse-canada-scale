@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import Anthropic from '@anthropic-ai/sdk'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
-import { GST_RATE, cents, billableKg } from '../utils/money'
+import { ticketTypeOf, ticketNet, priceTicket } from '../utils/ticketPricing'
 
 // ANTHROPIC_API_KEY is a Cloudflare secret and is read only here. The frame it
 // describes is captured in the browser, but the key must never go there.
@@ -321,7 +321,19 @@ interface OpenTicket {
   age_hours: number
   plate: string | null
   appearance: Appearance | null
+  // 'dropoff' (default) leaves lighter than it arrived; 'pickup' leaves
+  // heavier. Optional so older callers and tests mean drop-off.
+  ticket_type?: string | null
 }
+
+// The load a reading would give if it were this ticket's weigh-out, measured
+// the way the ticket runs. Every "could this be that truck leaving" test below
+// goes through this, so a pickup -- which must leave HEAVIER -- is judged by
+// exactly the same rules as a drop-off, mirrored.
+function loadOf(t: OpenTicket, weight: number): number {
+  return ticketNet(t.ticket_type, t.weight_in, weight)
+}
+const isPickup = (t: OpenTicket) => ticketTypeOf(t.ticket_type) === 'pickup'
 
 export interface Decision {
   action: 'new' | 'close' | 'defer'
@@ -335,13 +347,14 @@ export interface Decision {
 // ─────────────────────────────────────────────────────────────────────
 // The rules.
 //
-// Everything rests on one physical invariant: a truck arrives LOADED with
-// tires and leaves LIGHTER. So a weigh-out is always less than its own
-// weigh-in. That single fact resolves the overwhelming majority of real
-// events with no AI at all.
+// Everything rests on one physical invariant: a drop-off arrives LOADED and
+// leaves LIGHTER, and a pickup (marked by the operator) arrives empty and
+// leaves HEAVIER. So a weigh-out always moves away from its own weigh-in in
+// the ticket's direction -- see loadOf(). That single fact resolves the
+// overwhelming majority of real events with no AI at all.
 //
 // Two distinct notions of "could this be closing that ticket":
-//   possible  — arithmetically (weight_in - weight > 0)
+//   possible  — arithmetically (loadOf(ticket, weight) > 0)
 //   plausible — and the resulting load size is sane (min_net..max_net)
 // The difference matters. If nothing is even POSSIBLE the truck must be
 // arriving, and we can say so confidently. But if something is possible and
@@ -414,7 +427,7 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
 
     if (matches.length === 1) {
       const t = matches[0]
-      const net = t.weight_in - weight
+      const net = loadOf(t, weight)
 
       // The plate names the truck, but physics keeps its veto: nothing weighs
       // out heavier than it weighed in, and a load outside the sane range is a
@@ -429,7 +442,9 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
       if (net < -minNet) {
         return {
           action: 'defer', ticket: null, confidence: 0, rule: 'plate_match_not_lighter',
-          reason: `Plate ${plateNorm} is ${t.ticket_number}, open at ${t.weight_in.toFixed(1)} kg, but this reading is ${weight.toFixed(1)} kg — the same truck cannot leave heavier than it arrived. Sending it to the operator.`,
+          reason: `Plate ${plateNorm} is ${t.ticket_number}, open at ${t.weight_in.toFixed(1)} kg, but this reading is ${weight.toFixed(1)} kg — ${isPickup(t)
+            ? 'that ticket is a pickup, and a pickup cannot leave lighter than it arrived'
+            : 'the same truck cannot leave heavier than it arrived'}. Sending it to the operator.`,
           candidates: matches,
         }
       }
@@ -496,11 +511,11 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
       // "Meaningfully" matters -- a few kg over is the driver getting out or a
       // tank of fuel, not a different truck -- so the same minimum that defines
       // a real load defines the tolerance here.
-      return (t.weight_in - weight) >= -minNet
+      return loadOf(t, weight) >= -minNet
     })
     if (nearMiss.length > 0) {
       const t = nearMiss[0]
-      const net = t.weight_in - weight
+      const net = loadOf(t, weight)
       return {
         action: 'defer', ticket: null, confidence: 0, rule: 'plate_near_miss',
         reason: `Read plate ${plateNorm}, which is one character from ${t.plate} on ${t.ticket_number}`
@@ -552,7 +567,7 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
   // ways -- a few kg over is the driver back in the cab, not a second truck.
   if (singleTruck && open.length === 1 && Number.isFinite(open[0].weight_in)) {
     const t = open[0]
-    const net = t.weight_in - weight
+    const net = loadOf(t, weight)
     if (net >= -minNet && net < minNet) {
       if (Number.isFinite(t.age_hours) && t.age_hours > maxAge) {
         return {
@@ -577,30 +592,37 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
     }
   }
 
-  const possible = open.filter(t => Number.isFinite(t.weight_in) && (t.weight_in - weight) > 0)
+  const possible = open.filter(t => Number.isFinite(t.weight_in) && loadOf(t, weight) > 0)
 
   if (possible.length === 0) {
+    // Nothing open could be leaving at this weight: heavier than every
+    // drop-off's weigh-in and no heavier than any pickup's.
     // Heavier than every open weigh-in. With more than one truck in play that
     // is simply a second truck arriving. But while the yard runs one truck at
     // a time it cannot be -- opening a second ticket here would quietly break
     // the one-open-ticket invariant the whole no-camera scheme depends on, and
     // the next truck to leave would then match two candidates and stall.
     if (singleTruck) {
+      const t = open[0]
       return {
         action: 'defer', ticket: null, confidence: 0, rule: 'single_truck_unexpected_arrival',
-        reason: `${open[0].ticket_number} is still open and ${weight.toFixed(1)} kg is heavier than its weigh-in, so this is not that truck leaving. No plate could be read, and with one truck at a time this should not happen — sending it to the operator rather than opening a second ticket. Turn off single-truck mode once the camera reads plates reliably.`,
+        reason: isPickup(t)
+          ? `${t.ticket_number} is an open pickup and ${weight.toFixed(1)} kg is lighter than its ${t.weight_in.toFixed(1)} kg weigh-in, so this is not that truck leaving loaded. Sending it to the operator rather than opening a second ticket.`
+          : `${t.ticket_number} is still open and ${weight.toFixed(1)} kg is heavier than its weigh-in, so this is not that truck leaving. If this truck is PICKING UP material, mark its live ticket Pickup and weigh it out with Connect to Truck on Scale. With one truck at a time this should not otherwise happen — sending it to the operator rather than opening a second ticket.`,
         candidates: open,
       }
     }
     return {
       action: 'new', ticket: null, confidence: 0.95, rule: 'heavier_than_all_open',
-      reason: `At ${weight.toFixed(1)} kg this is heavier than every open weigh-in, so it cannot be any of them weighing out.`,
+      reason: open.some(isPickup)
+        ? `At ${weight.toFixed(1)} kg no open ticket could be weighing out: it is heavier than every drop-off's weigh-in and not heavier than any pickup's, so it is a truck arriving.`
+        : `At ${weight.toFixed(1)} kg this is heavier than every open weigh-in, so it cannot be any of them weighing out.`,
       candidates: none,
     }
   }
 
   const plausible = possible.filter(t => {
-    const net = t.weight_in - weight
+    const net = loadOf(t, weight)
     return net >= minNet && net <= maxNet
   })
 
@@ -629,7 +651,7 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
 
   if (fresh.length === 1) {
     const t = fresh[0]
-    const net = t.weight_in - weight
+    const net = loadOf(t, weight)
     const onlyOne = open.length === 1
 
     // The weight-only path is where the agent is most exposed: with one ticket
@@ -672,7 +694,7 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
     const best = scored[0]
     const runnerUp = scored[1]
     if (best && best.m.score >= minScore && (!runnerUp || best.m.score - runnerUp.m.score >= 0.2)) {
-      const net = best.t.weight_in - weight
+      const net = loadOf(best.t, weight)
       return {
         action: 'close', ticket: best.t,
         // Below a plate match (0.97) on purpose. Appearance narrows the field;
@@ -823,7 +845,7 @@ scaleAgentRoutes.post('/decide', async (c) => {
 
     const { results } = await c.env.DB.prepare(
       `SELECT st.id, st.ticket_number, st.weight_in, st.weight_in_at, st.tire_type,
-              st.customer_id, c.company_name, st.vehicle_plate, st.appearance_in,
+              st.customer_id, c.company_name, st.vehicle_plate, st.appearance_in, st.ticket_type,
               CASE WHEN st.photo_in IS NULL OR st.photo_in = '' THEN 0 ELSE 1 END AS has_photo_in,
               -- Computed in SQLite rather than JS: D1 returns datetimes as
               -- 'YYYY-MM-DD HH:MM:SS' with no zone, which JS Date parses
@@ -849,6 +871,7 @@ scaleAgentRoutes.post('/decide', async (c) => {
       age_hours: Number(r.age_hours),
       plate: r.vehicle_plate,
       appearance: parseAppearance(r.appearance_in),
+      ticket_type: ticketTypeOf(r.ticket_type),
     }))
 
     // The browser may ask before its camera read is back. With nothing open
@@ -874,21 +897,16 @@ scaleAgentRoutes.post('/decide', async (c) => {
     // the number the operator sees is the number they get.
     let preview: any = null
     if (d.action === 'close' && d.ticket) {
-      const net = d.ticket.weight_in - weight
-      const pricing = await c.env.DB.prepare(
-        'SELECT price_per_kg FROM pricing WHERE material_type = ? AND is_active = 1'
-      ).bind(d.ticket.tire_type || s.material || 'mixed').first<any>()
-      const ppk = pricing ? Number(pricing.price_per_kg) : 0.14
-      const subtotal = cents(billableKg(net) * ppk)
-      const tax = cents(subtotal * GST_RATE)
+      const m = await priceTicket(c.env.DB, d.ticket.ticket_type, d.ticket.tire_type || s.material || 'mixed', d.ticket.weight_in, weight)
       preview = {
+        ticket_type: ticketTypeOf(d.ticket.ticket_type),
         weight_in: d.ticket.weight_in,
         weight_out: weight,
-        net_weight: net,
-        price_per_kg: ppk,
-        subtotal,
-        tax_amount: tax,
-        grand_total: cents(subtotal + tax),
+        net_weight: m.net_weight,
+        price_per_kg: m.price_per_kg,
+        subtotal: m.subtotal,
+        tax_amount: m.tax_amount,
+        grand_total: m.grand_total,
       }
     }
 
@@ -1203,10 +1221,11 @@ interface VerifyOutcome { status: 'ok' | 'mismatch' | 'unverifiable'; note: stri
 // read and tested.
 export function verifyVerdict(
   out: { same_vehicle?: string; plate_in?: string; plate_out?: string; plate_confidence?: number; load_change?: string; note?: string },
-  ticket: { weight_in: number; weight_out: number; plate: string | null }
+  ticket: { weight_in: number; weight_out: number; plate: string | null; ticket_type?: string | null }
 ): VerifyOutcome {
   const note = String(out?.note ?? '').trim().slice(0, 300)
-  const net = ticket.weight_in - ticket.weight_out
+  const pickup = ticketTypeOf(ticket.ticket_type) === 'pickup'
+  const net = ticketNet(ticket.ticket_type, ticket.weight_in, ticket.weight_out)
   const flags: string[] = []
 
   if (out?.same_vehicle === 'no') {
@@ -1227,8 +1246,12 @@ export function verifyVerdict(
   // A tire load leaves the yard, so the truck must end up lighter and visibly
   // emptier. "Loaded between" with a positive net means the photos and the
   // scale are telling different stories.
-  if (net > 0 && out?.load_change === 'loaded_between') {
+  // A pickup is the mirror image: it must leave heavier and visibly fuller.
+  if (!pickup && net > 0 && out?.load_change === 'loaded_between') {
     flags.push(`the scale says ${net.toFixed(0)} kg came off, but the truck looks more loaded leaving than arriving`)
+  }
+  if (pickup && net > 0 && out?.load_change === 'unloaded_between') {
+    flags.push(`the scale says ${net.toFixed(0)} kg was picked up, but the truck looks emptier leaving than arriving`)
   }
 
   if (flags.length) {
@@ -1255,7 +1278,7 @@ const VERIFY_PROMPT = [
 
 async function verifyOne(env: Bindings, ticketId: number): Promise<any> {
   const t = await env.DB.prepare(
-    `SELECT id, ticket_number, weight_in, weight_out, vehicle_plate, photo_in, photo_out
+    `SELECT id, ticket_number, weight_in, weight_out, vehicle_plate, photo_in, photo_out, ticket_type
        FROM scale_tickets WHERE id = ?`
   ).bind(ticketId).first<any>()
 
@@ -1307,6 +1330,7 @@ async function verifyOne(env: Bindings, ticketId: number): Promise<any> {
 
   const verdict = verifyVerdict(out, {
     weight_in: Number(t.weight_in), weight_out: Number(t.weight_out), plate: t.vehicle_plate,
+    ticket_type: t.ticket_type,
   })
 
   // Two frames agreeing on a plate the live single-frame read could not get is

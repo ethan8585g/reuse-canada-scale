@@ -5,7 +5,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   return layout('Scale House', employeePageWrapper('scale-house', 'Scale House — Truck Scale', `
 
   <!-- ═══════ BROWSER / SETUP BANNER ═══════ -->
-  <div id="scale-setup-banner" class="hidden mb-4 rounded-xl border-2 p-4 flex items-start gap-3"></div>
+  <div id="scale-setup-banner" style="display:none;" role="region" aria-label="Scale connection help"></div>
 
   <!-- ═══════ WEIGHBRIDGE DISPLAY (dark panel like industrial indicator) ═══════ -->
   <div id="weighbridge-panel" class="mb-6 bg-gray-900 rounded-2xl shadow-lg border border-gray-700 overflow-hidden">
@@ -244,6 +244,20 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     </div>
     <button id="print-failed-retry" onclick="retryFailedPrint()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg btn-press flex-shrink-0"><i class="fas fa-redo mr-1"></i> Reprint</button>
     <button onclick="dismissPrintFailure()" class="text-red-400 hover:text-red-600 flex-shrink-0"><i class="fas fa-times"></i></button>
+  </div>
+
+  <!-- Square status for a pickup's automatic charge. Shown/hidden with an
+       inline display, never the hidden class (Tailwind hidden/flex collide). -->
+  <div id="square-card" class="mb-4 border-2 rounded-xl p-4 items-center gap-3" style="display:none;">
+    <div class="w-10 h-10 bg-white/70 rounded-lg flex items-center justify-center flex-shrink-0"><i id="square-card-icon" class="fas fa-credit-card text-blue-600 text-xl"></i></div>
+    <div class="flex-1 min-w-0">
+      <div id="square-card-title" class="text-sm font-bold text-gray-800"></div>
+      <div id="square-card-msg" class="text-xs text-gray-600 leading-snug"></div>
+    </div>
+    <button id="square-card-cancel" onclick="cancelSquareFromCard()" class="px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-bold rounded-lg btn-press flex-shrink-0">Cancel on terminal</button>
+    <button id="square-card-retry" onclick="retrySquareCard()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg btn-press flex-shrink-0"><i class="fas fa-redo mr-1"></i> Send again</button>
+    <button id="square-card-cash" onclick="cashFromSquareCard()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg btn-press flex-shrink-0"><i class="fas fa-money-bill-wave mr-1"></i> Cash</button>
+    <button onclick="dismissSquareCard()" class="text-gray-400 hover:text-gray-600 flex-shrink-0"><i class="fas fa-times"></i></button>
   </div>
 
   <!-- ═══════ PRINT TRIGGER CARD ═══════ -->
@@ -641,7 +655,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       <!-- Material Pricing -->
       <div class="bg-white rounded-xl shadow-card border border-gray-100">
         <div class="p-3 border-b border-gray-100 flex items-center justify-between">
-          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-tags text-rc-green"></i> Pricing</h3>
+          <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><i class="fas fa-tags text-purple-600"></i> Pickup Prices</h3>
           <button id="btn-manage-pricing" onclick="openPricingModal()" class="hidden text-xs font-semibold text-blue-600 hover:text-blue-700"><i class="fas fa-sliders mr-1"></i>Manage</button>
         </div>
         <div id="pricing-table" class="p-3">
@@ -779,6 +793,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         </div>
         <div class="space-y-4">
           <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Drop-off or pickup?</label>
+            <div id="assign-kind"></div>
+            <div class="text-[10px] text-gray-400 mt-1">Drop-offs are never charged. A pickup is billed at the material's pickup price and sent to the Square Terminal when the truck weighs out.</div>
+          </div>
+          <div>
             <div class="flex items-center justify-between mb-1">
               <label class="block text-sm font-semibold text-gray-700">Customer</label>
               <button type="button" onclick="toggleNewCustomerForm()" id="btn-toggle-new-customer" class="text-xs font-semibold text-blue-600 hover:text-blue-700"><i class="fas fa-plus mr-1"></i>Add new</button>
@@ -821,6 +840,30 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         <div class="mt-6 flex flex-col gap-2">
           <button onclick="submitAssignment()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-check mr-1"></i> <span id="assign-done-label">Done</span></button>
           <button id="assign-unknown-btn" onclick="markUnknownLiveTicket()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl btn-press"><i class="fas fa-user-plus mr-1"></i> New Customer (Live Ticket)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pickup price editor. Stacks above the Assign / ticket windows. -->
+  <div id="pickup-price-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-sm">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-base font-bold text-gray-800"><i class="fas fa-tag mr-2 text-purple-600"></i>Pickup price</h3>
+        <button onclick="closePickupPriceModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-lg"></i></button>
+      </div>
+      <div class="p-5 space-y-3">
+        <div class="text-sm font-semibold text-gray-800" id="pp-material"></div>
+        <div class="text-xs text-gray-500" id="pp-hint"></div>
+        <div class="flex items-center gap-2">
+          <span class="text-gray-500 font-semibold">$</span>
+          <input id="pp-price" type="number" step="0.01" min="0" onkeydown="if(event.key==='Enter')savePickupPrice(false)" class="flex-1 px-3 py-2.5 border border-gray-200 rounded-lg font-mono text-lg focus:border-purple-500 outline-none" placeholder="0.00" />
+          <span class="text-gray-500 text-sm">per kg</span>
+        </div>
+        <div id="pp-error" class="text-xs text-red-600 font-semibold"></div>
+        <div class="flex gap-2 pt-1">
+          <button onclick="savePickupPrice(false)" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 rounded-xl btn-press">Save</button>
+          <button onclick="savePickupPrice(true)" class="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold py-2.5 rounded-xl btn-press" title="Stop selling this material on pickup">Clear</button>
         </div>
       </div>
     </div>
@@ -1869,12 +1912,41 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const icon = kind === 'error' ? 'fa-circle-exclamation' : kind === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info';
     el.className = 'mb-4 rounded-xl border-2 p-4 flex items-start gap-3 ' + palette;
     el.innerHTML = '<i class="fas ' + icon + ' text-xl mt-0.5"></i>' +
-      '<div class="flex-1"><div class="font-bold text-sm mb-0.5">' + title + '</div>' +
+      '<div class="flex-1 min-w-0"><div class="font-bold text-sm mb-0.5">' + title + '</div>' +
       '<div class="text-xs leading-relaxed">' + body + '</div></div>' +
-      '<button onclick="hideSetupBanner()" class="opacity-60 hover:opacity-100 text-sm"><i class="fas fa-times"></i></button>';
-    el.classList.remove('hidden');
+      '<button type="button" onclick="hideSetupBanner()" aria-label="Dismiss scale connection notice" class="opacity-60 hover:opacity-100 text-sm p-1"><i class="fas fa-times"></i></button>';
+    el.style.display = 'flex';
   }
-  function hideSetupBanner() { document.getElementById('scale-setup-banner')?.classList.add('hidden'); }
+  function hideSetupBanner() {
+    const el = document.getElementById('scale-setup-banner');
+    if (el) el.style.display = 'none';
+  }
+
+  function showBridgeSetup(browser) {
+    showSetupBanner('info', 'Connect your scale',
+      '<p class="text-sm text-slate-600">' + (browser
+        ? 'To see live weights in ' + browser + ', start Scale Bridge on this Mac.'
+        : 'Scale Bridge could not be reached. Start it on this Mac to reconnect.') +
+      ' Scale Bridge links your scale to this page.</p>' +
+      '<div class="mt-3 flex flex-wrap items-center gap-3">' +
+      '<button type="button" onclick="connectBridge()" class="inline-flex items-center gap-2 rounded-lg bg-rc-green px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">' +
+      '<i class="fas fa-plug" aria-hidden="true"></i>Connect to scale</button>' +
+      '<span class="text-xs text-slate-500">Already started Scale Bridge? Connect here.</span></div>' +
+      '<details class="mt-4 border-t border-slate-200 pt-3">' +
+      '<summary class="cursor-pointer text-sm font-semibold text-slate-700 py-1">How to start Scale Bridge</summary>' +
+      '<ol class="mt-3 list-decimal pl-5 space-y-2 text-sm text-slate-600">' +
+      '<li>Open <b>Terminal</b> on this Mac and go to the <b>reuse-canada-scale</b> project folder.</li>' +
+      '<li>Enter this command and press <b>Return</b>:' +
+      '<code class="block w-fit max-w-full overflow-x-auto mt-2 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-800 select-all">node scale-bridge.js</code></li>' +
+      '<li>Keep Terminal open, then select <b>Connect to scale</b> above.</li></ol>' +
+      '<p class="mt-3 text-xs text-slate-500">While Scale Bridge is running, this page reconnects automatically when you reload it. If you need help finding the project folder, ask the person who set up this scale station.</p></details>');
+    const el = document.getElementById('scale-setup-banner');
+    if (el) {
+      el.className = 'mb-4 rounded-xl border border-slate-200 bg-white p-5 flex items-start gap-3 text-slate-800 shadow-sm';
+      const icon = el.querySelector(':scope > i');
+      if (icon) icon.className = 'fas fa-plug text-rc-green text-lg mt-0.5';
+    }
+  }
 
   // ─── LOCAL BRIDGE (works in ANY browser) ───
   async function probeBridge(timeoutMs) {
@@ -1904,10 +1976,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const status = await probeBridge();
     if (!status) {
       updateScaleUI('disconnected');
-      showSetupBanner('warn', 'Scale Bridge not running on this Mac',
-        'Open <b>Terminal</b>, <span class="font-mono bg-black/10 px-1 rounded">cd</span> into the project folder, and run:<br>' +
-        '<div class="font-mono bg-black/10 px-2 py-1 mt-1 inline-block rounded text-xs">node scale-bridge.js</div><br>' +
-        'Leave that window open. Then click the <b>Bridge</b> button again. Once it\\'s running, the page will auto-connect on every reload — and works in <b>any browser</b> (Safari included).');
+      showBridgeSetup();
       return;
     }
     await pushBridgeCfg();
@@ -1965,10 +2034,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     if (!SUPPORTS_WEB_SERIAL) {
       const browser = IS_SAFARI ? 'Safari' : (/firefox/i.test(UA) ? 'Firefox' : 'this browser');
-      showSetupBanner('warn', 'To use ' + browser + ', start the Scale Bridge',
-        browser + ' cannot read USB-serial devices directly. To make Scale House work in <b>any</b> browser, run a one-line bridge on this Mac:<br>' +
-        '<div class="font-mono bg-black/10 px-2 py-1 mt-2 mb-1 inline-block rounded text-xs">node scale-bridge.js</div><br>' +
-        '(Open Terminal, <span class="font-mono">cd</span> into the project folder, paste that, hit Enter. Leave the window open.) Then click the green <b>Bridge</b> button above. The page will auto-connect on every future reload.');
+      showBridgeSetup(browser);
       return;
     }
     // Auto-reopen a previously-authorized USB port (no picker needed).
@@ -2746,8 +2812,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     centre('Waste-to-Value Recycling · Alberta', 7);
     centre('www.reusecanadascale.com', 7);
     y += 1; rule();
+    const pickup = receiptIsPickup(receipt);
     centre('SCALE TICKET', 10, true);
     centre(receipt.ticket_number || '', 10, true);
+    centre(pickup ? 'PICKUP' : 'DROP-OFF', 9, true);
     y += 1; rule();
 
     const when = receipt.date ? new Date(receipt.date) : null;
@@ -2769,33 +2837,45 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
     y += 1; rule();
 
-    row('Gross (in)', kg(receipt.weight_in));
-    row('Tare (out)', kg(receipt.weight_out));
-    row('TOTAL DROPPED', kg(receipt.net_weight), 10, true);
+    if (pickup) {
+      row('Empty (in)', kg(receipt.weight_in));
+      row('Loaded (out)', kg(receipt.weight_out));
+      row('TOTAL PICKED UP', kg(receipt.net_weight), 10, true);
+    } else {
+      row('Gross (in)', kg(receipt.weight_in));
+      row('Tare (out)', kg(receipt.weight_out));
+      row('TOTAL DROPPED', kg(receipt.net_weight), 10, true);
+    }
     y += 1; rule();
 
-    row('Rate', '$' + (Number(receipt.price_per_kg) || 0).toFixed(2) + '/kg');
-    row('Subtotal', money(receipt.subtotal));
-    row('GST (5%)', money(receipt.tax_amount));
-    y += 1; rule();
-    row('TOTAL', money(receipt.grand_total) + ' CAD', 11, true);
+    if (pickup) {
+      row('Rate', '$' + (Number(receipt.price_per_kg) || 0).toFixed(2) + '/kg');
+      row('Subtotal', money(receipt.subtotal));
+      row('GST (5%)', money(receipt.tax_amount));
+      y += 1; rule();
+      row('TOTAL', money(receipt.grand_total) + ' CAD', 11, true);
+      if (receipt.payment_status === 'paid' && receipt.payment_method) row('Paid by', String(receipt.payment_method));
+    } else {
+      centre('NO CHARGE - DROP-OFF', 10, true);
+    }
     y += 1; rule();
 
-    // The arrival frame, same choice as every other receipt path: it shows the
-    // truck loaded, which is what the weight is evidence of.
-    if (receiptPhotosEnabled() && receipt.photo_in) {
+    // Whichever frame shows the truck loaded, same choice as every other
+    // receipt path: that is what the weight is evidence of.
+    const loadedPhoto = receiptLoadedPhoto(receipt);
+    if (receiptPhotosEnabled() && loadedPhoto) {
       try {
         const dims = await new Promise(function (resolve, reject) {
           const i = new Image();
           i.onload = function () { resolve({ w: i.width, h: i.height }); };
           i.onerror = function () { reject(new Error('photo decode failed')); };
-          i.src = receipt.photo_in;
+          i.src = loadedPhoto;
         });
         const iw = W - M * 2;
         const ih = Math.round(dims.h * (iw / dims.w));
         d.setFont('courier', 'normal'); d.setFontSize(6);
-        d.text('TRUCK AT WEIGH-IN', W / 2, y, { align: 'center' }); y += 2.5;
-        d.addImage(receipt.photo_in, 'JPEG', M, y, iw, ih);
+        d.text(receiptPhotoLabel(receipt), W / 2, y, { align: 'center' }); y += 2.5;
+        d.addImage(loadedPhoto, 'JPEG', M, y, iw, ih);
         y += ih + 2;
       } catch (e) {
         agentLog('receipt photo skipped: ' + e.message);
@@ -2948,7 +3028,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   async function receiptImages(receipt) {
     if (!receiptPhotosEnabled()) return [];
     const want = [
-      { label: 'TRUCK AT WEIGH-IN', src: receipt.photo_in },
+      { label: receiptPhotoLabel(receipt), src: receiptLoadedPhoto(receipt) },
     ].filter(function (x) { return !!x.src; });
     const out = [];
     for (const w of want) {
@@ -3273,10 +3353,12 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       date: new Date().toISOString(),
       customer: 'Test Customer',
       material: 'mixed',
+      // A pickup, because that is the layout with every line on it.
+      ticket_type: 'pickup',
       vehicle_plate: 'TEST123',
       appearance_in: JSON.stringify({ body: 'sedan', color: 'white', markings: '', confidence: 1 }),
-      weight_in: 12000,
-      weight_out: 8000,
+      weight_in: 8000,
+      weight_out: 12000,
       net_weight: 4000,
       price_per_kg: 0.14,
       subtotal: 560.00,
@@ -3308,9 +3390,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // only collecting who it belonged to. The weight controls must be hidden in
   // that case: merge-out on a completed ticket 409s, so leaving the "use live
   // scale weight" button visible would offer the operator a guaranteed error.
-  function openAssignModal(ticketId, ticketNum, weightIn, closedSummary) {
+  function openAssignModal(ticketId, ticketNum, weightIn, closedSummary, kind) {
     const closed = !!closedSummary;
     document.getElementById('assign-ticket-id').value = ticketId;
+    if (!kind) { const ot = openTickets.find(function (x) { return x.id === Number(ticketId); }); kind = ticketKind(ot); }
+    document.getElementById('assign-kind').innerHTML = ticketKindToggle(Number(ticketId), kind);
     document.getElementById('assign-ticket-num').textContent = ticketNum;
     document.getElementById('assign-weight-in').textContent = parseFloat(weightIn).toLocaleString('en-CA', {minimumFractionDigits:1});
 
@@ -3325,8 +3409,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (closed) {
       document.getElementById('assign-closed-net').textContent =
         Number(closedSummary.net).toLocaleString('en-CA', {minimumFractionDigits:1, maximumFractionDigits:1});
-      document.getElementById('assign-closed-total').textContent =
-        '$' + Number(closedSummary.total || 0).toFixed(2);
+      document.getElementById('assign-closed-total').textContent = kind === 'pickup'
+        ? '$' + Number(closedSummary.total || 0).toFixed(2)
+        : 'No charge (drop-off)';
     }
 
     loadCustomerDropdown('assign-customer');
@@ -3465,6 +3550,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       closeAssignModal();
       loadTicketDetail(ticketId);
       loadOpenTickets(); loadCompletedToday(); loadStats();
+      autoChargeSquare(Number(ticketId));
       autoPrintReceipt(ticketId);
     } catch (err) {
       alert(err.response?.data?.error || 'Failed');
@@ -3490,17 +3576,23 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const ticket = openTickets.find(t => t.id === ticketId);
     if (!ticket) return;
     pendingMergeTicketId = ticketId; pendingMergeTicket = ticket;
-    const weightOut = lastPrintWeight, netWeight = Math.abs((ticket.weight_in||0) - weightOut);
+    // Same formula as merge-out (utils/ticketPricing.ts): a drop-off is
+    // weight in minus out and never billed; a pickup is out minus in at the
+    // material's pickup price. Signed, so a wrong-way reading shows as such.
+    const pickup = ticketKind(ticket) === 'pickup';
+    const weightOut = lastPrintWeight;
+    const netWeight = pickup ? weightOut - (ticket.weight_in||0) : (ticket.weight_in||0) - weightOut;
     const pm = pricingData.find(p => p.material_type === (ticket.tire_type||'mixed'));
-    const ppk = pm ? parseFloat(pm.price_per_kg) : 0.14;
-    const total = netWeight * ppk * 1.05;
+    const ppk = pickup && pm && pm.pickup_price_per_kg !== null && pm.pickup_price_per_kg !== undefined ? parseFloat(pm.pickup_price_per_kg) : 0;
+    const sub = Math.round(Math.max(0, netWeight) * ppk * 100) / 100;
+    const total = sub + Math.round(sub * 5) / 100;
     document.getElementById('mc-ticket-num').textContent = ticket.ticket_number;
     document.getElementById('mc-customer').textContent = ticket.company_name || 'Unassigned';
     document.getElementById('mc-material').textContent = getMaterialLabel(ticket.tire_type);
     document.getElementById('mc-weight-in').textContent = parseFloat(ticket.weight_in).toLocaleString('en-CA',{minimumFractionDigits:1});
     document.getElementById('mc-weight-out').textContent = weightOut.toLocaleString('en-CA',{minimumFractionDigits:1});
     document.getElementById('mc-net').textContent = netWeight.toLocaleString('en-CA',{minimumFractionDigits:1}) + ' kg';
-    document.getElementById('mc-total').textContent = '$' + total.toFixed(2);
+    document.getElementById('mc-total').textContent = pickup ? '$' + total.toFixed(2) + ' · Pickup' : 'No charge · Drop-off';
     // Update weighbridge display
     document.getElementById('display-tare').textContent = weightOut.toLocaleString('en-CA',{maximumFractionDigits:0});
     document.getElementById('display-gross').textContent = parseFloat(ticket.weight_in).toLocaleString('en-CA',{maximumFractionDigits:0});
@@ -3514,7 +3606,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     try {
       const photo = autoCapturePhoto('weigh-out');
       const res = await axios.post('/api/scale-tickets/' + pendingMergeTicketId + '/merge-out', { weight: lastPrintWeight, photo: photo || null });
-      loadTicketDetail(pendingMergeTicketId); autoPrintReceipt(pendingMergeTicketId);
+      loadTicketDetail(pendingMergeTicketId); autoChargeSquare(pendingMergeTicketId); autoPrintReceipt(pendingMergeTicketId);
       loadOpenTickets(); loadCompletedToday(); loadStats();
       pendingMergeTicketId = null; pendingMergeTicket = null;
       // Reset weighbridge display
@@ -3888,12 +3980,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const p = d.preview;
       document.getElementById('agent-banner-ticket').textContent = d.ticket.ticket_number;
       document.getElementById('agent-banner-customer').textContent = d.ticket.company_name || 'Unassigned walk-in';
+      const pickup = ticketKind(d.ticket) === 'pickup';
       rows.innerHTML =
         (d.plate ? agentRow('Plate', d.plate, false) : '') +
-        agentRow('Gross (in)', agentKg(p ? p.weight_in : d.ticket.weight_in), false) +
-        agentRow('Tare (out)', agentKg(weight), false) +
-        agentRow('Net', agentKg(p ? p.net_weight : (d.ticket.weight_in - weight)), true) +
-        (p ? agentRow('Total', '$' + Number(p.grand_total).toFixed(2) + ' CAD', true) : '');
+        agentRow(pickup ? 'Empty (in)' : 'Gross (in)', agentKg(p ? p.weight_in : d.ticket.weight_in), false) +
+        agentRow(pickup ? 'Loaded (out)' : 'Tare (out)', agentKg(weight), false) +
+        agentRow(pickup ? 'Picked up' : 'Net', agentKg(p ? p.net_weight : (pickup ? weight - d.ticket.weight_in : d.ticket.weight_in - weight)), true) +
+        (pickup
+          ? (p ? agentRow('Total', '$' + Number(p.grand_total).toFixed(2) + ' CAD · to Square', true) : '')
+          : agentRow('Total', 'No charge · drop-off', true));
     } else {
       document.getElementById('agent-banner-ticket').textContent = 'New load';
       document.getElementById('agent-banner-customer').textContent = 'Attach the customer once the truck has tipped';
@@ -4006,6 +4101,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         });
         agentLog('closed ' + d.ticket.ticket_number + ' net ' + (d.preview ? Number(d.preview.net_weight).toFixed(1) : '?') + ' kg');
         await agentReport(d.decision_id, 'acted', d.ticket.id);
+        // A pickup's bill goes to the Square Terminal now, in the background:
+        // the customer can tap while the receipt prints. A drop-off returns
+        // from this without doing anything.
+        autoChargeSquare(d.ticket.id);
         // AWAIT the print, and do it before anything else touches the DOM.
         // This was fire-and-forget, so window.print() fired from a
         // continuation while loadTicketDetail() was mid-render and -- in
@@ -4022,9 +4121,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         // the yard runs fully unattended, in which case the ticket stays on
         // the walk-in sentinel and is attributed later from Ticket History.
         if (!agentSettings || agentSettings.customer_prompt !== 'off') {
-          const net = d.preview ? Number(d.preview.net_weight) : ((d.ticket.weight_in || 0) - p.weight);
+          const net = d.preview ? Number(d.preview.net_weight)
+            : (ticketKind(d.ticket) === 'pickup' ? p.weight - (d.ticket.weight_in || 0) : (d.ticket.weight_in || 0) - p.weight);
           const total = d.preview ? Number(d.preview.grand_total) : 0;
-          openAssignModal(d.ticket.id, d.ticket.ticket_number, d.ticket.weight_in, { net: net, total: total });
+          openAssignModal(d.ticket.id, d.ticket.ticket_number, d.ticket.weight_in, { net: net, total: total }, ticketKind(d.ticket));
         }
       }
       done = true;
@@ -4141,7 +4241,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       grid.innerHTML = '<div class="space-y-2">' + openTickets.map(t => {
         const isUn = !t.customer_id || t.customer_id === 0;
         return '<div class="flex items-center justify-between p-3 rounded-lg border ' + (isUn ? 'border-amber-200 bg-amber-50/50' : 'border-gray-100 bg-white') + ' hover:shadow-sm transition-all">' +
-          '<div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="font-mono text-xs font-bold text-rc-green">' + escHtml(t.ticket_number) + '</span>' + (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px]"></i>' : '') + '<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ' + (isUn ? 'bg-amber-200 text-amber-800' : 'bg-blue-100 text-blue-700') + '">' + (isUn ? 'UNASSIGNED' : 'IN YARD') + '</span></div><div class="text-xs text-gray-500 truncate mt-0.5">' + escHtml(t.company_name || 'No customer') + ' &middot; ' + escHtml(getMaterialLabel(t.tire_type)) + '</div></div>' +
+          '<div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="font-mono text-xs font-bold text-rc-green">' + escHtml(t.ticket_number) + '</span>' + (t.photo_in ? '<i class="fas fa-camera text-green-400 text-[10px]"></i>' : '') + '<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ' + (isUn ? 'bg-amber-200 text-amber-800' : 'bg-blue-100 text-blue-700') + '">' + (isUn ? 'UNASSIGNED' : 'IN YARD') + '</span>' + ticketKindChip(t) + '</div><div class="text-xs text-gray-500 truncate mt-0.5">' + escHtml(t.company_name || 'No customer') + ' &middot; ' + escHtml(getMaterialLabel(t.tire_type)) + '</div></div>' +
           '<div class="flex items-center gap-2 flex-shrink-0"><div class="text-right"><div class="text-sm font-mono font-bold">' + (t.weight_in ? parseFloat(t.weight_in).toLocaleString('en-CA',{minimumFractionDigits:0}) + ' kg' : '—') + '</div><div class="text-[10px] text-gray-400">' + timeAgo(t.weight_in_at||t.created_at) + '</div></div>' +
           '<button onclick="openAssignModal(' + t.id + ',\\'' + (t.ticket_number || '').replace(/[\\\\\'"<>]/g,'') + '\\',' + (t.weight_in||0) + ')" class="px-2 py-1 ' + (isUn ? 'bg-amber-500 text-white' : 'bg-blue-100 text-blue-700') + ' text-[10px] font-bold rounded hover:opacity-80 btn-press"><i class="fas fa-' + (isUn ? 'user-tag' : 'edit') + '"></i></button>' +
           '<button onclick="openVoidModal(' + t.id + ',\\'' + (t.ticket_number || '').replace(/[\\\\\'"<>]/g,'') + '\\')" class="px-2 py-1 bg-red-100 text-red-600 text-[10px] rounded hover:bg-red-200 btn-press"><i class="fas fa-ban"></i></button></div></div>';
@@ -4226,14 +4326,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const liveSeq = idx + 1; // #1 = oldest active ticket in the yard
       const header =
         '<div class="live-card-drag-handle bg-gradient-to-r from-rc-green to-emerald-600 text-white px-4 py-3 select-none flex items-center justify-between" style="cursor:move;" data-drag-handle="1">' +
-          '<div class="font-bold text-base flex items-center gap-2"><i class="fas fa-grip-vertical opacity-60"></i> Live Ticket <span class="font-mono">#' + liveSeq + '</span></div>' +
+          '<div class="font-bold text-base flex items-center gap-2"><i class="fas fa-grip-vertical opacity-60"></i> Live Ticket <span class="font-mono">#' + liveSeq + '</span>' + (ticketKind(t) === 'pickup' ? '<span class="px-1.5 py-0.5 rounded bg-white/90 text-purple-700 text-[10px] font-bold">PICKUP</span>' : '') + '</div>' +
           '<div class="flex items-center gap-1">' +
             '<button title="' + (collapsed ? 'Expand' : 'Minimize') + '" onclick="event.stopPropagation();toggleLiveCardCollapse(' + t.id + ')" class="text-white/80 hover:text-white px-1.5 py-0.5"><i class="fas fa-' + (collapsed ? 'plus' : 'minus') + ' text-xs"></i></button>' +
           '</div>' +
         '</div>';
 
       if (collapsed) {
-        card.innerHTML = header + '<div class="px-4 py-2 text-xs text-gray-600 flex justify-between items-center bg-gray-50"><span class="font-mono font-bold">' + parseFloat(t.weight_in||0).toLocaleString('en-CA',{minimumFractionDigits:0}) + ' kg</span><span>' + escHtml(matLabel) + '</span><span class="text-gray-400">' + timeIn + '</span></div>';
+        card.innerHTML = header + '<div class="px-4 py-2 text-xs text-gray-600 flex justify-between items-center bg-gray-50"><span class="font-mono font-bold">' + parseFloat(t.weight_in||0).toLocaleString('en-CA',{minimumFractionDigits:0}) + ' kg</span><span>' + escHtml(matLabel) + '</span>' + (ticketKind(t) === 'pickup' ? ticketKindChip(t) : '') + '<span class="text-gray-400">' + timeIn + '</span></div>';
         return;
       }
 
@@ -4254,6 +4354,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           (isUn
             ? '<div class="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between gap-2"><span><i class="fas fa-circle-exclamation mr-1"></i>Unknown customer</span><button onclick="openAssignModal(' + t.id + ',\\'' + safeNum + '\\',' + (t.weight_in||0) + ')" class="underline font-bold whitespace-nowrap">Assign</button></div>'
             : '<div class="mb-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 truncate"><i class="fas fa-building mr-1"></i>' + escHtml(t.company_name||'Walk-in') + '</div>') +
+          '<div class="mb-3">' + ticketKindToggle(t.id, ticketKind(t)) + '</div>' +
           '<button onclick="connectToTruckOnScale(' + t.id + ')" class="w-full bg-rc-orange hover:bg-rc-orange-light text-white font-bold py-3 rounded-xl btn-press flex items-center justify-center gap-2 mb-2 text-sm"><i class="fas fa-truck"></i> Connect to Truck on Scale</button>' +
           '<div class="flex gap-2">' +
             '<button onclick="loadTicketDetail(' + t.id + ')" class="flex-1 px-2 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg"><i class="fas fa-eye mr-1"></i>View</button>' +
@@ -4499,6 +4600,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
               + '<span class="font-mono text-[11px] font-bold text-rc-green">' + escHtml(t.ticket_number) + '</span>'
               + (t.has_photo_in ? '<i class="fas fa-camera text-green-400 text-[9px]" title="Weigh-in photo"></i>' : '')
               + (t.has_photo_out ? '<i class="fas fa-camera text-green-600 text-[9px]" title="Weigh-out photo"></i>' : '')
+              + (ticketKind(t) === 'pickup' ? ticketKindChip(t) : '')
+              + (ticketKind(t) === 'pickup' && t.status === 'completed' && Number(t.grand_total) > 0
+                  ? (t.payment_status === 'paid' ? '<span class="text-[9px] font-bold text-green-600">PAID</span>' : '<span class="text-[9px] font-bold text-amber-600">UNPAID</span>')
+                  : '')
               + '<span class="text-[10px] text-gray-400 ml-auto">' + stamp + '</span>'
             + '</div>'
             + '<div class="text-[11px] text-gray-600 truncate">' + escHtml(t.company_name || 'Walk-in') + '</div>'
@@ -4554,7 +4659,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const res = await axios.get('/api/scale-tickets/' + id);
       const t = res.data.ticket, auditTrail = res.data.audit_trail || [];
       document.getElementById('detail-ticket-num').textContent = t.ticket_number;
+      detailTicketId = t.id;
       const netW = t.net_weight || 0;
+      const pickup = ticketKind(t) === 'pickup';
+      const settled = t.payment_status === 'paid' || t.payment_status === 'pending';
       let photosHtml = '', auditHtml = '', voidInfo = '', editBtn = '';
 
       // Each photo is captioned with what the agent read off it, so the
@@ -4599,7 +4707,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       if (auditTrail.length > 0) {
         auditHtml = '<div class="mt-4"><div class="text-xs font-bold text-gray-500 uppercase mb-2">Audit Trail</div><div class="space-y-1 max-h-32 overflow-y-auto">' + auditTrail.map(a => {
           const ts = new Date(a.created_at).toLocaleString('en-CA',{hour:'2-digit',minute:'2-digit',month:'short',day:'numeric'});
-          const icon = {created:'plus-circle',weighed_in:'arrow-down',weighed_out:'arrow-up',assigned:'user-tag',voided:'ban',payment:'credit-card',receipt_printed:'print',weight_edited:'edit'}[a.action]||'circle';
+          const icon = {created:'plus-circle',weighed_in:'arrow-down',weighed_out:'arrow-up',assigned:'user-tag',voided:'ban',payment:'credit-card',receipt_printed:'print',weight_edited:'edit',type_changed:'right-left',repriced:'tag'}[a.action]||'circle';
           return '<div class="flex items-center gap-2 text-xs text-gray-500"><i class="fas fa-'+icon+' w-4 text-center"></i><span>'+a.action.replace(/_/g,' ')+'</span><span class="text-gray-400">'+(a.employee_name||'')+'</span><span class="ml-auto text-gray-400">'+ts+'</span></div>';
         }).join('') + '</div></div>';
       }
@@ -4608,10 +4716,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
       document.getElementById('detail-body').innerHTML =
         '<div class="space-y-4">' + voidInfo + photosHtml +
-        '<div class="bg-gray-50 rounded-xl p-4 space-y-2"><div class="flex justify-between text-sm"><span class="text-gray-500">Customer</span><span class="font-semibold">'+escHtml(t.company_name||'Walk-in')+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Material</span><span class="font-semibold">'+escHtml(getMaterialLabel(t.tire_type))+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Status</span><span class="font-bold '+(t.status==='voided'?'text-red-600':'text-green-600')+'">'+escHtml((t.status||'').replace(/_/g,' ').toUpperCase())+'</span></div>'+(t.vehicle_tare_used?'<div class="flex justify-between text-sm"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>':'')+'</div>' +
-        '<div class="grid grid-cols-3 gap-3"><div class="bg-indigo-50 rounded-xl p-3 text-center"><div class="text-xs text-indigo-500 font-semibold">GROSS</div><div class="text-lg font-bold font-mono text-indigo-700">'+(t.weight_in?parseFloat(t.weight_in).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-orange-50 rounded-xl p-3 text-center"><div class="text-xs text-orange-500 font-semibold">TARE</div><div class="text-lg font-bold font-mono text-orange-700">'+(t.weight_out?parseFloat(t.weight_out).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-xs text-green-500 font-semibold">NET</div><div class="text-lg font-bold font-mono text-green-700">'+parseFloat(netW).toLocaleString('en-CA',{minimumFractionDigits:1})+' kg</div></div></div>' +
+        '<div class="bg-gray-50 rounded-xl p-4 space-y-2"><div class="flex justify-between text-sm"><span class="text-gray-500">Customer</span><span class="font-semibold">'+escHtml(t.company_name||'Walk-in')+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Material</span><span class="font-semibold">'+escHtml(getMaterialLabel(t.tire_type))+'</span></div><div class="flex justify-between items-center text-sm"><span class="text-gray-500">Type</span>'+(t.status !== 'voided' && !settled ? '<div class="w-56">'+ticketKindToggle(t.id, ticketKind(t))+'</div>' : ticketKindChip(t))+'</div>'+(t.payment_status === 'paid' ? '<div class="flex justify-between text-sm"><span class="text-gray-500">Payment</span><span class="font-semibold text-green-600">PAID'+(t.payment_method ? ' · '+escHtml(t.payment_method) : '')+'</span></div>' : t.payment_status === 'pending' ? '<div class="flex justify-between text-sm"><span class="text-gray-500">Payment</span><span class="font-semibold text-blue-600">On the Square Terminal</span></div>' : '')+'<div class="flex justify-between text-sm"><span class="text-gray-500">Status</span><span class="font-bold '+(t.status==='voided'?'text-red-600':'text-green-600')+'">'+escHtml((t.status||'').replace(/_/g,' ').toUpperCase())+'</span></div>'+(t.vehicle_tare_used?'<div class="flex justify-between text-sm"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>':'')+'</div>' +
+        '<div class="grid grid-cols-3 gap-3"><div class="bg-indigo-50 rounded-xl p-3 text-center"><div class="text-xs text-indigo-500 font-semibold">'+(pickup ? 'IN (EMPTY)' : 'GROSS')+'</div><div class="text-lg font-bold font-mono text-indigo-700">'+(t.weight_in?parseFloat(t.weight_in).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-orange-50 rounded-xl p-3 text-center"><div class="text-xs text-orange-500 font-semibold">'+(pickup ? 'OUT (LOADED)' : 'TARE')+'</div><div class="text-lg font-bold font-mono text-orange-700">'+(t.weight_out?parseFloat(t.weight_out).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-xs text-green-500 font-semibold">NET</div><div class="text-lg font-bold font-mono text-green-700">'+parseFloat(netW).toLocaleString('en-CA',{minimumFractionDigits:1})+' kg</div></div></div>' +
+        (!pickup && t.status === 'completed' ? '<div class="bg-gray-50 rounded-xl p-3 text-center text-sm font-semibold text-gray-600"><i class="fas fa-circle-check mr-1 text-gray-400"></i>Drop-off · no charge</div>' : '') +
         (t.grand_total ? '<div class="bg-gradient-to-r from-rc-green/10 to-green-50 rounded-xl p-4"><div class="grid grid-cols-2 gap-2 text-sm"><div class="flex justify-between"><span class="text-gray-500">Rate</span><span class="font-mono">$'+parseFloat(t.price_per_kg||0).toFixed(2)+'/kg</span></div><div class="flex justify-between"><span class="text-gray-500">Subtotal</span><span class="font-mono">$'+parseFloat(t.total_amount||0).toFixed(2)+'</span></div><div class="flex justify-between"><span class="text-gray-500">GST 5%</span><span class="font-mono">$'+parseFloat(t.tax_amount||0).toFixed(2)+'</span></div><div class="flex justify-between border-t pt-1"><span class="font-bold">TOTAL</span><span class="font-bold text-lg text-rc-green font-mono">$'+parseFloat(t.grand_total).toFixed(2)+'</span></div></div></div>' : '') +
-        (t.status === 'completed' ? '<div class="flex gap-3"><button onclick="sendToSquare('+t.id+')" class="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-credit-card"></i> Square</button><button onclick="recordCash('+t.id+')" class="px-4 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-money-bill-wave"></i> Cash</button><button onclick="printReceipt('+t.id+')" class="px-4 py-3 bg-gray-700 text-white font-bold rounded-xl hover:bg-gray-800 btn-press flex items-center justify-center gap-2"><i class="fas fa-print"></i></button>'+editBtn+'</div>' : '') +
+        // Square and Cash only for a pickup that still owes money: a drop-off
+        // has no bill, and a paid one has nothing left to take.
+        (t.status === 'completed' ? '<div class="flex gap-3">'+(pickup && Number(t.grand_total) > 0 && t.payment_status !== 'paid' ? '<button onclick="sendToSquare('+t.id+')" class="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-credit-card"></i> Square</button><button onclick="recordCash('+t.id+')" class="px-4 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 btn-press flex items-center justify-center gap-2"><i class="fas fa-money-bill-wave"></i> Cash</button>' : '')+'<button onclick="printReceipt('+t.id+')" class="px-4 py-3 bg-gray-700 text-white font-bold rounded-xl hover:bg-gray-800 btn-press flex items-center justify-center gap-2"><i class="fas fa-print"></i></button>'+editBtn+'</div>' : '') +
         auditHtml + '</div>';
       openModal('detail-modal');
     } catch(err) { alert('Failed to load ticket'); }
@@ -4675,12 +4786,28 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     } catch(err) {}
   }
 
+  // The sidebar shows PICKUP prices -- the only prices that bill anybody at
+  // this scale now -- and every row is editable by the operator.
+  function renderPricingPanel() {
+    const div = document.getElementById('pricing-table');
+    if (!div) return;
+    if (!pricingData.length) { div.innerHTML = '<div class="text-center text-gray-400 text-xs">No materials</div>'; return; }
+    div.innerHTML = '<div class="text-[10px] text-gray-400 mb-1.5 leading-snug">Pickup price per kg + GST. Drop-offs are never charged.</div>'
+      + '<div class="space-y-0.5">' + pricingData.map(function (p) {
+        const set = p.pickup_price_per_kg !== null && p.pickup_price_per_kg !== undefined;
+        return '<button type="button" onclick="openPickupPriceModal(&quot;' + escHtml(p.material_type) + '&quot;)" class="w-full flex items-center justify-between text-xs py-1.5 px-1 rounded hover:bg-purple-50 border-b border-gray-50 last:border-0 text-left">'
+          + '<span class="text-gray-600">' + escHtml(getMaterialLabel(p.material_type)) + '</span>'
+          + (set
+            ? '<span class="font-mono font-semibold text-gray-800">$' + Number(p.pickup_price_per_kg).toFixed(2) + '/kg <i class="fas fa-pen text-[9px] text-gray-300 ml-1"></i></span>'
+            : '<span class="text-[10px] text-purple-600 font-semibold">Set price <i class="fas fa-pen text-[9px] ml-1"></i></span>')
+          + '</button>';
+      }).join('') + '</div>';
+  }
+
   async function loadPricing() {
     try {
       const res = await axios.get('/api/pricing'); pricingData = res.data.pricing || [];
-      const div = document.getElementById('pricing-table');
-      if (!pricingData.length) { div.innerHTML = '<div class="text-center text-gray-400 text-xs">No pricing</div>'; }
-      else div.innerHTML = '<div class="space-y-1">' + pricingData.map(p => '<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span class="text-gray-600">'+escHtml(getMaterialLabel(p.material_type))+'</span><span class="font-mono font-semibold text-gray-800">$'+parseFloat(p.price_per_kg).toFixed(2)+'/kg</span></div>').join('') + '</div>';
+      renderPricingPanel();
       // Keep ticket-creation dropdowns in sync with the current material list.
       refreshMaterialDropdowns();
     } catch(err) {}
@@ -4825,58 +4952,263 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     finally { hideLoading(); }
   }
 
-  // Payments. After dispatching to Square Terminal we poll the checkout
-  // until it resolves to COMPLETED/CANCELED/CANCEL_REQUESTED, with a 90s
-  // overall timeout — otherwise the operator has no signal whether the tap
-  // succeeded.
-  async function sendToSquare(ticketId) {
-    try {
-      const res = await axios.get('/api/scale-tickets/'+ticketId);
-      const t = res.data.ticket, total = parseFloat(t.grand_total)||0;
-      if (total <= 0) { alert('No amount'); return; }
-      showLoading('Sending to Square...');
-      const sqRes = await axios.post('/api/square/terminal-checkout', { amount_cents: Math.round(total*100), ticket_number: t.ticket_number, customer_name: t.company_name||'Walk-in', note: 'Scale Ticket '+t.ticket_number });
-      if (!sqRes.data.success) { hideLoading(); alert('Square failed to accept the checkout'); return; }
-      const checkoutId = sqRes.data.checkout_id;
-      await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'pending', payment_method:'card', square_checkout_id: checkoutId });
-
-      const result = await pollSquareCheckout(checkoutId, total);
-      hideLoading();
-      if (result.status === 'COMPLETED') {
-        const paymentId = (result.payment_ids && result.payment_ids[0]) || null;
-        await axios.post('/api/scale-tickets/'+ticketId+'/payment', { payment_status:'paid', payment_method:'card', square_checkout_id: checkoutId, square_payment_id: paymentId });
-        // Deliberately NO print here. The receipt is printed once, when the
-        // truck weighs out and leaves -- payment is taken seconds later at the
-        // same window, so printing again just hands the driver a second copy of
-        // a ticket they are already holding. The Print button on the ticket is
-        // still there when somebody actually wants another one.
-        closeDetailModal(); loadCompletedToday(); loadStats(); loadSettlement();
-      } else if (result.status === 'CANCELED' || result.status === 'CANCEL_REQUESTED') {
-        alert('Square checkout was cancelled. Ticket left unpaid.');
-      } else if (result.status === 'TIMED_OUT') {
-        if (confirm('Square has not confirmed the tap after 90s. Cancel the checkout?')) {
-          try { await axios.post('/api/square/terminal-checkout/'+checkoutId+'/cancel'); } catch(e) {}
-        }
-      } else {
-        alert('Square ended in status: ' + result.status);
-      }
-    } catch(err) { hideLoading(); alert(err.response?.data?.error || 'Square failed'); }
+  // ══════════════════════════════════════════
+  // DROP-OFF / PICKUP
+  // ══════════════════════════════════════════
+  // Every ticket starts as a drop-off: no bill, nothing sent to Square, and the
+  // hands-off agent never has to ask. The operator switches a truck to Pickup
+  // -- on its live card, in the Assign window, or on the ticket afterwards --
+  // and from then on its weigh-out is measured the other way (it leaves
+  // heavier), billed at the material's pickup price, and sent to the Square
+  // Terminal by itself the moment it closes.
+  function ticketKind(t) { return t && t.ticket_type === 'pickup' ? 'pickup' : 'dropoff'; }
+  function ticketKindChip(t) {
+    return ticketKind(t) === 'pickup'
+      ? '<span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-700">PICKUP</span>'
+      : '<span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-500">DROP-OFF</span>';
+  }
+  function ticketKindToggle(id, kind) {
+    const btn = function (val, icon, label) {
+      const on = kind === val;
+      const cls = on
+        ? (val === 'pickup' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-white')
+        : 'bg-white text-gray-500 hover:bg-gray-50';
+      return '<button type="button" data-kind="' + val + '" onclick="setTicketType(' + id + ',&quot;' + val + '&quot;)" class="flex-1 px-3 py-2 text-xs font-bold ' + cls + ' btn-press flex items-center justify-center gap-1.5"><i class="fas fa-' + icon + '"></i>' + label + '</button>';
+    };
+    return '<div class="flex rounded-xl overflow-hidden border-2 border-gray-200 divide-x-2 divide-gray-200">'
+      + btn('dropoff', 'arrow-down', 'Drop-off')
+      + btn('pickup', 'arrow-up', 'Pickup') + '</div>';
   }
 
-  async function pollSquareCheckout(checkoutId, total) {
+  let detailTicketId = null;
+  const ticketTypeBusy = {};
+  async function setTicketType(id, kind) {
+    if (ticketTypeBusy[id]) return false;
+    ticketTypeBusy[id] = true;
+    try {
+      const res = await axios.post('/api/scale-tickets/' + id + '/type', { ticket_type: kind });
+      const d = res.data || {};
+      const t = openTickets.find(function (x) { return x.id === id; });
+      if (t) t.ticket_type = kind;
+      renderLiveTicketCards();
+      refreshAssignKind(id, kind, d.repriced);
+      if (d.changed) agentLog('ticket ' + (t ? t.ticket_number : '#' + id) + ' marked ' + (kind === 'pickup' ? 'PICKUP' : 'drop-off'));
+      if (d.status === 'completed') {
+        loadCompletedToday(); loadStats();
+        // The agent closes everything as a drop-off. Marking it a pickup
+        // afterwards is what gives it a bill, so the bill goes out now.
+        if (kind === 'pickup' && d.repriced && Number(d.repriced.grand_total) > 0) autoChargeSquare(id);
+        else if (kind === 'pickup' && d.repriced) {
+          showSquareCard(id, 'problem', (t ? t.ticket_number : 'Ticket') + ': nothing to charge',
+            Number(d.repriced.net_weight) < 0
+              ? 'This truck left ' + Math.abs(Number(d.repriced.net_weight)).toFixed(0) + ' kg LIGHTER than it arrived, so it did not pick anything up. Check the weights, or switch it back to Drop-off.'
+              : 'It picked up nothing, so there is no bill.');
+        }
+      }
+      if (detailTicketId === id && activeModalId === 'detail-modal') loadTicketDetail(id);
+      loadOpenTickets();
+      return true;
+    } catch (e) {
+      const data = (e.response && e.response.data) || {};
+      if (data.needs_price) {
+        openPickupPriceModal(data.needs_price, function () { setTicketType(id, kind); });
+      } else {
+        alert(data.error || 'Could not change the ticket type');
+      }
+      return false;
+    } finally {
+      delete ticketTypeBusy[id];
+    }
+  }
+
+  // The Assign window carries the same switch, so it has to follow changes
+  // made from anywhere -- and in post-close mode the net and total it shows
+  // were just re-priced.
+  function refreshAssignKind(id, kind, repriced) {
+    const box = document.getElementById('assign-kind');
+    if (!box || String(document.getElementById('assign-ticket-id').value) !== String(id)) return;
+    box.innerHTML = ticketKindToggle(id, kind);
+    if (repriced && document.getElementById('assign-closed-summary').style.display !== 'none') {
+      document.getElementById('assign-closed-net').textContent =
+        Number(repriced.net_weight).toLocaleString('en-CA', {minimumFractionDigits:1, maximumFractionDigits:1});
+      document.getElementById('assign-closed-total').textContent = kind === 'pickup'
+        ? '$' + Number(repriced.grand_total || 0).toFixed(2)
+        : 'No charge (drop-off)';
+    }
+  }
+
+  // ── Pickup prices ──
+  // Set by the person at the scale. A ticket cannot become a pickup for a
+  // material with no pickup price, so when that happens the editor opens
+  // right there and the switch finishes itself once a price is saved.
+  let pickupPriceAfterSave = null, pickupPriceMaterial = null, pickupPricePrevModal = null;
+  function openPickupPriceModal(material, after) {
+    const p = pricingData.find(function (x) { return x.material_type === material; });
+    if (!p) { alert('Unknown material: ' + material); return; }
+    pickupPriceMaterial = material;
+    pickupPriceAfterSave = after || null;
+    document.getElementById('pp-material').textContent = getMaterialLabel(material);
+    const cur = p.pickup_price_per_kg;
+    document.getElementById('pp-price').value = cur === null || cur === undefined ? '' : Number(cur).toFixed(2);
+    document.getElementById('pp-hint').textContent = after
+      ? 'This material has no pickup price yet. Set one and the ticket switches to Pickup.'
+      : 'What a customer pays per kg when they pick this material up. GST is added on top.';
+    document.getElementById('pp-error').textContent = '';
+    // Stacks on top of the Assign or ticket window without stealing its
+    // place as the active modal, so the page still knows that one is open.
+    pickupPricePrevModal = activeModalId;
+    document.getElementById('pickup-price-modal').style.display = 'flex';
+    activeModalId = 'pickup-price-modal';
+    setTimeout(function () { document.getElementById('pp-price').focus(); }, 50);
+  }
+  function closePickupPriceModal() {
+    document.getElementById('pickup-price-modal').style.display = 'none';
+    activeModalId = pickupPricePrevModal;
+    pickupPricePrevModal = null; pickupPriceAfterSave = null; pickupPriceMaterial = null;
+  }
+  async function savePickupPrice(clear) {
+    const p = pricingData.find(function (x) { return x.material_type === pickupPriceMaterial; });
+    if (!p) return;
+    const raw = document.getElementById('pp-price').value.trim();
+    const v = clear ? null : parseFloat(raw);
+    if (!clear && (!Number.isFinite(v) || v < 0)) {
+      document.getElementById('pp-error').textContent = 'Enter a price of $0.00 or more.';
+      return;
+    }
+    try {
+      await axios.post('/api/pricing/' + p.id + '/pickup', { pickup_price_per_kg: v });
+      p.pickup_price_per_kg = v;
+      const after = clear ? null : pickupPriceAfterSave;
+      closePickupPriceModal();
+      renderPricingPanel();
+      if (after) after();
+    } catch (e) {
+      document.getElementById('pp-error').textContent = (e.response && e.response.data && e.response.data.error) || 'Could not save the price';
+    }
+  }
+
+  // ── Square, automatically ──
+  // A pickup's bill goes to the Square Terminal by itself the moment the
+  // ticket closes. Nothing here may block: no alert, no confirm, no spinner
+  // over the page -- the scale keeps working while the customer taps, and the
+  // blue card above the scale says where the payment is.
+  const squareBusy = {};
+  const SQUARE_WAIT_MS = 5 * 60 * 1000;
+  function showSquareCard(ticketId, state, title, msg) {
+    const el = document.getElementById('square-card');
+    if (!el) return;
+    el.dataset.ticketId = ticketId;
+    el.dataset.state = state;
+    const tone = { sending: 'border-blue-300 bg-blue-50', waiting: 'border-blue-300 bg-blue-50', paid: 'border-green-300 bg-green-50', problem: 'border-red-300 bg-red-50' }[state] || 'border-blue-300 bg-blue-50';
+    el.className = 'mb-4 border-2 rounded-xl p-4 items-center gap-3 ' + tone;
+    el.style.display = 'flex';
+    document.getElementById('square-card-icon').className = 'fas text-xl ' + ({
+      sending: 'fa-spinner fa-spin text-blue-500', waiting: 'fa-credit-card text-blue-600',
+      paid: 'fa-circle-check text-green-600', problem: 'fa-triangle-exclamation text-red-500'
+    }[state] || 'fa-credit-card text-blue-600');
+    document.getElementById('square-card-title').textContent = title;
+    document.getElementById('square-card-msg').textContent = msg || '';
+    document.getElementById('square-card-retry').style.display = state === 'problem' ? '' : 'none';
+    document.getElementById('square-card-cash').style.display = state === 'problem' ? '' : 'none';
+    document.getElementById('square-card-cancel').style.display = state === 'waiting' ? '' : 'none';
+    if (state === 'paid') setTimeout(function () { if (el.dataset.state === 'paid') el.style.display = 'none'; }, 8000);
+  }
+  function dismissSquareCard() { document.getElementById('square-card').style.display = 'none'; }
+  function retrySquareCard() {
+    const id = Number(document.getElementById('square-card').dataset.ticketId);
+    if (id) autoChargeSquare(id, { force: true });
+  }
+  function cashFromSquareCard() {
+    const id = Number(document.getElementById('square-card').dataset.ticketId);
+    if (id) recordCash(id);
+  }
+  async function cancelSquareFromCard() {
+    const el = document.getElementById('square-card');
+    if (el.dataset.checkoutId) {
+      try { await axios.post('/api/square/terminal-checkout/' + el.dataset.checkoutId + '/cancel'); } catch (e) { /* the poll will see the result either way */ }
+    }
+  }
+
+  async function autoChargeSquare(ticketId, opts) {
+    opts = opts || {};
+    if (squareBusy[ticketId]) return;
+    squareBusy[ticketId] = true;
+    let checkoutId = null, num = '#' + ticketId;
+    try {
+      const t = (await axios.get('/api/scale-tickets/' + ticketId)).data.ticket;
+      num = t.ticket_number || num;
+      if (ticketKind(t) !== 'pickup' || t.status !== 'completed') return;
+      if (t.payment_status === 'paid') return;
+      // 'pending' with nobody here watching it is a checkout from a tab that
+      // went away. Only an explicit retry may send it again.
+      if (t.payment_status === 'pending' && !opts.force) return;
+      const total = Number(t.grand_total) || 0;
+      if (total <= 0) {
+        showSquareCard(ticketId, 'problem', num + ': nothing to charge', 'This pickup came to $0.00 — check the weights and the pickup price for ' + getMaterialLabel(t.tire_type) + '.');
+        return;
+      }
+      const amount = '$' + total.toFixed(2);
+      showSquareCard(ticketId, 'sending', 'Sending ' + amount + ' to Square', num + ' · ' + (t.company_name || 'Walk-in'));
+      const sq = await axios.post('/api/square/terminal-checkout', {
+        amount_cents: Math.round(total * 100), ticket_number: t.ticket_number,
+        customer_name: t.company_name || 'Walk-in', note: 'Pickup ' + t.ticket_number
+      });
+      if (!sq.data || !sq.data.success) throw new Error('Square did not accept the checkout');
+      checkoutId = sq.data.checkout_id;
+      document.getElementById('square-card').dataset.checkoutId = checkoutId;
+      await axios.post('/api/scale-tickets/' + ticketId + '/payment', { payment_status: 'pending', payment_method: 'card', square_checkout_id: checkoutId });
+      agentLog('square: ' + amount + ' for ' + num + ' sent to the terminal');
+      showSquareCard(ticketId, 'waiting', amount + ' is on the Square Terminal', 'Waiting for the customer to tap · ' + num);
+
+      const result = await pollSquareCheckout(checkoutId, SQUARE_WAIT_MS);
+      if (result.status === 'COMPLETED') {
+        const paymentId = (result.payment_ids && result.payment_ids[0]) || null;
+        await axios.post('/api/scale-tickets/' + ticketId + '/payment', { payment_status: 'paid', payment_method: 'card', square_checkout_id: checkoutId, square_payment_id: paymentId });
+        agentLog('square: ' + num + ' PAID ' + amount);
+        showSquareCard(ticketId, 'paid', 'Paid ' + amount, num + ' · card');
+        loadCompletedToday(); loadStats(); loadSettlement();
+        return;
+      }
+      if (result.status === 'TIMED_OUT') {
+        try { await axios.post('/api/square/terminal-checkout/' + checkoutId + '/cancel'); } catch (e) { /* best effort */ }
+      }
+      await axios.post('/api/scale-tickets/' + ticketId + '/payment', { payment_status: 'unpaid', payment_method: 'card', square_checkout_id: checkoutId });
+      const why = result.status === 'TIMED_OUT' ? 'Nobody tapped within 5 minutes, so the checkout was cancelled.'
+        : (result.status === 'CANCELED' || result.status === 'CANCEL_REQUESTED') ? 'The checkout was cancelled on the terminal.'
+        : 'Square ended in status ' + result.status + '.';
+      agentLog('square: ' + num + ' not paid — ' + why);
+      showSquareCard(ticketId, 'problem', num + ' is not paid', why + ' Send it again, or take cash.');
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message || 'unknown error';
+      agentLog('square FAILED for ' + num + ': ' + msg);
+      if (checkoutId) {
+        try { await axios.post('/api/scale-tickets/' + ticketId + '/payment', { payment_status: 'unpaid', payment_method: 'card', square_checkout_id: checkoutId }); } catch (ignore) {}
+      }
+      showSquareCard(ticketId, 'problem', 'Square could not take ' + num, msg);
+    } finally {
+      delete squareBusy[ticketId];
+    }
+  }
+
+  // The Square button on a ticket: the same path as the automatic one, so a
+  // manual send cannot behave differently from an automatic one.
+  function sendToSquare(ticketId) {
+    closeDetailModal();
+    autoChargeSquare(ticketId, { force: true });
+  }
+
+  async function pollSquareCheckout(checkoutId, timeoutMs) {
     const startedAt = Date.now();
-    const TIMEOUT_MS = 90_000;
-    const POLL_MS = 2_000;
-    showLoading('Waiting for tap... ($'+total.toFixed(2)+')');
-    while (Date.now() - startedAt < TIMEOUT_MS) {
+    const POLL_MS = 2000;
+    while (Date.now() - startedAt < timeoutMs) {
       try {
-        const r = await axios.get('/api/square/terminal-checkout/'+checkoutId);
+        const r = await axios.get('/api/square/terminal-checkout/' + checkoutId);
         const status = r.data.status;
         if (status && status !== 'PENDING' && status !== 'IN_PROGRESS') {
-          return { status, payment_ids: r.data.payment_ids };
+          return { status: status, payment_ids: r.data.payment_ids };
         }
       } catch (e) { /* keep polling — transient errors are common during tap */ }
-      await new Promise(r => setTimeout(r, POLL_MS));
+      await new Promise(function (r) { setTimeout(r, POLL_MS); });
     }
     return { status: 'TIMED_OUT' };
   }
@@ -4904,6 +5236,20 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     return String(v || '').replace(/_/g, ' ').replace(/\\b[a-z]/g, function (c) { return c.toUpperCase(); });
   }
 
+  // Drop-off vs pickup on a receipt. A drop-off is never billed, so it prints
+  // "no charge" instead of a rate and total; a pickup prints the bill. The
+  // photo is whichever frame shows the truck LOADED -- the weigh-in for a
+  // drop-off, the weigh-out for a pickup -- because that is what the weight
+  // is evidence of.
+  function receiptIsPickup(r) { return !!r && r.ticket_type === 'pickup'; }
+  function receiptLoadedPhoto(r) {
+    if (!r) return null;
+    return receiptIsPickup(r) ? (r.photo_out || r.photo_in || null) : (r.photo_in || null);
+  }
+  function receiptPhotoLabel(r) {
+    return receiptIsPickup(r) && r.photo_out ? 'TRUCK LOADED AT WEIGH-OUT' : 'TRUCK AT WEIGH-IN';
+  }
+
   function receiptVehicleText(r) {
     // Plate first and unaltered -- it is the one thing a customer or an
     // insurer will check the receipt against -- then colour, make and body,
@@ -4921,6 +5267,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
   function browserPrintReceipt(r) {
     const netW = parseFloat(r.net_weight) || 0;
+    const pickup = receiptIsPickup(r);
     const dateStr = r.date ? new Date(r.date).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : '';
     const fmt = (v, d) => v != null && v !== '' ? parseFloat(v).toFixed(d) : '—';
     const row = (l, v) => '<div class="print-row"><span>' + l + '</span><span>' + v + '</span></div>';
@@ -4938,21 +5285,25 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       '<div class="print-divider"></div>' +
       '<div class="print-center print-bold" style="font-size:13px">SCALE TICKET</div>' +
       '<div class="print-center print-bold" style="font-size:12px">' + (r.ticket_number || '') + '</div>' +
+      '<div class="print-center print-bold" style="font-size:11px">' + (pickup ? 'PICKUP' : 'DROP-OFF') + '</div>' +
       '<div class="print-divider"></div>' +
       row('Date', dateStr) +
       row('Customer', r.customer || 'Walk-in') +
       row('Material', getMaterialLabel(r.material)) +
       (receiptVehicleText(r) ? row('Vehicle', receiptVehicleText(r)) : '') +
       '<div class="print-divider"></div>' +
-      row('Gross (in)', fmt(r.weight_in, 1) + ' kg') +
-      row('Tare (out)', fmt(r.weight_out, 1) + ' kg') +
-      '<div class="print-row print-bold" style="font-size:13px;margin-top:1mm"><span>TOTAL DROPPED</span><span>' + netW.toFixed(1) + ' kg</span></div>' +
+      row(pickup ? 'Empty (in)' : 'Gross (in)', fmt(r.weight_in, 1) + ' kg') +
+      row(pickup ? 'Loaded (out)' : 'Tare (out)', fmt(r.weight_out, 1) + ' kg') +
+      '<div class="print-row print-bold" style="font-size:13px;margin-top:1mm"><span>' + (pickup ? 'TOTAL PICKED UP' : 'TOTAL DROPPED') + '</span><span>' + netW.toFixed(1) + ' kg</span></div>' +
       '<div class="print-divider"></div>' +
-      row('Rate', '$' + fmt(r.price_per_kg, 2) + '/kg') +
-      row('Subtotal', '$' + fmt(r.subtotal, 2)) +
-      row('GST (5%)', '$' + fmt(r.tax_amount, 2)) +
-      '<div class="print-divider"></div>' +
-      '<div class="print-row print-bold" style="font-size:14px"><span>TOTAL</span><span>$' + fmt(r.grand_total, 2) + ' CAD</span></div>' +
+      (pickup
+        ? row('Rate', '$' + fmt(r.price_per_kg, 2) + '/kg') +
+          row('Subtotal', '$' + fmt(r.subtotal, 2)) +
+          row('GST (5%)', '$' + fmt(r.tax_amount, 2)) +
+          '<div class="print-divider"></div>' +
+          '<div class="print-row print-bold" style="font-size:14px"><span>TOTAL</span><span>$' + fmt(r.grand_total, 2) + ' CAD</span></div>' +
+          (r.payment_status === 'paid' && r.payment_method ? row('Paid by', escHtml(r.payment_method)) : '')
+        : '<div class="print-center print-bold" style="font-size:13px">NO CHARGE &middot; DROP-OFF</div>') +
       '<div class="print-divider"></div>' +
       // Same photos the ESC/POS path prints, here as plain <img>. The browser
       // dialog is the fallback whenever the bridge is down, and a receipt that
@@ -4963,10 +5314,10 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       // shows an empty truck, tells the customer nothing, and costs a second
       // block of paper on every ticket. Both frames are still stored on the
       // ticket and shown in the app.
-      (receiptPhotosEnabled() && r.photo_in
+      (receiptPhotosEnabled() && receiptLoadedPhoto(r)
         ? '<div class="print-divider"></div>'
-          + '<div class="print-center" style="font-size:8px">TRUCK AT WEIGH-IN</div>'
-          + '<img src="' + r.photo_in + '" style="width:100%;display:block;margin-bottom:2mm;filter:grayscale(1) contrast(1.4)" />'
+          + '<div class="print-center" style="font-size:8px">' + receiptPhotoLabel(r) + '</div>'
+          + '<img src="' + receiptLoadedPhoto(r) + '" style="width:100%;display:block;margin-bottom:2mm;filter:grayscale(1) contrast(1.4)" />'
         : '') +
       '<div class="print-divider"></div>' +
       '<div class="print-center" style="font-size:9px">Thank you for choosing</div>' +

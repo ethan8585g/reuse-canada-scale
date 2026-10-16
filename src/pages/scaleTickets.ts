@@ -29,6 +29,11 @@ export function renderScaleTickets(): string {
         <select id="filter-material" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white">
           <option value="">All materials</option>
         </select>
+        <select id="filter-type" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white">
+          <option value="">Drop-offs &amp; pickups</option>
+          <option value="dropoff">Drop-offs only</option>
+          <option value="pickup">Pickups only</option>
+        </select>
         <div class="flex items-center gap-1">
           <input type="date" id="filter-date-from" onchange="loadTickets()" class="px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all">
           <span class="text-gray-300 text-xs">to</span>
@@ -293,7 +298,8 @@ export function renderScaleTickets(): string {
         // A ticket the second-pass check flagged has to be findable from the
         // list. Buried in the detail modal it would only ever be seen by
         // somebody who already suspected something.
-        return (t.verify_status === 'mismatch' ? '<i class="fas fa-triangle-exclamation text-red-500 text-[10px] ml-1" title="Weigh-in and weigh-out photos do not agree — needs review"></i>' : '') +
+        return (t.ticket_type === 'pickup' ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-700" title="Pickup — billed and sent to Square">PICKUP</span>' : '') +
+               (t.verify_status === 'mismatch' ? '<i class="fas fa-triangle-exclamation text-red-500 text-[10px] ml-1" title="Weigh-in and weigh-out photos do not agree — needs review"></i>' : '') +
                (t.verify_status === 'ok' ? '<i class="fas fa-circle-check text-green-500 text-[10px] ml-1" title="Photos verified: same vehicle in and out"></i>' : '') +
                (t.has_photo_in ? '<i class="fas fa-camera text-green-400 text-[10px] ml-1" title="Has photo"></i>' : '') +
                (t.receipt_printed ? '<i class="fas fa-print text-blue-400 text-[10px] ml-1" title="Receipt printed"></i>' : '') +
@@ -476,10 +482,11 @@ export function renderScaleTickets(): string {
       function exportTicketsCsv() {
         var rows = selectedTicketRows();
         if (!rows.length) return;
-        var out = [['Ticket #','Date','Customer','Material','Operator','Driver','Driver Phone','Status','Plate','Vehicle','Photo check','Weight In (kg)','Weight Out (kg)','Net Weight (kg)','Total']];
+        var out = [['Ticket #','Date','Customer','Material','Operator','Driver','Driver Phone','Status','Type','Plate','Vehicle','Photo check','Weight In (kg)','Weight Out (kg)','Net Weight (kg)','Total']];
         rows.forEach(function(t) {
           out.push([t.ticket_number, fmtDate(t.created_at), t.company_name || t.field_store_name || '', t.tire_type || '',
             t.employee_name || '', t.driver_display_name || '', t.driver_display_phone || '', t.status || '',
+            t.ticket_type === 'pickup' ? 'pickup' : 'drop-off',
             t.vehicle_plate || '', csvVehicle(t), t.verify_status || '',
             t.weight_in || '', t.weight_out || '', t.net_weight || '', t.grand_total || '']);
         });
@@ -503,6 +510,7 @@ export function renderScaleTickets(): string {
         document.getElementById('filter-date-from').value = '';
         document.getElementById('filter-date-to').value = '';
         document.getElementById('filter-material').value = '';
+        document.getElementById('filter-type').value = '';
         loadTickets();
       }
 
@@ -513,14 +521,16 @@ export function renderScaleTickets(): string {
           const dateTo = document.getElementById('filter-date-to').value;
           const search = document.getElementById('filter-search').value.trim();
           const material = document.getElementById('filter-material').value;
+          const kind = document.getElementById('filter-type').value;
           document.getElementById('clear-filters').style.display =
-            (status || dateFrom || dateTo || search || material) ? 'block' : 'none';
+            (status || dateFrom || dateTo || search || material || kind) ? 'block' : 'none';
           let url = '/api/scale-tickets?';
           if (status) url += 'status=' + status + '&';
           if (dateFrom) url += 'date_from=' + dateFrom + '&';
           if (dateTo) url += 'date_to=' + dateTo + '&';
           if (search) url += 'search=' + encodeURIComponent(search) + '&';
           if (material) url += 'material=' + encodeURIComponent(material) + '&';
+          if (kind) url += 'type=' + encodeURIComponent(kind) + '&';
           const res = await axios.get(url);
           allTickets = res.data.tickets || [];
           selectedTickets = new Set();

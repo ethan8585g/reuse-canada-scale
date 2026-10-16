@@ -49,6 +49,29 @@ pricingRoutes.post('/:id', roleRequired('admin', 'manager'), async (c) => {
   }
 })
 
+// Set (or clear, with null) what a material SELLS for on a pickup. Open to the
+// yard operator on purpose: the person at the scale is who sets pickup prices
+// (owner's call, 2026-10-16). Pickup tickets are priced from this column only;
+// see utils/ticketPricing.ts.
+pricingRoutes.post('/:id/pickup', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
+  const id = c.req.param('id')
+  try {
+    const { pickup_price_per_kg } = await c.req.json()
+    const v = pickup_price_per_kg
+    if (v !== null && (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1000)) {
+      return c.json({ error: 'pickup_price_per_kg must be a non-negative number, or null to clear it' }, 400)
+    }
+    const result = await c.env.DB.prepare(
+      `UPDATE pricing SET pickup_price_per_kg = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`
+    ).bind(v === null ? null : Math.round(v * 10000) / 10000, id).run()
+    if ((result.meta?.changes ?? 0) === 0) return c.json({ error: 'Pricing row not found' }, 404)
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('pricing pickup POST error:', err)
+    return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 // Create a new material+price. material_type is the slug used by scale_tickets;
 // it must be unique and is immutable once tickets reference it. admin/manager only.
 pricingRoutes.post('/', roleRequired('admin', 'manager'), async (c) => {

@@ -216,8 +216,10 @@ function receiptBytes(r, cols, images) {
   out += boldOn + big + (r.company || 'REUSE CANADA') + '\n' + normal + boldOff;
   if (r.tagline) out += r.tagline + '\n';
   if (r.location) out += r.location + '\n';
+  const pickup = r.ticket_type === 'pickup';
   out += '\n' + boldOn + 'SCALE TICKET' + boldOff + '\n';
   out += (r.ticket_number || '') + '\n';
+  out += boldOn + (pickup ? 'PICKUP' : 'DROP-OFF') + boldOff + '\n';
 
   const when = r.date ? new Date(String(r.date).replace(' ', 'T') + 'Z') : null;
   if (when && !isNaN(when.getTime())) out += when.toLocaleString('en-CA') + '\n';
@@ -230,14 +232,18 @@ function receiptBytes(r, cols, images) {
   if (r.vehicle) out += padLine('Vehicle', String(r.vehicle).slice(0, cols - 9), cols) + '\n';
   out += rule + '\n';
 
-  if (kg(r.weight_in)) out += padLine('Weight in', kg(r.weight_in), cols) + '\n';
-  if (kg(r.weight_out)) out += padLine('Weight out', kg(r.weight_out), cols) + '\n';
+  if (kg(r.weight_in)) out += padLine(pickup ? 'Empty (in)' : 'Weight in', kg(r.weight_in), cols) + '\n';
+  if (kg(r.weight_out)) out += padLine(pickup ? 'Loaded (out)' : 'Weight out', kg(r.weight_out), cols) + '\n';
   if (kg(r.net_weight)) {
-    // Same wording as the browser receipt: this is what the customer dropped.
-    out += boldOn + padLine('TOTAL DROPPED', kg(r.net_weight), cols) + boldOff + '\n';
+    // Same wording as the browser receipt: what was dropped or picked up.
+    out += boldOn + padLine(pickup ? 'TOTAL PICKED UP' : 'TOTAL DROPPED', kg(r.net_weight), cols) + boldOff + '\n';
   }
   out += rule + '\n';
 
+  // A drop-off is never billed: no rate, no total, just say so.
+  if (!pickup) {
+    out += '\n' + mid + boldOn + 'NO CHARGE - DROP-OFF' + boldOff + '\n' + left;
+  } else {
   if (r.price_per_kg) out += padLine('Rate', '$' + Number(r.price_per_kg).toFixed(4) + '/kg', cols) + '\n';
   if (money(r.subtotal)) out += padLine('Subtotal', money(r.subtotal), cols) + '\n';
   if (money(r.tax_amount)) {
@@ -247,7 +253,8 @@ function receiptBytes(r, cols, images) {
   if (money(r.grand_total)) {
     out += '\n' + boldOn + big + padLine('TOTAL', money(r.grand_total), Math.floor(cols / 2)) + normal + boldOff + '\n';
   }
-  if (r.payment_method) out += '\n' + padLine('Paid by', r.payment_method, cols) + '\n';
+  if (r.payment_method && r.payment_status === 'paid') out += '\n' + padLine('Paid by', r.payment_method, cols) + '\n';
+  }
 
   out += '\n' + mid + 'Thank you for choosing Reuse Canada\n';
   out += centre('reusecanadascale.com', cols) + '\n';
