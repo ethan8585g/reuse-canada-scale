@@ -660,7 +660,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           </div>
           <div class="sh-seg" role="group" aria-label="Co-pilot mode">
             <button type="button" id="sh-cp-manual" aria-pressed="false" onclick="shSetCopilot('off')">Manual</button>
-            <button type="button" id="sh-cp-auto" aria-pressed="false" onclick="shSetCopilot('live')">Auto</button>
+            <button type="button" id="sh-cp-auto" aria-pressed="false" onclick="chooseAutoMaterial()">Auto</button>
           </div>
         </div>
         <p id="sh-cp-text" class="text-xs text-gray-500 leading-snug"></p>
@@ -850,10 +850,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             </div>
             <p id="agent-prompt-hint" class="text-[9px] text-gray-400 leading-snug mt-1"></p>
           </div>
-          <label class="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer pt-1 border-t border-gray-100">
-            <input type="checkbox" id="kind-prompt-on" checked onchange="saveKindPromptSetting(this.checked)" class="rounded mt-0.5">
-            <span>Ask <b>Drop-off or Pickup</b> when a truck pulls on <span class="text-gray-400">— if nobody answers it stays a drop-off</span></span>
-          </label>
+          <p class="text-[10px] text-gray-500 leading-snug pt-1 border-t border-gray-100">Drop-off or pickup is decided on the way out: lighter is a drop-off, heavier is a pickup and asks for the material to bill.</p>
           <div class="pt-1 border-t border-gray-100">
             <div class="text-[10px] font-semibold text-gray-600 mb-1">Before it acts</div>
             <div class="grid grid-cols-3 gap-1">
@@ -871,7 +868,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <div class="grid grid-cols-3 gap-1">
             <button onclick="setAgentMode('off')" id="agent-btn-off" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Off</button>
             <button onclick="setAgentMode('dry_run')" id="agent-btn-dry_run" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Dry run</button>
-            <button onclick="setAgentMode('live')" id="agent-btn-live" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Live</button>
+            <button onclick="chooseAutoMaterial()" id="agent-btn-live" class="px-1 py-1.5 text-[10px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Live</button>
           </div>
           <div id="agent-log" class="text-[9px] font-mono text-gray-400 leading-relaxed max-h-28 overflow-y-auto"></div>
 
@@ -1150,7 +1147,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       <div class="p-6">
         <div id="kp-photo-wrap" class="mb-4 rounded-xl overflow-hidden border border-gray-200 bg-gray-50" style="display:none;"><img id="kp-photo" class="w-full max-h-56 object-cover" /></div>
         <div id="kp-question" class="text-center text-lg font-bold text-gray-800 mb-4">Is this truck dropping off or picking up?</div>
-        <div class="grid grid-cols-2 gap-4">
+        <div id="kp-materials" class="grid grid-cols-1 sm:grid-cols-2 gap-2" style="display:none;"></div>
+        <div id="kp-notpickup" class="text-center mt-3" style="display:none;"><button onclick="answerKindPrompt('dropoff')" class="text-xs text-gray-500 hover:text-gray-700 underline">Not a pickup? Send it to the operator card</button></div>
+        <div id="kp-dp" class="grid grid-cols-2 gap-4">
           <button onclick="answerKindPrompt('dropoff')" class="py-8 rounded-2xl bg-gray-800 hover:bg-gray-900 text-white btn-press flex flex-col items-center gap-2">
             <i class="fas fa-arrow-down text-3xl"></i><span class="text-2xl font-bold">Drop-off</span><span id="kp-drop-sub" class="text-xs opacity-70">No charge &middot; press D</span>
           </button>
@@ -4560,6 +4559,35 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
   }
 
+  // Pressing Auto: choose the one material Auto mode puts on its tickets,
+  // then switch on. Uses the capture-flow window for the same look.
+  function chooseAutoMaterial() {
+    if (!pricingData.length) { setAgentMode('live'); return; }
+    const cur = (agentSettings && agentSettings.material) || 'mixed';
+    cfSet('Auto mode', 'Which material is coming in?',
+      '<p class="cf-intro">Auto mode opens and closes tickets by itself with this material. A truck that leaves heavier is a pickup, and you will be asked what it loaded.</p><div class="cf-choices">'
+      + pricingData.map(function (p) {
+          return '<button type="button" class="cf-choice"' + (p.material_type === cur ? ' style="border-color:#7aa65a;background:#f0f5e9"' : '') + ' onclick="startAutoMode(&quot;' + escAttr(p.material_type) + '&quot;)">'
+            + '<span class="cf-ic"><i class="fas fa-recycle"></i></span><span><strong>' + escHtml(getMaterialLabel(p.material_type)) + '</strong>'
+            + (p.notes ? '<small>' + escHtml(p.notes) + '</small>' : '') + '</span><span class="cf-arrow">&#8594;</span></button>';
+        }).join('')
+      + '</div>');
+  }
+  async function startAutoMode(material) {
+    try {
+      const res = await axios.put('/api/scale-agent/settings', { mode: 'live', material: material });
+      agentSettings = res.data.settings;
+      applyAgentSettingsToUI();
+      try { shRenderMaterial(); shSyncStrip(); } catch (e) {}
+      agentLog('Auto mode on, material ' + getMaterialLabel(material));
+      agentSetState('idle');
+      closeModal('cf-modal');
+    } catch (e) {
+      const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+      alert('Could not turn on Auto mode: ' + msg);
+    }
+  }
+
   async function setAgentMode(mode) {
     try {
       const res = await axios.put('/api/scale-agent/settings', { mode: mode });
@@ -4766,11 +4794,11 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         // the operator. The weigh-out is recorded in the question, so it can
         // be answered after the truck has gone.
         const c0 = Array.isArray(d.candidates) && d.candidates.length === 1 ? d.candidates[0] : null;
-        if (d.mode === 'live' && kindPromptEnabled() && c0 && ticketKind(c0) === 'dropoff' && weight > Number(c0.weight_in)
+        if (d.mode === 'live' && c0 && ticketKind(c0) === 'dropoff' && weight > Number(c0.weight_in)
             && (d.rule === 'single_truck_unexpected_arrival' || d.rule === 'plate_match_not_lighter')) {
-          agentLog(c0.ticket_number + ' is leaving heavier than it arrived — asking whether it was a pickup');
+          agentLog(c0.ticket_number + ' is leaving heavier than it arrived — a pickup; asking which material to bill');
           promptTicketKind({
-            id: c0.id, number: c0.ticket_number, weight: Number(c0.weight_in),
+            id: c0.id, number: c0.ticket_number, weight: Number(c0.weight_in), pickupMaterial: true,
             weighOut: {
               weight: weight, photo: photo || null, decision_id: d.decision_id || null,
               plate: (plateRead && plateRead.plate) || '', plate_confidence: (plateRead && plateRead.confidence) || 0,
@@ -4945,7 +4973,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         // picking up. It decides which way the weigh-out is measured, so it
         // has to be settled before the truck comes back -- and it is optional,
         // the agent never waits on it.
-        promptTicketKind({ id: res.data.id, number: res.data.ticket_number, weight: p.weight, photo: p.photo || null });
+        // No Drop-off / Pickup question in Auto mode: the weigh-out decides.
+        // Lighter = drop-off (closes by itself); heavier = pickup, and the
+        // material question is asked then (see the defer branch).
       } else {
         await axios.post('/api/scale-tickets/' + d.ticket.id + '/merge-out', {
           weight: p.weight, photo: p.photo || null,
@@ -7071,7 +7101,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // New questions go to the FRONT: the truck on the scale right now is the
   // one the person inside is looking at.
   function promptTicketKind(entry) {
-    if (!kindPromptEnabled() || !entry || !entry.id) return;
+    if (!entry || !entry.id) return;
     const old = kindPromptQueue.find(function (q) { return q.id === entry.id; });
     kindPromptQueue = kindPromptQueue.filter(function (q) { return q.id !== entry.id; });
     kindPromptQueue.unshift(Object.assign({}, old || {}, entry));
@@ -7104,6 +7134,26 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     document.getElementById('kp-pick-sub').textContent = heavier
       ? 'Close it and charge Square · press P'
       : (q.closed ? 'Bill it and charge Square · press P' : 'Charged on Square · press P');
+    const matMode = !!(q.weighOut && q.pickupMaterial);
+    document.getElementById('kp-dp').style.display = matMode ? 'none' : '';
+    document.getElementById('kp-notpickup').style.display = matMode ? '' : 'none';
+    const mats = document.getElementById('kp-materials');
+    mats.style.display = matMode ? '' : 'none';
+    if (matMode) {
+      const added = Math.max(0, Number(q.weighOut.weight) - Number(q.weight));
+      document.getElementById('kp-head').textContent = 'Pickup · loaded ' + kg(added) + ' kg';
+      document.getElementById('kp-question').textContent = 'It came in at ' + kg(q.weight) + ' kg and is leaving at ' + kg(q.weighOut.weight) + ' kg. Choose the material to bill.';
+      const def = (agentSettings && agentSettings.material) || '';
+      const list = pricingData.slice().sort(function (a, b) { return (a.material_type === def ? -1 : 0) - (b.material_type === def ? -1 : 0); });
+      mats.innerHTML = list.map(function (p) {
+        const rate = p.pickup_price_per_kg === null || p.pickup_price_per_kg === undefined ? null : Number(p.pickup_price_per_kg);
+        const est = rate === null ? 'No pickup price yet: you will set it next' : '$' + rate.toFixed(2) + '/kg · about $' + (added * rate * 1.05).toFixed(2) + ' with GST';
+        const isDef = p.material_type === def;
+        return '<button type="button" onclick="answerKindMaterial(&quot;' + escAttr(p.material_type) + '&quot;)" class="text-left px-4 py-3 rounded-xl border-2 ' + (isDef ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-purple-400') + ' btn-press">'
+          + '<span class="block font-bold text-gray-800">' + escHtml(getMaterialLabel(p.material_type)) + (isDef ? ' <span class="text-[10px] font-semibold text-purple-700">· Auto mode material · Enter</span>' : '') + '</span>'
+          + '<span class="block text-xs text-gray-500 mt-0.5">' + est + '</span></button>';
+      }).join('');
+    }
     const shown = (q.weighOut && q.weighOut.photo) || q.photo;
     const wrap = document.getElementById('kp-photo-wrap');
     if (shown) { document.getElementById('kp-photo').src = shown; wrap.style.display = ''; } else { wrap.style.display = 'none'; }
@@ -7182,6 +7232,22 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       document.getElementById('kp-error').textContent = 'Could not mark it a pickup. Try again, or use the switch on its ticket.';
     }
   }
+  // Auto mode, truck left heavier: the person inside picks what was loaded.
+  // The material goes on the ticket first, then the existing Pickup answer
+  // runs -- price check (or the price editor), close at the recorded weight,
+  // receipt, Square.
+  async function answerKindMaterial(material) {
+    const q = kindPromptQueue[0];
+    if (!q) { hideKindPrompt(); return; }
+    try {
+      await axios.post('/api/scale-tickets/' + q.id + '/assign', { tire_type: material });
+      agentLog(q.number + ': pickup of ' + getMaterialLabel(material));
+    } catch (e) {
+      document.getElementById('kp-error').textContent = 'Could not set the material: ' + ((e.response && e.response.data && e.response.data.error) || e.message);
+      return;
+    }
+    await answerKindPrompt('pickup');
+  }
   // Answering Pickup for a truck that already came back heavier: close the
   // ticket at the weight the scale recorded then. Same route, same audit,
   // same receipt and Square path as every other weigh-out.
@@ -7216,6 +7282,12 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (!kindPromptOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
     if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement && document.activeElement.tagName)) return;
     const k = (e.key || '').toLowerCase();
+    const q0 = kindPromptQueue[0];
+    if (q0 && q0.weighOut && q0.pickupMaterial) {
+      if (k === 'enter' && agentSettings && agentSettings.material) { e.preventDefault(); e.stopPropagation(); answerKindMaterial(agentSettings.material); }
+      else if (k === 'escape') { e.preventDefault(); e.stopPropagation(); laterKindPrompt(); }
+      return;
+    }
     if (k === 'd' || k === 'p' || k === 'escape') {
       e.preventDefault(); e.stopPropagation();
       if (k === 'd') answerKindPrompt('dropoff');
