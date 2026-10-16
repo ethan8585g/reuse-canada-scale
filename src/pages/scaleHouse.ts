@@ -325,13 +325,14 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   </div>
 
   <!-- ═══════ FRAUD ALERT BANNER ═══════ -->
-  <div id="fraud-alert" class="hidden mb-4 bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-center gap-3">
-    <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-shield-alt text-red-500 text-xl"></i></div>
+  <div id="fraud-alert" class="hidden mb-4 bg-green-50 border-2 border-green-300 rounded-xl p-4 flex items-center gap-3">
+    <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-truck-moving text-green-600 text-xl"></i></div>
     <div class="flex-1">
-      <div class="text-sm font-bold text-red-700">Weight Anomaly Detected</div>
-      <div id="fraud-alert-text" class="text-xs text-red-600"></div>
+      <div class="text-sm font-bold text-green-800">Scale movement detected</div>
+      <div class="text-2xl font-extrabold text-green-900 tabular-nums leading-tight"><span id="fraud-alert-weight">0</span> kg <span class="text-xs font-semibold text-green-700">on the scale now</span></div>
+      <div id="fraud-alert-text" class="text-xs text-green-700"></div>
     </div>
-    <button onclick="dismissFraudAlert()" class="text-red-400 hover:text-red-600"><i class="fas fa-times"></i></button>
+    <button onclick="dismissFraudAlert()" class="text-green-500 hover:text-green-700" aria-label="Close"><i class="fas fa-times"></i></button>
   </div>
 
   <!-- ═══════ PRINT FAILURE CARD ═══════ -->
@@ -1508,12 +1509,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       const timeDelta = (now - lastWeightTimestamp) / 1000;
       const weightDelta = Math.abs(newWeight - previousWeight);
       if (timeDelta < 2 && weightDelta > 2000) {
-        showFraudAlert('Rapid weight change: ' + weightDelta.toFixed(0) + ' kg in ' + timeDelta.toFixed(1) + 's. Possible scale tamper or truck movement.');
+        showFraudAlert('Changed by ' + Math.round(weightDelta).toLocaleString() + ' kg in ' + timeDelta.toFixed(1) + ' s.');
         logSerial('⚠ WARNING: Rapid weight spike detected: ' + weightDelta.toFixed(0) + ' kg');
       }
     }
     previousWeight = newWeight;
     lastWeightTimestamp = now;
+    // Keep the banner's weight live for as long as it is showing.
+    const fw = document.getElementById('fraud-alert-weight');
+    if (fw) fw.textContent = Math.round(Math.max(0, newWeight)).toLocaleString();
   }
 
   function showFraudAlert(text) {
@@ -2818,6 +2822,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (Math.abs(weight) > scaleCfg.capacity * 1.2) return;
     lastWeightAt = Date.now();
     if (weight > 0) checkWeightSpike(weight);
+    else { const fw0 = document.getElementById('fraud-alert-weight'); if (fw0) fw0.textContent = '0'; }
     currentLiveWeight = Math.round(weight * 10) / 10;
     weightHistory.push(currentLiveWeight);
     if (weightHistory.length > 5) weightHistory.shift();
