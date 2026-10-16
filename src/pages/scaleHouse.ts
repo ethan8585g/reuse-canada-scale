@@ -278,15 +278,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     <!-- Serial log (collapsed by default) -->
     <div id="serial-log-section" class="hidden border-t border-gray-700">
       <div class="flex items-center justify-between px-5 py-2 bg-gray-800/30 gap-3">
-        <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">Live Data Feed <span id="serial-log-mode" class="ml-2 text-gray-600 normal-case font-normal">— ASCII</span></span>
-        <div class="flex gap-3 text-xs">
+        <button type="button" id="serial-log-toggle" onclick="toggleSerialFeed()" aria-expanded="false" aria-controls="serial-log" class="text-xs font-bold text-gray-400 hover:text-gray-200 uppercase tracking-wide flex items-center gap-2"><i id="serial-log-caret" class="fas fa-chevron-right w-3"></i>Live Data Feed <span id="serial-log-mode" class="ml-1 text-gray-600 normal-case font-normal">— ASCII</span></button>
+        <div id="serial-log-tools" class="flex gap-3 text-xs" style="display:none;">
           <label class="text-gray-400 flex items-center gap-1 cursor-pointer">
             <input type="checkbox" id="log-hex-toggle" onchange="toggleSerialHex()" class="rounded" /> Hex
           </label>
           <button onclick="document.getElementById('serial-log').textContent=''" class="text-gray-500 hover:text-gray-300">Clear</button>
         </div>
       </div>
-      <div id="serial-log" class="bg-gray-800 text-gray-300 font-mono text-[11px] leading-snug p-3 max-h-32 overflow-y-auto whitespace-pre-wrap border-t border-gray-700/50"></div>
+      <div id="serial-log" style="display:none;" class="bg-gray-800 text-gray-300 font-mono text-[11px] leading-snug p-3 max-h-32 overflow-y-auto whitespace-pre-wrap border-t border-gray-700/50"></div>
     </div>
   </div>
 
@@ -1519,6 +1519,18 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const fw = document.getElementById('fraud-alert-weight');
     if (fw) fw.textContent = Math.round(Math.max(0, newWeight)).toLocaleString();
   }
+
+  // Live data feed: collapsed until the operator opens it. Lines keep
+  // logging behind the scenes, so opening it shows recent history.
+  function toggleSerialFeed(force) {
+    const open = typeof force === 'boolean' ? force : document.getElementById('serial-log').style.display === 'none';
+    document.getElementById('serial-log').style.display = open ? '' : 'none';
+    document.getElementById('serial-log-tools').style.display = open ? 'flex' : 'none';
+    document.getElementById('serial-log-caret').className = 'fas fa-chevron-' + (open ? 'down' : 'right') + ' w-3';
+    document.getElementById('serial-log-toggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+    try { localStorage.setItem('rc_feed_open', open ? '1' : '0'); } catch (e) {}
+  }
+  try { if (localStorage.getItem('rc_feed_open') === '1') setTimeout(function(){ toggleSerialFeed(true); }, 0); } catch (e) {}
 
   function showFraudAlert(text) {
     document.getElementById('fraud-alert-text').textContent = text;
