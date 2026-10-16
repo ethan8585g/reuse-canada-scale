@@ -7,6 +7,13 @@ export const pricingRoutes = new Hono<{ Bindings: Bindings }>()
 
 pricingRoutes.use('*', authMiddleware, employeeOnly)
 
+// Material notes: plain text, trimmed, capped. Empty means none.
+function cleanNotes(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const t = v.trim().slice(0, 1000)
+  return t || null
+}
+
 // Get all pricing
 pricingRoutes.get('/', async (c) => {
   try {
@@ -24,7 +31,7 @@ pricingRoutes.get('/', async (c) => {
 pricingRoutes.post('/:id', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
-    const { price_per_kg, price_per_tire, description } = await c.req.json()
+    const { price_per_kg, price_per_tire, description, notes } = await c.req.json()
 
     // Negative or NaN prices silently corrupt every ticket priced after the
     // update — validate before binding.
@@ -39,8 +46,9 @@ pricingRoutes.post('/:id', roleRequired('admin', 'manager'), async (c) => {
     const desc = typeof description === 'string' ? description.trim().slice(0, 200) : null
 
     const result = await c.env.DB.prepare(
-      `UPDATE pricing SET price_per_kg = ?, price_per_tire = ?, description = COALESCE(?, description), updated_at = datetime('now') WHERE id = ?`
-    ).bind(price_per_kg, perTire, desc, id).run()
+      `UPDATE pricing SET price_per_kg = ?, price_per_tire = ?, description = COALESCE(?, description),
+              notes = CASE WHEN ? THEN ? ELSE notes END, updated_at = datetime('now') WHERE id = ?`
+    ).bind(price_per_kg, perTire, desc, notes !== undefined ? 1 : 0, cleanNotes(notes), id).run()
     if ((result.meta?.changes ?? 0) === 0) return c.json({ error: 'Pricing row not found' }, 404)
     return c.json({ success: true })
   } catch (err: any) {
@@ -76,7 +84,7 @@ pricingRoutes.post('/:id/pickup', roleRequired('admin', 'manager', 'yard_operato
 // it must be unique and is immutable once tickets reference it. admin/manager only.
 pricingRoutes.post('/', roleRequired('admin', 'manager'), async (c) => {
   try {
-    const { material_type, description, price_per_kg, price_per_tire } = await c.req.json()
+    const { material_type, description, price_per_kg, price_per_tire, notes } = await c.req.json()
 
     if (typeof material_type !== 'string' || !material_type.trim()) {
       return c.json({ error: 'material_type slug is required' }, 400)
@@ -105,14 +113,14 @@ pricingRoutes.post('/', roleRequired('admin', 'manager'), async (c) => {
     if (existing) {
       if (existing.is_active === 1) return c.json({ error: 'A material with this slug already exists' }, 409)
       await c.env.DB.prepare(
-        `UPDATE pricing SET description = ?, price_per_kg = ?, price_per_tire = ?, is_active = 1, updated_at = datetime('now') WHERE id = ?`
-      ).bind(desc, price_per_kg, perTire, existing.id).run()
+        `UPDATE pricing SET description = ?, price_per_kg = ?, price_per_tire = ?, notes = ?, is_active = 1, updated_at = datetime('now') WHERE id = ?`
+      ).bind(desc, price_per_kg, perTire, cleanNotes(notes), existing.id).run()
       return c.json({ id: existing.id, material_type: slug, reactivated: true })
     }
 
     const result = await c.env.DB.prepare(
-      `INSERT INTO pricing (material_type, description, price_per_kg, price_per_tire, is_active) VALUES (?, ?, ?, ?, 1)`
-    ).bind(slug, desc, price_per_kg, perTire).run()
+      `INSERT INTO pricing (material_type, description, price_per_kg, price_per_tire, notes, is_active) VALUES (?, ?, ?, ?, ?, 1)`
+    ).bind(slug, desc, price_per_kg, perTire, cleanNotes(notes)).run()
     return c.json({ id: result.meta.last_row_id, material_type: slug })
   } catch (err: any) {
     console.error('pricing CREATE error:', err)

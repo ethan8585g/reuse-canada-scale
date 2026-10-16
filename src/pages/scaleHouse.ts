@@ -57,7 +57,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   <div class="sh-wrap">
   <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
     <div>
-      <div class="sh-eyebrow">Your yard, at a glance</div>
+      <div class="sh-eyebrow"><span id="sh-brand-name">Reuse Canada</span> · Your yard, at a glance</div>
       <h1 class="sh-title">Scale House<span>.</span></h1>
       <p class="text-sm text-gray-500 mt-1">A clear view of every load, from arrival to receipt.</p>
     </div>
@@ -436,7 +436,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
               <button onclick="startCamera()" id="btn-start-cam" title="Start camera" class="px-2 py-1 bg-rc-green text-white text-[10px] font-semibold rounded hover:opacity-90 btn-press"><i class="fas fa-play"></i></button>
               <button onclick="stopCamera()" id="btn-stop-cam" title="Stop camera" class="hidden px-2 py-1 bg-red-500 text-white text-[10px] font-semibold rounded hover:opacity-90 btn-press"><i class="fas fa-stop"></i></button>
               <button onclick="capturePhoto('manual')" id="btn-capture" title="Capture a still" class="hidden px-2 py-1 bg-blue-600 text-white text-[10px] font-semibold rounded hover:opacity-90 btn-press"><i class="fas fa-camera"></i></button>
-              <button onclick="toggleCameraFullscreen()" id="btn-cam-full" title="Fullscreen" class="px-2 py-1 bg-gray-100 text-gray-500 text-[10px] rounded hover:bg-gray-200"><i class="fas fa-expand"></i></button>
+              <button onclick="openCamConsole()" id="btn-cam-full" title="Open camera console" aria-label="Open camera console" class="px-2 py-1 bg-gray-100 text-gray-500 text-[10px] rounded hover:bg-gray-200"><i class="fas fa-expand"></i></button>
               <button onclick="toggleCameraSettings()" id="btn-cam-settings" title="Camera settings" class="px-2 py-1 bg-gray-100 text-gray-500 text-[10px] rounded hover:bg-gray-200"><i class="fas fa-cog"></i></button>
             </div>
           </div>
@@ -444,7 +444,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           <!-- Live view. Both frame elements are always present; only the one
                matching the configured source is shown, which is what lets the
                hardware change without the rest of the page noticing. -->
-          <div id="camera-stage" class="relative w-full bg-gray-900 rounded-lg overflow-hidden" style="aspect-ratio: 4 / 3;">
+          <div id="camera-stage" class="relative w-full bg-gray-900 rounded-lg overflow-hidden cursor-zoom-in" style="aspect-ratio: 4 / 3;" onclick="if(!event.target.closest(&quot;button&quot;))openCamConsole()" title="Open camera console">
             <video id="camera-preview" autoplay playsinline muted class="cam-frame hidden"></video>
             <img id="camera-net" alt="" class="cam-frame hidden" />
             <canvas id="camera-buffer" class="cam-frame hidden"></canvas>
@@ -679,6 +679,51 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       <span class="w-10 h-10 rounded-xl flex items-center justify-center text-white" style="background:var(--sh-ink)"><i class="fas fa-gear"></i></span>
       <div><h2 class="font-bold">One place for your station setup.</h2><p class="text-xs text-gray-500">Keep daily weighing simple. Come here when you need to adjust how it works.</p></div>
     </div>
+    <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 items-start mb-4">
+      <!-- Branding & appearance: name + colours for this station and its receipts. -->
+      <section class="sh-card p-4 space-y-3" id="br-card" aria-labelledby="br-title">
+        <div><h2 id="br-title" class="font-bold">Branding &amp; appearance</h2><p class="text-xs text-gray-500">Shown on this station and printed on its receipts.</p></div>
+        <label class="block text-xs font-semibold text-gray-600">Business name
+          <input id="br-name" maxlength="60" oninput="brandInput()" class="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-rc-green" />
+        </label>
+        <div>
+          <div class="text-xs font-semibold text-gray-600 mb-1">Presets</div>
+          <div id="br-presets" class="grid grid-cols-4 gap-1.5"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="text-xs font-semibold text-gray-600 flex items-center gap-2">Primary <input type="color" id="br-primary" oninput="brandInput()" class="w-10 h-8 rounded border border-gray-200" aria-label="Primary colour"></label>
+          <label class="text-xs font-semibold text-gray-600 flex items-center gap-2">Accent <input type="color" id="br-accent" oninput="brandInput()" class="w-10 h-8 rounded border border-gray-200" aria-label="Accent colour"></label>
+        </div>
+        <div id="br-preview" class="rounded-xl overflow-hidden border border-gray-200" aria-label="Preview">
+          <div id="br-prev-head" class="px-3 py-2 text-white text-xs font-bold"></div>
+          <div class="px-3 py-3 bg-white flex items-center justify-between gap-2"><span class="text-[11px] text-gray-500">Receipt header and buttons</span><span id="br-prev-btn" class="px-3 py-1.5 rounded-lg text-xs font-bold">Capture weight</span></div>
+        </div>
+        <p id="br-msg" class="text-[11px] leading-snug text-gray-500" role="status"></p>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button type="button" id="br-save" class="sh-btn sh-btn-primary" onclick="brandSave()" disabled>Save</button>
+          <button type="button" id="br-cancel" class="sh-btn" onclick="brandCancel()" disabled>Cancel</button>
+          <button type="button" class="text-xs font-semibold text-gray-500 underline ml-auto" onclick="brandRestore()">Restore default</button>
+        </div>
+      </section>
+
+      <!-- Cameras: several named cameras; one is the ticket-photo camera, which
+           is the one the existing capture pipeline runs. Station-scoped. -->
+      <section class="sh-card p-4 space-y-3" aria-labelledby="cams-title">
+        <div class="flex items-start justify-between gap-2">
+          <div><h2 id="cams-title" class="font-bold">Cameras</h2><p class="text-xs text-gray-500">The ticket camera takes every weigh-in and weigh-out photo. Others are for watching.</p></div>
+          <button type="button" class="sh-btn" onclick="openCamEditor(null)"><i class="fas fa-plus"></i> Add</button>
+        </div>
+        <div id="cams-list" class="space-y-2"></div>
+        <button type="button" class="sh-btn w-full justify-center" onclick="openCamConsole()"><i class="fas fa-expand"></i> Open camera console</button>
+      </section>
+
+      <!-- Photo Vault: every ticket photo already stored, grouped by visit. -->
+      <section class="sh-card p-4 space-y-3" aria-labelledby="vault-title">
+        <div><h2 id="vault-title" class="font-bold">Photo Vault</h2><p class="text-xs text-gray-500">Every weigh-in and weigh-out photo, grouped by visit. Search, open, export.</p></div>
+        <p class="text-[11px] text-gray-400 leading-snug">Photos are the ones saved on scale tickets. Pictures taken from the camera console are kept on this screen only — uploading new pictures is not set up yet.</p>
+        <button type="button" class="sh-btn sh-btn-primary w-full justify-center" onclick="openVault()"><i class="fas fa-images"></i> Open Photo Vault</button>
+      </section>
+    </div>
     <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
       <div class="space-y-4">
       <!-- Scale Agent -->
@@ -769,6 +814,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             <button onclick="printTestReceipt()" class="px-2 py-1.5 bg-gray-700 text-white text-[10px] font-semibold rounded-lg hover:bg-gray-800"><i class="fas fa-vial mr-1"></i> Test Print</button>
             <button onclick="reprintLastReceipt()" class="px-2 py-1.5 bg-gray-100 text-gray-700 text-[10px] font-semibold rounded-lg hover:bg-gray-200 border border-gray-200"><i class="fas fa-redo mr-1"></i> Reprint last</button>
           </div>
+          <button type="button" onclick="openModal('printer-add-modal')" class="w-full px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-dashed border-gray-300 text-gray-600 hover:bg-gray-50"><i class="fas fa-plus mr-1"></i> Add printer</button>
           <label class="flex items-center gap-1.5 text-[10px] text-gray-600">
             <input type="checkbox" id="auto-print-receipt" checked class="rounded"> Auto-print after weigh-out
           </label>
@@ -1054,6 +1100,99 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     </div>
   </div>
 
+  <!-- Add printer: a USB/network printer is installed in macOS, then the
+       bridge lists it. The browser cannot install printers itself. -->
+  <div id="printer-add-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="pa-title">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-md">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 id="pa-title" class="text-base font-bold text-gray-800"><i class="fas fa-print mr-2 text-gray-500"></i>Add a printer</h3>
+        <button type="button" onclick="closeModal('printer-add-modal')" aria-label="Close" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-lg"></i></button>
+      </div>
+      <div class="p-5 space-y-3 text-sm text-gray-700">
+        <ol class="list-decimal pl-5 space-y-2">
+          <li>Plug the printer into this Mac (USB) or connect it to the yard network.</li>
+          <li>On this Mac open <b>System Settings → Printers &amp; Scanners → Add Printer</b> and add it. macOS owns printers; a web page cannot install one.</li>
+          <li>Make sure the scale-bridge is running, then press <b>Find printers</b>.</li>
+          <li>Pick it under <b>Receipt printer</b> and press <b>Test Print</b>.</li>
+        </ol>
+        <div id="pa-result" class="text-xs text-gray-500" role="status"></div>
+        <div class="flex gap-2 pt-1">
+          <button type="button" class="sh-btn sh-btn-primary" style="background:#1f3a2f;color:#fff" onclick="findPrintersAgain()"><i class="fas fa-magnifying-glass"></i> Find printers</button>
+          <button type="button" class="sh-btn" onclick="closeModal('printer-add-modal')">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera editor -->
+  <div id="cam-edit-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[75] items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="ce-title">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-md max-h-[90vh] overflow-y-auto">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 id="ce-title" class="text-base font-bold text-gray-800">Camera</h3>
+        <button type="button" onclick="closeCamEditor()" aria-label="Close" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-lg"></i></button>
+      </div>
+      <div class="p-5 space-y-3 text-sm">
+        <label class="block text-xs font-semibold text-gray-600">Name <input id="ce-name" maxlength="40" class="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:border-rc-green" /></label>
+        <label class="block text-xs font-semibold text-gray-600">Source
+          <select id="ce-source" onchange="camEditorSource()" class="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg bg-white">
+            <option value="network">Yard / IP camera (through the scale-bridge)</option>
+            <option value="webcam">Camera attached to this computer</option>
+          </select>
+        </label>
+        <div id="ce-net" class="space-y-2">
+          <label class="block text-xs font-semibold text-gray-600">Address <input id="ce-url" placeholder="http://127.0.0.1:8090/grab.jpg?oid=1&amp;size=2560x1440" class="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg font-mono text-xs outline-none focus:border-rc-green" /></label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block text-xs font-semibold text-gray-600">Mode <select id="ce-mode" class="mt-1 w-full px-2 py-2 border border-gray-200 rounded-lg bg-white"><option value="snapshot">Snapshots</option><option value="mjpeg">MJPEG stream</option></select></label>
+            <div></div>
+            <label class="block text-xs font-semibold text-gray-600">Username <input id="ce-user" autocomplete="off" class="mt-1 w-full px-2 py-2 border border-gray-200 rounded-lg" /></label>
+            <label class="block text-xs font-semibold text-gray-600">Password <input id="ce-pass" type="password" autocomplete="new-password" class="mt-1 w-full px-2 py-2 border border-gray-200 rounded-lg" /></label>
+          </div>
+          <button type="button" class="text-xs font-semibold text-rc-green hover:underline" onclick="camEditorFindDvr()"><i class="fas fa-magnifying-glass mr-1"></i>Find Agent DVR cameras</button>
+          <div id="ce-dvr" class="flex flex-wrap gap-1.5"></div>
+        </div>
+        <div id="ce-web" class="space-y-2" style="display:none;">
+          <label class="block text-xs font-semibold text-gray-600">Device <select id="ce-device" class="mt-1 w-full px-2 py-2 border border-gray-200 rounded-lg bg-white"><option value="">Default camera</option></select></label>
+        </div>
+        <label class="flex items-center gap-2 text-xs text-gray-600"><input type="checkbox" id="ce-enabled" class="rounded"> Enabled</label>
+        <div id="ce-error" class="text-xs text-red-600 font-semibold" role="alert"></div>
+        <div class="flex gap-2 pt-1">
+          <button type="button" class="sh-btn" style="background:#1f3a2f;color:#fff" onclick="camEditorSave()">Save</button>
+          <button type="button" class="sh-btn" onclick="closeCamEditor()">Cancel</button>
+          <button type="button" id="ce-remove" class="text-xs font-semibold text-red-600 underline ml-auto" onclick="camEditorRemove()">Remove</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera console: full viewport. Real pan/tilt/zoom and talk-back are not
+       available on these connections, so those controls are shown disabled. -->
+  <div id="cam-console" class="fixed inset-0 z-[70] bg-gray-950 text-white flex-col" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="cc-title">
+    <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10 flex-wrap">
+      <div class="min-w-0"><div class="text-[10px] uppercase tracking-widest text-white/50">Camera console</div><h3 id="cc-title" class="font-bold truncate">Cameras</h3></div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <div id="cc-tabs" class="flex gap-1 flex-wrap"></div>
+        <button type="button" class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold" onclick="camConsoleShow('all')"><i class="fas fa-table-cells mr-1"></i>All cameras</button>
+        <button type="button" class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold" onclick="closeCamConsole();openVault()"><i class="fas fa-images mr-1"></i>Photo Vault</button>
+        <button type="button" class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold" onclick="closeCamConsole()" aria-label="Close camera console"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+    <div class="flex-1 min-h-0 flex flex-col lg:flex-row">
+      <div id="cc-view" class="flex-1 min-h-0 p-3 overflow-auto"></div>
+      <div id="cc-controls" class="lg:w-72 border-t lg:border-t-0 lg:border-l border-white/10 p-4 space-y-3 overflow-y-auto"></div>
+    </div>
+  </div>
+
+  <!-- Photo Vault -->
+  <div id="vault-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="vault-modal-title">
+    <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-5xl max-h-[92vh] overflow-y-auto">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between gap-3">
+        <div><div class="text-[11px] font-bold tracking-widest text-gray-400 uppercase">Equipment &amp; settings</div><h3 id="vault-modal-title" class="text-lg font-bold text-gray-800">Photo Vault</h3></div>
+        <button type="button" onclick="closeModal('vault-modal')" aria-label="Close Photo Vault" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div id="vault-body" class="p-5"></div>
+    </div>
+  </div>
+
   <!-- Ticket Detail Modal -->
   <div id="detail-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 items-center justify-center p-4" style="display:none;">
     <div class="bg-white rounded-2xl shadow-modal modal-enter w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1080,6 +1219,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             <div class="col-span-2"><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Display Name *</label><input type="text" id="pm-name" placeholder="e.g. Copper Wire" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-blue-500 outline-none" /></div>
             <div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per kg *</label><input type="number" id="pm-price-kg" step="0.01" min="0" placeholder="0.00" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-blue-500 outline-none font-mono" /></div>
             <div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per tire</label><input type="number" id="pm-price-tire" step="0.01" min="0" placeholder="0.00" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-blue-500 outline-none font-mono" /></div>
+            <div class="col-span-2 sm:col-span-4"><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Notes</label><textarea id="pm-notes" rows="2" maxlength="1000" placeholder="Optional — handling, grading, what counts as this material" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-blue-500 outline-none"></textarea></div>
           </div>
           <div class="mt-3 flex items-center justify-between gap-3">
             <div id="pm-add-error" class="hidden text-xs text-red-600 font-semibold"></div>
@@ -1383,7 +1523,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
   // Station-scoped, like the receipt printer: the camera belongs to the scale
   // house, not to whoever happens to be logged in.
-  function saveCamCfg() { try { localStorage.setItem(CAM_CFG_KEY, JSON.stringify(camCfg)); } catch (e) {} }
+  function saveCamCfg() { try { localStorage.setItem(CAM_CFG_KEY, JSON.stringify(camCfg)); } catch (e) {} if (typeof camsSyncTicket === 'function') camsSyncTicket(); }
 
   // ─── panel state ───
   function camSetStatus(state) {
@@ -2993,7 +3133,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       d.line(M, y - 1.5, W - M, y - 1.5); d.setLineDashPattern([], 0); y += 1.5;
     };
 
-    centre('REUSE CANADA', 13, true);
+    centre(String(receipt.company || 'REUSE CANADA'), 13, true);
     centre('Waste-to-Value Recycling · Alberta', 7);
     centre('www.reusecanadascale.com', 7);
     y += 1; rule();
@@ -3535,6 +3675,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (!frame) agentLog('test print: no camera frame — printing the text-only receipt');
     const how = await printReceiptToThermal({
       ticket_number: 'TEST-PRINT',
+      company: (brandSaved && brandSaved.business_name ? brandSaved.business_name : 'Reuse Canada').toUpperCase(),
       date: new Date().toISOString(),
       customer: 'Test Customer',
       material: 'mixed',
@@ -5120,7 +5261,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       + '<div class="space-y-0.5">' + pricingData.map(function (p) {
         const set = p.pickup_price_per_kg !== null && p.pickup_price_per_kg !== undefined;
         return '<button type="button" onclick="openPickupPriceModal(&quot;' + escHtml(p.material_type) + '&quot;)" class="w-full flex items-center justify-between text-xs py-1.5 px-1 rounded hover:bg-purple-50 border-b border-gray-50 last:border-0 text-left">'
-          + '<span class="text-gray-600">' + escHtml(getMaterialLabel(p.material_type)) + '</span>'
+          + '<span class="text-gray-600 min-w-0"><span class="block">' + escHtml(getMaterialLabel(p.material_type)) + '</span>' + (p.notes ? '<span class="block text-[10px] text-gray-400 leading-snug truncate" title="' + escAttr(p.notes) + '">' + escHtml(p.notes) + '</span>' : '') + '</span>'
           + (set
             ? '<span class="font-mono font-semibold text-gray-800">$' + Number(p.pickup_price_per_kg).toFixed(2) + '/kg <i class="fas fa-pen text-[9px] text-gray-300 ml-1"></i></span>'
             : '<span class="text-[10px] text-purple-600 font-semibold">Set price <i class="fas fa-pen text-[9px] ml-1"></i></span>')
@@ -5160,6 +5301,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     document.getElementById('pm-name').value = '';
     document.getElementById('pm-price-kg').value = '';
     document.getElementById('pm-price-tire').value = '';
+    document.getElementById('pm-notes').value = '';
     document.getElementById('pm-add-error').classList.add('hidden');
     openModal('pricing-modal');
   }
@@ -5185,6 +5327,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             '<div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per kg</label><input type="number" step="0.01" min="0" value="'+ppk+'" data-field="price_per_kg" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm font-mono focus:border-blue-500 outline-none" /></div>' +
             '<div><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">$ per tire</label><input type="number" step="0.01" min="0" value="'+ppt+'" data-field="price_per_tire" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm font-mono focus:border-blue-500 outline-none" /></div>' +
           '</div>' +
+          '<div class="mt-2"><label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Notes</label><textarea rows="2" maxlength="1000" data-field="notes" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:border-blue-500 outline-none">' + escHtml(p.notes || '') + '</textarea></div>' +
           '<div class="mt-2 flex items-center justify-end gap-2"><span class="hidden text-xs text-green-600 font-semibold" data-saved-tag><i class="fas fa-check mr-1"></i>Saved</span><button onclick="saveMaterial('+id+')" class="px-3 py-1.5 bg-rc-green hover:bg-rc-green-light text-white text-xs font-bold rounded-lg btn-press">Save Price</button></div>' +
         '</div>';
     }).join('');
@@ -5207,12 +5350,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (!slug) { errEl.textContent = 'Display name produces an empty slug'; errEl.classList.remove('hidden'); return; }
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Saving...';
     try {
-      await axios.post('/api/pricing', { material_type: slug, description: name, price_per_kg: ppk, price_per_tire: ppt });
+      await axios.post('/api/pricing', { material_type: slug, description: name, price_per_kg: ppk, price_per_tire: ppt, notes: document.getElementById('pm-notes').value });
       await loadPricing();
       renderPricingManagementList();
       document.getElementById('pm-name').value = '';
       document.getElementById('pm-price-kg').value = '';
       document.getElementById('pm-price-tire').value = '';
+      document.getElementById('pm-notes').value = '';
     } catch (err) {
       errEl.textContent = err.response?.data?.error || 'Failed to create material';
       errEl.classList.remove('hidden');
@@ -5229,7 +5373,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (!Number.isFinite(ppk) || ppk < 0) { alert('$/kg must be a non-negative number'); return; }
     if (!Number.isFinite(ppt) || ppt < 0) { alert('$/tire must be a non-negative number'); return; }
     try {
-      await axios.post('/api/pricing/' + id, { price_per_kg: ppk, price_per_tire: ppt });
+      const notesEl = row.querySelector('[data-field="notes"]');
+      await axios.post('/api/pricing/' + id, { price_per_kg: ppk, price_per_tire: ppt, notes: notesEl ? notesEl.value : undefined });
       await loadPricing();
       // Flash a "Saved" tag inline instead of re-rendering the row mid-edit.
       const tag = row.querySelector('[data-saved-tag]');
@@ -5522,6 +5667,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   }
 
   function shInitLayout() {
+    loadBranding();
+    renderCamsList();
     let tab = 'station';
     try { tab = localStorage.getItem('rc_sh_tab') || 'station'; } catch (e) {}
     shShowTab(tab);
@@ -5531,6 +5678,607 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     shSyncStrip();
     setInterval(shSyncStrip, 2000);
   }
+
+
+  // ══════════════════════════════════════════
+  // SETTINGS: branding, printers, cameras, Photo Vault
+  // ══════════════════════════════════════════
+
+  // ── Branding & appearance ──
+  // Saved server-side (admin/manager). Editing changes the page immediately as
+  // a preview; Cancel or Escape puts the saved look back.
+  const BRAND_PRESETS = [['Forest', '#1f3a2f', '#dcf2a2'], ['Ocean', '#1e3a5f', '#bfe3ff'], ['Charcoal', '#262b30', '#ffd27a'], ['Clay', '#6b2f1a', '#ffd9b8']];
+  let brandSaved = null, brandDefaults = null, brandDirty = false;
+  function brandLum(hex) {
+    const v = [1, 3, 5].map(function (i) { const c = parseInt(hex.slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  }
+  function brandContrast(a, b) { const x = brandLum(a), y = brandLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+  function applyBrand(b) {
+    if (!b) return;
+    document.querySelectorAll('.sh-wrap, #sh-pay-modal').forEach(function (el) {
+      el.style.setProperty('--sh-ink', b.primary_color);
+      el.style.setProperty('--sh-ink2', b.primary_color);
+      el.style.setProperty('--sh-lime', b.accent_color);
+    });
+    shText('sh-brand-name', b.business_name);
+  }
+  function brandForm() {
+    return {
+      business_name: document.getElementById('br-name').value.trim(),
+      primary_color: document.getElementById('br-primary').value,
+      accent_color: document.getElementById('br-accent').value,
+    };
+  }
+  function brandFill(b) {
+    document.getElementById('br-name').value = b.business_name;
+    document.getElementById('br-primary').value = b.primary_color;
+    document.getElementById('br-accent').value = b.accent_color;
+    brandPaint();
+  }
+  function brandCheck(b) {
+    if (!b.business_name) return 'Business name is required.';
+    if (brandContrast(b.primary_color, '#ffffff') < 4.5) return 'Primary is too light for white text (' + brandContrast(b.primary_color, '#ffffff').toFixed(1) + ':1, needs 4.5:1).';
+    if (brandContrast(b.accent_color, '#14241d') < 4.5) return 'Accent is too dark for dark text (' + brandContrast(b.accent_color, '#14241d').toFixed(1) + ':1, needs 4.5:1).';
+    return '';
+  }
+  function brandPaint() {
+    const b = brandForm();
+    const head = document.getElementById('br-prev-head');
+    head.style.background = b.primary_color; head.textContent = (b.business_name || 'Business name').toUpperCase();
+    const btn = document.getElementById('br-prev-btn');
+    btn.style.background = b.accent_color; btn.style.color = '#14241d';
+    const problem = brandCheck(b);
+    const msg = document.getElementById('br-msg');
+    msg.className = 'text-[11px] leading-snug ' + (problem ? 'text-red-600 font-semibold' : 'text-gray-500');
+    msg.textContent = problem || (brandDirty ? 'Previewing on this page. Save to keep it, or Cancel.' : 'Saved.');
+    const canEdit = ['admin', 'manager'].includes(currentUserRole);
+    document.getElementById('br-save').disabled = !canEdit || !brandDirty || !!problem;
+    document.getElementById('br-cancel').disabled = !brandDirty;
+    document.querySelectorAll('#br-presets button').forEach(function (x) {
+      x.setAttribute('aria-pressed', x.dataset.p === b.primary_color && x.dataset.a === b.accent_color ? 'true' : 'false');
+    });
+    if (!canEdit) msg.textContent = (problem ? problem + ' ' : '') + 'Only an admin or manager can change branding.';
+  }
+  function brandInput() {
+    brandDirty = true;
+    const b = brandForm();
+    if (!brandCheck(b)) applyBrand(b);
+    brandPaint();
+  }
+  function brandPreset(i) {
+    const pr = BRAND_PRESETS[i];
+    document.getElementById('br-primary').value = pr[1];
+    document.getElementById('br-accent').value = pr[2];
+    brandInput();
+  }
+  function brandCancel() { if (!brandSaved) return; brandDirty = false; brandFill(brandSaved); applyBrand(brandSaved); }
+  function brandRestore() { if (!brandDefaults) return; brandFill(brandDefaults); brandInput(); }
+  async function brandSave() {
+    const b = brandForm();
+    const problem = brandCheck(b);
+    if (problem) { brandPaint(); return; }
+    try {
+      const res = await axios.put('/api/scale-agent/branding', b);
+      brandSaved = res.data.branding; brandDirty = false;
+      brandFill(brandSaved); applyBrand(brandSaved);
+      agentLog('branding saved: ' + brandSaved.business_name);
+    } catch (e) {
+      const msg = document.getElementById('br-msg');
+      msg.className = 'text-[11px] leading-snug text-red-600 font-semibold';
+      msg.textContent = (e.response && e.response.data && e.response.data.error) || 'Could not save branding.';
+    }
+  }
+  async function loadBranding() {
+    const box = document.getElementById('br-presets');
+    if (box) box.innerHTML = BRAND_PRESETS.map(function (pr, i) {
+      return '<button type="button" data-p="' + pr[1] + '" data-a="' + pr[2] + '" aria-pressed="false" onclick="brandPreset(' + i + ')" class="rounded-lg border border-gray-200 p-1.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-50 aria-pressed:ring-2">'
+        + '<span class="flex h-4 rounded overflow-hidden mb-1"><span class="flex-1" style="background:' + pr[1] + '"></span><span class="flex-1" style="background:' + pr[2] + '"></span></span>' + pr[0] + '</button>';
+    }).join('');
+    const canEdit = ['admin', 'manager'].includes(currentUserRole);
+    ['br-name', 'br-primary', 'br-accent'].forEach(function (id) { const e = document.getElementById(id); if (e) e.disabled = !canEdit; });
+    try {
+      const res = await axios.get('/api/scale-agent/branding');
+      brandSaved = res.data.branding; brandDefaults = res.data.defaults;
+      brandDirty = false; brandFill(brandSaved); applyBrand(brandSaved);
+    } catch (e) {
+      const msg = document.getElementById('br-msg');
+      if (msg) msg.textContent = 'Branding could not be loaded; using the default look.';
+    }
+  }
+
+  // ── Add printer ──
+  async function findPrintersAgain() {
+    const out = document.getElementById('pa-result');
+    out.textContent = 'Looking…';
+    try { await loadBridgePrinters(); } catch (e) {}
+    const opts = Array.from(document.querySelectorAll('#receipt-printer option')).filter(function (o) { return o.value; });
+    out.textContent = opts.length
+      ? 'Found ' + opts.length + ' printer' + (opts.length === 1 ? '' : 's') + ': ' + opts.map(function (o) { return o.textContent; }).join(', ') + '. Pick one under Receipt printer.'
+      : 'No printers found. Check that the scale-bridge is running on this Mac and the printer is added in System Settings. ' + (((document.getElementById('receipt-printer-hint') || {}).textContent) || '').trim();
+  }
+
+  // ── Cameras ──
+  // A station can have several named cameras. Exactly one is the ticket
+  // camera: the existing capture pipeline runs it and every weigh-in and
+  // weigh-out photo comes from it. The others are view-only in the console.
+  // Station-scoped (localStorage), like the camera settings always were.
+  const CAMS_KEY = 'rc_cameras';
+  let camsState = null;
+  function camsPersist() { try { localStorage.setItem(CAMS_KEY, JSON.stringify(camsState)); } catch (e) {} }
+  function camsGet() {
+    if (camsState) return camsState;
+    try { camsState = JSON.parse(localStorage.getItem(CAMS_KEY) || 'null'); } catch (e) { camsState = null; }
+    if (!camsState || !Array.isArray(camsState.list) || !camsState.list.length) {
+      camsState = { list: [{ id: 'cam1', name: 'Scale camera', enabled: true, cfg: loadCamCfg() }], ticketId: 'cam1' };
+      camsPersist();
+    }
+    if (!camsState.list.some(function (c) { return c.id === camsState.ticketId; })) camsState.ticketId = camsState.list[0].id;
+    return camsState;
+  }
+  function camById(id) { return camsGet().list.find(function (c) { return c.id === id; }) || null; }
+  function camsSyncTicket() {
+    const t = camById(camsGet().ticketId);
+    if (t) { t.cfg = Object.assign({}, camCfg); camsPersist(); renderCamsList(); }
+  }
+  function camSummary(cfg) {
+    if (!cfg || cfg.source !== 'network') return 'This computer’s camera';
+    if (!cfg.url) return 'Yard camera — no address yet';
+    const m = String(cfg.url).match(/oid=([0-9]+)/);
+    return 'Yard camera' + (m ? ' (Agent DVR #' + m[1] + ')' : '') + ' · ' + (cfg.netMode === 'mjpeg' ? 'stream' : 'snapshots');
+  }
+  function renderCamsList() {
+    const el = document.getElementById('cams-list');
+    if (!el) return;
+    const st = camsGet();
+    el.innerHTML = st.list.map(function (c) {
+      const isTicket = c.id === st.ticketId;
+      return '<div class="border border-gray-200 rounded-xl p-2.5">'
+        + '<div class="flex items-center justify-between gap-2"><div class="min-w-0"><div class="text-sm font-semibold truncate">' + escHtml(c.name) + '</div><div class="text-[10px] text-gray-400 truncate">' + escHtml(camSummary(c.cfg)) + '</div></div>'
+        + (isTicket ? '<span class="sh-pill sh-pill-yard shrink-0">Ticket camera</span>' : '') + (!c.enabled ? '<span class="sh-pill sh-pill-free shrink-0">Paused</span>' : '') + '</div>'
+        + '<div class="flex flex-wrap gap-1.5 mt-2">'
+          + '<button type="button" class="sh-btn" onclick="openCamConsole(&quot;' + c.id + '&quot;)"' + (c.enabled ? '' : ' disabled') + '><i class="fas fa-eye"></i> View</button>'
+          + '<button type="button" class="sh-btn" onclick="toggleCamEnabled(&quot;' + c.id + '&quot;)">' + (c.enabled ? 'Pause' : 'Resume') + '</button>'
+          + (isTicket ? '' : '<button type="button" class="sh-btn" onclick="setTicketCamera(&quot;' + c.id + '&quot;)"' + (c.enabled ? '' : ' disabled') + '>Use for ticket photos</button>')
+          + '<button type="button" class="sh-btn" onclick="openCamEditor(&quot;' + c.id + '&quot;)"><i class="fas fa-pen"></i> Edit</button>'
+        + '</div>'
+        + (isTicket && !c.enabled ? '<div class="text-[10px] text-red-600 font-semibold mt-1.5">Paused: tickets are getting no photos.</div>' : '')
+        + '</div>';
+    }).join('');
+  }
+  function camsRefreshViews() { renderCamsList(); if (activeModalId === 'cam-console' || camConsoleOpen()) camConsoleShow(ccState.view); }
+  function setTicketCamera(id) {
+    const c = camById(id);
+    if (!c || !c.enabled) return;
+    camsGet().ticketId = id; camsPersist();
+    camCfg = Object.assign({}, CAM_DEFAULTS, c.cfg);
+    try { localStorage.setItem(CAM_CFG_KEY, JSON.stringify(camCfg)); } catch (e) {}
+    camApplyCfgToUI(); camApplyTransform();
+    startCamera();
+    agentLog('ticket photos now come from ' + c.name);
+    camsRefreshViews();
+  }
+  function toggleCamEnabled(id) {
+    const c = camById(id);
+    if (!c) return;
+    c.enabled = !c.enabled; camsPersist();
+    if (id === camsGet().ticketId) { if (c.enabled) startCamera(); else stopCamera(); }
+    camsRefreshViews();
+  }
+
+  // Editor
+  let camEditId = null, camEditPrevModal = null;
+  function closeCamEditor() {
+    document.getElementById('cam-edit-modal').style.display = 'none';
+    activeModalId = camEditPrevModal; camEditPrevModal = null;
+  }
+  async function openCamEditor(id) {
+    camEditId = id;
+    const c = id ? camById(id) : null;
+    const cfg = c ? c.cfg : Object.assign({}, CAM_DEFAULTS, { source: 'network', netMode: 'snapshot' });
+    shText('ce-title', c ? 'Edit ' + c.name : 'Add a camera');
+    document.getElementById('ce-name').value = c ? c.name : 'Camera ' + (camsGet().list.length + 1);
+    document.getElementById('ce-source').value = cfg.source === 'network' ? 'network' : 'webcam';
+    document.getElementById('ce-url').value = cfg.url || '';
+    document.getElementById('ce-mode').value = cfg.netMode === 'mjpeg' ? 'mjpeg' : 'snapshot';
+    document.getElementById('ce-user').value = cfg.user || '';
+    document.getElementById('ce-pass').value = cfg.pass || '';
+    document.getElementById('ce-enabled').checked = c ? !!c.enabled : true;
+    document.getElementById('ce-error').textContent = '';
+    document.getElementById('ce-dvr').innerHTML = '';
+    document.getElementById('ce-remove').style.display = c && id !== camsGet().ticketId ? '' : 'none';
+    camEditorSource();
+    const sel = document.getElementById('ce-device');
+    try {
+      const devs = (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) ? await navigator.mediaDevices.enumerateDevices() : [];
+      sel.innerHTML = '<option value="">Default camera</option>' + devs.filter(function (d) { return d.kind === 'videoinput'; }).map(function (d, i) {
+        return '<option value="' + escAttr(d.deviceId) + '">' + escHtml(d.label || 'Camera ' + (i + 1)) + '</option>';
+      }).join('');
+      sel.value = cfg.deviceId || '';
+    } catch (e) {}
+    camEditPrevModal = activeModalId === 'cam-edit-modal' ? camEditPrevModal : activeModalId;
+    document.getElementById('cam-edit-modal').style.display = 'flex';
+    activeModalId = 'cam-edit-modal';
+  }
+  function camEditorSource() {
+    const net = document.getElementById('ce-source').value === 'network';
+    document.getElementById('ce-net').style.display = net ? '' : 'none';
+    document.getElementById('ce-web').style.display = net ? 'none' : '';
+  }
+  async function camEditorFindDvr() {
+    const box = document.getElementById('ce-dvr');
+    box.innerHTML = '<span class="text-xs text-gray-500">Looking for Agent DVR…</span>';
+    try {
+      const r = await fetch(BRIDGE_URL + '/camera/agentdvr', { cache: 'no-store' });
+      const d = await r.json();
+      if (!d.ok || !d.cameras || !d.cameras.length) { box.innerHTML = '<span class="text-xs text-red-600">' + escHtml(d.error || 'No Agent DVR cameras found.') + '</span>'; return; }
+      box.innerHTML = d.cameras.map(function (c) {
+        const url = 'http://' + d.host + ':' + d.port + '/grab.jpg?oid=' + c.id + '&size=2560x1440';
+        return '<button type="button" class="sh-btn" data-url="' + escAttr(url) + '" data-name="' + escAttr(c.name) + '" onclick="camEditorPick(this)"><i class="fas fa-video"></i> ' + escHtml(c.name) + '</button>';
+      }).join('');
+    } catch (e) {
+      box.innerHTML = '<span class="text-xs text-red-600">' + escHtml(bridgeUnreachableMsg('')) + '</span>';
+    }
+  }
+  function camEditorPick(btn) {
+    document.getElementById('ce-url').value = btn.dataset.url;
+    document.getElementById('ce-mode').value = 'snapshot';
+    document.getElementById('ce-user').value = ''; document.getElementById('ce-pass').value = '';
+    const n = document.getElementById('ce-name');
+    if (!n.value.trim() || /^Camera [0-9]+$/.test(n.value.trim())) n.value = btn.dataset.name;
+  }
+  function camEditorSave() {
+    const err = document.getElementById('ce-error');
+    const name = document.getElementById('ce-name').value.trim();
+    const source = document.getElementById('ce-source').value;
+    const url = document.getElementById('ce-url').value.trim();
+    if (!name) { err.textContent = 'Give the camera a name.'; return; }
+    if (source === 'network' && !url) { err.textContent = 'Enter the camera address, or use Find Agent DVR cameras.'; return; }
+    if (source === 'network' && looksLikeRtsp(url)) { err.textContent = 'That is an RTSP address, which no browser can show. Add the camera to Agent DVR and pick it with Find Agent DVR cameras.'; return; }
+    if (source === 'network' && url.indexOf('http://') !== 0 && url.indexOf('https://') !== 0) { err.textContent = 'The address must start with http:// or https://'; return; }
+    const st = camsGet();
+    let c = camEditId ? camById(camEditId) : null;
+    const cfg = Object.assign({}, CAM_DEFAULTS, c ? c.cfg : {}, {
+      source: source, url: url, netMode: document.getElementById('ce-mode').value,
+      user: document.getElementById('ce-user').value.trim(), pass: document.getElementById('ce-pass').value,
+      deviceId: document.getElementById('ce-device').value || '',
+    });
+    const enabled = document.getElementById('ce-enabled').checked;
+    if (!c) { c = { id: 'cam' + Date.now(), name: name, enabled: enabled, cfg: cfg }; st.list.push(c); }
+    else { c.name = name; c.enabled = enabled; c.cfg = cfg; }
+    camsPersist();
+    closeCamEditor();
+    if (c.id === st.ticketId) {
+      camCfg = Object.assign({}, cfg);
+      try { localStorage.setItem(CAM_CFG_KEY, JSON.stringify(camCfg)); } catch (e) {}
+      camApplyCfgToUI(); camApplyTransform();
+      if (enabled) startCamera(); else stopCamera();
+    }
+    camsRefreshViews();
+  }
+  function camEditorRemove() {
+    const st = camsGet();
+    if (!camEditId || camEditId === st.ticketId) return;
+    st.list = st.list.filter(function (c) { return c.id !== camEditId; });
+    camsPersist(); closeCamEditor(); camsRefreshViews();
+  }
+
+  // Console
+  let ccState = { view: 'all' }, ccViewers = [];
+  function camConsoleOpen() { const e = document.getElementById('cam-console'); return !!e && e.style.display !== 'none'; }
+  function openCamConsole(id) {
+    const st = camsGet();
+    openModal('cam-console');
+    camConsoleShow(id || st.ticketId);
+  }
+  function closeCamConsole() { ccStopAll(); closeModal('cam-console'); }
+  function ccStopAll() { ccViewers.forEach(function (v) { try { v.stop(); } catch (e) {} }); ccViewers = []; }
+  function camProxyUrlFor(cfg, path) {
+    let q = '?url=' + encodeURIComponent((cfg.url || '').trim());
+    if (cfg.user) q += '&user=' + encodeURIComponent(cfg.user) + '&pass=' + encodeURIComponent(cfg.pass || '');
+    return BRIDGE_URL + path + q;
+  }
+  // A live view of one camera inside a box. Returns { el, stop }. The ticket
+  // camera is mirrored from the running pipeline rather than opened twice.
+  function ccMakeViewer(c, slow) {
+    const st = camsGet();
+    const box = document.createElement('div');
+    box.className = 'relative w-full h-full bg-black rounded-xl overflow-hidden flex items-center justify-center';
+    const note = document.createElement('div');
+    note.className = 'absolute inset-0 flex items-center justify-center text-xs text-white/60 p-4 text-center';
+    let stopped = false, timer = 0, raf = 0, stream = null, media = null;
+    const say = function (t) { note.textContent = t; note.style.display = t ? '' : 'none'; };
+    box.appendChild(note);
+    if (c.id === st.ticketId) {
+      const cv = document.createElement('canvas');
+      cv.className = 'max-w-full max-h-full';
+      cv.style.transform = (camCfg.mirror ? 'scaleX(-1) ' : '') + (camCfg.rotate ? 'rotate(' + camCfg.rotate + 'deg)' : '');
+      box.insertBefore(cv, note); media = cv;
+      const draw = function () {
+        if (stopped) return;
+        const size = camFrameSize();
+        if (camActive && camKind && size) {
+          const src = camKind === 'webcam' ? document.getElementById('camera-preview') : camKind === 'snapshot' ? document.getElementById('camera-buffer') : document.getElementById('camera-net');
+          if (cv.width !== size.w || cv.height !== size.h) { cv.width = size.w; cv.height = size.h; }
+          try { cv.getContext('2d').drawImage(src, 0, 0, size.w, size.h); say(''); } catch (e) { say('No picture from this camera'); }
+        } else {
+          say(camActive ? 'Connecting…' : 'Camera is off. Start it from the camera panel.');
+        }
+        raf = requestAnimationFrame(draw);
+      };
+      draw();
+    } else if (c.cfg && c.cfg.source === 'network') {
+      const img = document.createElement('img');
+      img.crossOrigin = 'anonymous';
+      img.className = 'max-w-full max-h-full object-contain';
+      box.insertBefore(img, note); media = img;
+      say('Connecting…');
+      if (c.cfg.netMode === 'mjpeg') {
+        img.onload = function () { say(''); };
+        img.onerror = function () { say('Cannot reach this camera through the scale-bridge.'); };
+        img.src = camProxyUrlFor(c.cfg, '/camera/mjpeg');
+      } else {
+        const next = function () { if (!stopped) img.src = camProxyUrlFor(c.cfg, '/camera/snapshot') + '&t=' + Date.now(); };
+        img.onload = function () { say(''); timer = setTimeout(next, slow ? 2000 : 700); };
+        img.onerror = function () { say('Cannot reach this camera through the scale-bridge. Retrying…'); timer = setTimeout(next, 3000); };
+        next();
+      }
+    } else {
+      const v = document.createElement('video');
+      v.autoplay = true; v.muted = true; v.playsInline = true;
+      v.className = 'max-w-full max-h-full';
+      box.insertBefore(v, note); media = v;
+      say('Connecting…');
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ video: c.cfg && c.cfg.deviceId ? { deviceId: { exact: c.cfg.deviceId } } : true, audio: false })
+          .then(function (s) { if (stopped) { s.getTracks().forEach(function (t) { t.stop(); }); return; } stream = s; v.srcObject = s; say(''); })
+          .catch(function (e) { say('This computer’s camera is not available: ' + (e && e.message ? e.message : 'blocked')); });
+      } else say('This browser cannot open a camera.');
+    }
+    return {
+      el: box, media: function () { return media; },
+      stop: function () {
+        stopped = true; clearTimeout(timer); if (raf) cancelAnimationFrame(raf);
+        if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+        if (media && media.tagName === 'IMG') { media.onload = null; media.onerror = null; media.src = ''; }
+      },
+    };
+  }
+  function camConsoleShow(which) {
+    ccStopAll();
+    const st = camsGet();
+    ccState.view = which;
+    const view = document.getElementById('cc-view'), ctl = document.getElementById('cc-controls');
+    document.getElementById('cc-tabs').innerHTML = st.list.map(function (c) {
+      const on = c.id === which;
+      return '<button type="button" onclick="camConsoleShow(&quot;' + c.id + '&quot;)" class="px-3 py-1.5 rounded-lg text-xs font-semibold ' + (on ? 'bg-white text-gray-900' : 'bg-white/10 hover:bg-white/20') + '">' + escHtml(c.name) + (c.enabled ? '' : ' (paused)') + '</button>';
+    }).join('');
+    if (which === 'all') {
+      shText('cc-title', 'All cameras');
+      view.innerHTML = '<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3" id="cc-grid"></div>';
+      const grid = document.getElementById('cc-grid');
+      st.list.forEach(function (c) {
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'text-left rounded-xl overflow-hidden border border-white/10 hover:border-white/40';
+        tile.setAttribute('aria-label', 'Open ' + c.name);
+        tile.onclick = function () { camConsoleShow(c.id); };
+        const holder = document.createElement('div');
+        holder.style.aspectRatio = '16 / 9';
+        tile.appendChild(holder);
+        const cap = document.createElement('div');
+        cap.className = 'px-3 py-2 text-xs flex justify-between';
+        cap.innerHTML = '<span class="font-semibold">' + escHtml(c.name) + '</span><span class="text-white/50">' + (c.id === st.ticketId ? 'Ticket camera' : (c.enabled ? 'Live' : 'Paused')) + '</span>';
+        tile.appendChild(cap);
+        grid.appendChild(tile);
+        if (c.enabled) { const v = ccMakeViewer(c, true); holder.appendChild(v.el); ccViewers.push(v); }
+        else holder.innerHTML = '<div class="w-full h-full bg-black flex items-center justify-center text-xs text-white/50">Paused</div>';
+      });
+      ctl.innerHTML = '<p class="text-xs text-white/60">Pick a camera to see it full size and use its controls.</p>';
+      return;
+    }
+    const c = camById(which);
+    if (!c) { camConsoleShow('all'); return; }
+    shText('cc-title', c.name + (c.id === st.ticketId ? ' · ticket camera' : ''));
+    view.innerHTML = '';
+    view.style.display = 'flex';
+    let v = null;
+    if (c.enabled) { v = ccMakeViewer(c, false); view.appendChild(v.el); ccViewers.push(v); }
+    else view.innerHTML = '<div class="w-full h-full min-h-[40vh] rounded-xl bg-black flex items-center justify-center text-sm text-white/60">This camera is paused.</div>';
+    const off = !c.enabled;
+    const noPtz = 'Pan, tilt and zoom are not available: this camera is connected as a picture feed with no control channel.';
+    const pad = function (icon, label) { return '<button type="button" disabled aria-disabled="true" title="' + noPtz + '" aria-label="' + label + '" class="w-10 h-10 rounded-lg bg-white/5 text-white/30 cursor-not-allowed"><i class="fas fa-' + icon + '"></i></button>'; };
+    ctl.innerHTML =
+      '<button type="button" onclick="ccTakePicture()" ' + (off ? 'disabled' : '') + ' class="w-full px-3 py-2.5 rounded-xl bg-white text-gray-900 font-bold text-sm disabled:opacity-40"><i class="fas fa-camera mr-1"></i> Take picture</button>'
+      + '<div id="cc-msg" class="text-[11px] text-white/60 leading-snug" role="status"></div>'
+      + '<button type="button" onclick="toggleCamEnabled(&quot;' + c.id + '&quot;)" class="w-full px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold">' + (off ? 'Resume camera' : 'Pause camera') + '</button>'
+      + '<div><div class="text-[10px] uppercase tracking-widest text-white/40 mb-1.5">Pan · tilt · zoom</div>'
+        + '<div class="grid grid-cols-3 gap-1.5 w-max">' + '<span></span>' + pad('chevron-up', 'Tilt up') + '<span></span>' + pad('chevron-left', 'Pan left') + pad('house', 'Home position') + pad('chevron-right', 'Pan right') + pad('magnifying-glass-minus', 'Zoom out') + pad('chevron-down', 'Tilt down') + pad('magnifying-glass-plus', 'Zoom in') + '</div>'
+        + '<p class="text-[10px] text-white/40 mt-1.5 leading-snug">' + noPtz + '</p></div>'
+      + '<div><button type="button" disabled aria-disabled="true" class="w-full px-3 py-2 rounded-xl bg-white/5 text-white/30 text-sm font-semibold cursor-not-allowed"><i class="fas fa-microphone mr-1"></i> Start talking</button>'
+        + '<p class="text-[10px] text-white/40 mt-1.5 leading-snug">Two-way audio is not available on this camera connection. The microphone is never opened.</p></div>'
+      + (c.id === st.ticketId ? '' : '<button type="button" onclick="setTicketCamera(&quot;' + c.id + '&quot;)" ' + (off ? 'disabled' : '') + ' class="w-full px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold disabled:opacity-40">Use for ticket photos</button>')
+      + '<button type="button" onclick="openCamEditor(&quot;' + c.id + '&quot;)" class="w-full px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold"><i class="fas fa-pen mr-1"></i> Camera settings</button>';
+  }
+  function ccTakePicture() {
+    const st = camsGet();
+    const c = camById(ccState.view);
+    const msg = document.getElementById('cc-msg');
+    if (!c || !c.enabled) return;
+    let data = null;
+    if (c.id === st.ticketId) {
+      data = capturePhoto('manual');
+    } else {
+      const v = ccViewers[0], m = v && v.media();
+      const w = m && (m.naturalWidth || m.videoWidth), h = m && (m.naturalHeight || m.videoHeight);
+      if (w && h) {
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        try { cv.getContext('2d').drawImage(m, 0, 0, w, h); data = cv.toDataURL('image/jpeg', 0.85); camPushRecent(data, c.name); } catch (e) { data = null; }
+      }
+    }
+    if (msg) msg.textContent = data
+      ? 'Saved to Recent captures under the camera panel. It stays on this screen; it is not uploaded.'
+      : 'No picture: the camera has no live frame right now.';
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (!camConsoleOpen()) return;
+    if (document.hidden) ccStopAll(); else camConsoleShow(ccState.view);
+  });
+
+  // ── Photo Vault ──
+  // A view over the photos already stored on scale tickets: every visit with
+  // its weigh-in and weigh-out frames, searchable and exportable. Pairing is
+  // the ticket itself: both photos belong to the ticket they were taken for.
+  let vaultRows = [], vaultDetailId = null, vaultSearchTimer = 0;
+  function vaultStatus(t) {
+    const a = !!t.has_photo_in, b = !!t.has_photo_out;
+    return a && b ? 'paired' : (a ? 'arrival' : (b ? 'departure' : 'none'));
+  }
+  function vaultStatusPill(t) {
+    const s = vaultStatus(t);
+    if (s === 'paired') return '<span class="sh-pill sh-pill-paid">In + out</span>';
+    if (s === 'arrival') return '<span class="sh-pill sh-pill-due">Arrival only</span>';
+    return '<span class="sh-pill sh-pill-due">Departure only</span>';
+  }
+  function openVault() {
+    vaultDetailId = null;
+    const today = new Date(), week = new Date(Date.now() - 6 * 86400000);
+    document.getElementById('vault-body').innerHTML =
+      '<div class="flex flex-wrap items-end gap-2 mb-3">'
+        + '<label class="text-[11px] text-gray-500">From<input type="date" id="vault-from" value="' + shLocalDate(week) + '" onchange="vaultLoad()" class="block mt-0.5 text-xs border border-gray-200 rounded-lg px-2 py-1.5"></label>'
+        + '<label class="text-[11px] text-gray-500">To<input type="date" id="vault-to" value="' + shLocalDate(today) + '" onchange="vaultLoad()" class="block mt-0.5 text-xs border border-gray-200 rounded-lg px-2 py-1.5"></label>'
+        + '<label class="text-[11px] text-gray-500">Photos<select id="vault-status" onchange="vaultRenderList()" class="block mt-0.5 text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white"><option value="">All visits</option><option value="paired">In + out</option><option value="arrival">Arrival only</option><option value="departure">Departure only</option></select></label>'
+        + '<label class="text-[11px] text-gray-500 flex-1 min-w-[12rem]">Search<input type="search" id="vault-q" placeholder="Ticket, customer or plate" oninput="clearTimeout(vaultSearchTimer);vaultSearchTimer=setTimeout(vaultLoad,350)" class="block w-full mt-0.5 text-xs border border-gray-200 rounded-lg px-2 py-1.5"></label>'
+        + '<button type="button" class="sh-btn" onclick="vaultExportCsv()"><i class="fas fa-download"></i> Export CSV</button>'
+      + '</div>'
+      + '<p class="text-[11px] text-gray-400 mb-3">Camera: every stored photo was taken by the ticket camera of its day; the camera’s name was not recorded per photo. Times shown in ' + escHtml(Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time') + '.</p>'
+      + '<div id="vault-list"></div>';
+    openModal('vault-modal');
+    vaultLoad();
+  }
+  async function vaultLoad() {
+    const list = document.getElementById('vault-list');
+    if (!list) return;
+    list.innerHTML = '<div class="py-8 text-center text-sm text-gray-400"><i class="fas fa-spinner fa-spin mr-1"></i>Loading…</div>';
+    const q = ['limit=300'];
+    const f = document.getElementById('vault-from').value, t = document.getElementById('vault-to').value, s = document.getElementById('vault-q').value.trim();
+    if (f) q.push('date_from=' + encodeURIComponent(f));
+    if (t) q.push('date_to=' + encodeURIComponent(t));
+    if (s) q.push('search=' + encodeURIComponent(s));
+    try {
+      const res = await axios.get('/api/scale-tickets?' + q.join('&'));
+      vaultRows = (res.data.tickets || []).filter(function (x) { return x.has_photo_in || x.has_photo_out; });
+      vaultTruncated = !!(res.data.summary && res.data.summary.truncated);
+      vaultRenderList();
+    } catch (e) {
+      list.innerHTML = '<div class="py-8 text-center text-sm text-red-500">Could not load photos. <button type="button" class="underline" onclick="vaultLoad()">Retry</button></div>';
+    }
+  }
+  let vaultTruncated = false;
+  function vaultFiltered() {
+    const st = (document.getElementById('vault-status') || {}).value || '';
+    return vaultRows.filter(function (t) { return !st || vaultStatus(t) === st; });
+  }
+  function vaultRenderList() {
+    const list = document.getElementById('vault-list');
+    if (!list) return;
+    const rows = vaultFiltered();
+    if (!rows.length) { list.innerHTML = '<div class="py-10 text-center text-sm text-gray-400">No photos for these filters.</div>'; return; }
+    list.innerHTML = '<div class="border border-gray-100 rounded-xl overflow-x-auto"><table class="sh-table"><thead><tr><th>Visit</th><th>Customer · material</th><th>Vehicle</th><th>Photos</th><th class="text-right">Weights</th></tr></thead><tbody>'
+      + rows.map(function (t) {
+        const look = parseLook(t.appearance_in) || parseLook(t.appearance_out);
+        const veh = [t.vehicle_plate ? escHtml(t.vehicle_plate) : '', look ? escHtml([look.color, look.body].filter(Boolean).join(' ')) : ''].filter(Boolean).join(' · ') || '<span class="text-gray-400">Not recorded</span>';
+        return '<tr class="sh-click" tabindex="0" onclick="vaultDetail(' + t.id + ')" onkeydown="if(event.key===&quot;Enter&quot;)vaultDetail(' + t.id + ')">'
+          + '<td><div class="font-bold text-rc-green">' + escHtml(t.ticket_number) + '</div><div class="text-[11px] text-gray-400">' + shWhen(t.weight_in_at || t.created_at) + '</div></td>'
+          + '<td>' + escHtml(shCustomerKey(t)) + '<div class="text-[11px] text-gray-400">' + escHtml(getMaterialLabel(t.tire_type)) + ' · ' + (ticketKind(t) === 'pickup' ? 'Pickup' : 'Drop-off') + '</div></td>'
+          + '<td>' + veh + (t.driver_display_name ? '<div class="text-[11px] text-gray-400">' + escHtml(t.driver_display_name) + '</div>' : '') + '</td>'
+          + '<td>' + vaultStatusPill(t) + '</td>'
+          + '<td class="text-right tabular-nums text-xs">' + shKg(t.weight_in) + '<br>' + shKg(t.weight_out) + '</td></tr>';
+      }).join('') + '</tbody></table></div>'
+      + (vaultTruncated ? '<p class="text-[11px] text-amber-600 mt-2">Showing the newest 300 tickets in this range. Narrow the dates to see older ones.</p>' : '');
+  }
+  async function vaultDetail(id) {
+    vaultDetailId = id;
+    const list = document.getElementById('vault-list');
+    list.innerHTML = '<div class="py-8 text-center text-sm text-gray-400"><i class="fas fa-spinner fa-spin mr-1"></i>Loading…</div>';
+    try {
+      const t = (await axios.get('/api/scale-tickets/' + id)).data.ticket;
+      vaultCurrent = t;
+      const nr = '<span class="text-gray-400">Not recorded</span>';
+      const row = function (l, v) { return '<div class="flex justify-between gap-3 py-1.5 border-b border-gray-50 text-sm"><span class="text-gray-500">' + l + '</span><span class="text-right">' + v + '</span></div>'; };
+      const lookTxt = function (raw) { const a = parseLook(raw); return a ? escHtml([a.color, a.make, a.body, a.markings].filter(Boolean).join(' · ')) : nr; };
+      const shot = function (src, label, when, kg, plate, look) {
+        if (!src) return '<div class="rounded-xl bg-gray-50 border border-dashed border-gray-200 flex items-center justify-center text-sm text-gray-400" style="aspect-ratio:4/3">No ' + label.toLowerCase() + ' photo</div>';
+        return '<figure><img src="' + src + '" alt="' + escAttr(label + ' photo of ' + t.ticket_number) + '" class="w-full rounded-xl border border-gray-200">'
+          + '<figcaption class="text-[11px] text-gray-500 mt-1.5 leading-snug"><b>' + label + '</b> · ' + shWhen(when) + ' · ' + shKg(kg)
+          + (plate ? ' · plate ' + escHtml(plate) : '') + ' · ' + lookTxt(look)
+          + ' · <a class="text-rc-green underline" download="' + escAttr(t.ticket_number + '-' + label.toLowerCase() + '.jpg') + '" href="' + src + '">Download</a></figcaption></figure>';
+      };
+      const verify = { ok: 'Checked: same vehicle in both photos', mismatch: 'Checked: the photos do not agree — needs review', unverifiable: 'Checked: could not tell from these photos' }[t.verify_status] || 'Not double-checked yet';
+      list.innerHTML = '<button type="button" class="text-xs font-semibold text-rc-green hover:underline mb-3" onclick="vaultRenderList()">← All visits</button>'
+        + '<div class="flex items-center gap-2 mb-3"><h4 class="font-bold">' + escHtml(t.ticket_number) + '</h4>' + vaultStatusPill({ has_photo_in: !!t.photo_in, has_photo_out: !!t.photo_out }) + '</div>'
+        + '<div class="grid md:grid-cols-2 gap-4 mb-4">'
+          + shot(t.photo_in, 'Weigh-in', t.photo_in_at || t.weight_in_at, t.weight_in, t.vehicle_plate, t.appearance_in)
+          + shot(t.photo_out, 'Weigh-out', t.photo_out_at || t.weight_out_at, t.weight_out, t.plate_out, t.appearance_out)
+        + '</div>'
+        + '<div class="grid md:grid-cols-2 gap-6">'
+          + '<div>' + row('Customer', escHtml(shCustomerKey(t))) + row('Material', escHtml(getMaterialLabel(t.tire_type))) + row('Type', ticketKind(t) === 'pickup' ? 'Pickup' : 'Drop-off')
+            + row('Driver', t.driver_display_name ? escHtml(t.driver_display_name) : nr) + row('Status', escHtml(t.status || '')) + '</div>'
+          + '<div>' + row('Plate', t.vehicle_plate ? escHtml(t.vehicle_plate) + ' <span class="text-[10px] text-gray-400">' + (t.plate_source === 'vision' ? 'read by camera' : 'entered by operator') + '</span>' : nr)
+            + row('Net', shKg(t.net_weight)) + row('Paired by', 'Same ticket (photo taken when it opened and when it closed)')
+            + row('Photo check', escHtml(verify) + (t.verify_note ? '<div class="text-[11px] text-gray-400">' + escHtml(t.verify_note) + '</div>' : '')) + '</div>'
+        + '</div>'
+        + '<div class="flex flex-wrap gap-2 mt-4"><button type="button" class="sh-btn" onclick="closeModal(&quot;vault-modal&quot;);loadTicketDetail(' + t.id + ')"><i class="fas fa-receipt"></i> Open ticket</button>'
+        + '<button type="button" class="sh-btn" onclick="vaultReport()"><i class="fas fa-file-lines"></i> Visit report</button></div>';
+    } catch (e) {
+      list.innerHTML = '<div class="py-8 text-center text-sm text-red-500">Could not load this visit. <button type="button" class="underline" onclick="vaultDetail(' + id + ')">Retry</button></div>';
+    }
+  }
+  let vaultCurrent = null;
+  // A portable, printable page for one visit: both photos and the facts.
+  function vaultReport() {
+    const t = vaultCurrent;
+    if (!t) return;
+    const w = window.open('', '_blank');
+    if (!w) { alert('The report window was blocked. Allow pop-ups for this site and try again.'); return; }
+    const esc = function (v) { return escHtml(v === null || v === undefined || v === '' ? 'Not recorded' : String(v)); };
+    const img = function (src, label) { return src ? '<figure><img src="' + src + '" style="width:100%;border:1px solid #ddd;border-radius:8px"><figcaption>' + label + '</figcaption></figure>' : '<p>No ' + label.toLowerCase() + ' photo.</p>'; };
+    const brand = brandSaved ? brandSaved.business_name : 'Reuse Canada';
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + esc(t.ticket_number) + ' visit report</title>'
+      + '<style>body{font-family:system-ui,sans-serif;margin:24px;color:#14241d}table{border-collapse:collapse;width:100%}td{padding:6px 8px;border-bottom:1px solid #eee;font-size:14px}td:first-child{color:#666;width:35%}.g{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}figcaption{font-size:12px;color:#666;margin-top:4px}</style></head><body>'
+      + '<h1 style="margin:0">' + esc(brand) + '</h1><h2 style="margin:4px 0 0">Visit report · ' + esc(t.ticket_number) + '</h2>'
+      + '<p style="color:#666;font-size:12px">Generated ' + esc(new Date().toLocaleString('en-CA')) + ' (' + esc(Intl.DateTimeFormat().resolvedOptions().timeZone) + ')</p>'
+      + '<div class="g">' + img(t.photo_in, 'Weigh-in ' + esc(t.photo_in_at || t.weight_in_at)) + img(t.photo_out, 'Weigh-out ' + esc(t.photo_out_at || t.weight_out_at)) + '</div>'
+      + '<table>'
+      + [['Customer', shCustomerKey(t)], ['Material', getMaterialLabel(t.tire_type)], ['Type', ticketKind(t) === 'pickup' ? 'Pickup' : 'Drop-off'], ['Plate', t.vehicle_plate], ['Driver', t.driver_display_name],
+         ['Weight in (kg)', t.weight_in], ['Weight out (kg)', t.weight_out], ['Net (kg)', t.net_weight], ['Status', t.status], ['Photo check', t.verify_status], ['Paired by', 'Same ticket']]
+        .map(function (r) { return '<tr><td>' + escHtml(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>'; }).join('')
+      + '</table></body></html>');
+    w.document.close();
+  }
+  function vaultExportCsv() {
+    const rows = vaultFiltered();
+    const cell = function (v) { const x = v === null || v === undefined ? '' : String(v); return '"' + x.replace(/"/g, '""') + '"'; };
+    const head = ['Ticket', 'Weigh-in at', 'Weigh-out at', 'Photos', 'Customer', 'Material', 'Type', 'Plate', 'Driver', 'Weight in (kg)', 'Weight out (kg)', 'Paired by'];
+    const lines = [head.map(cell).join(',')].concat(rows.map(function (t) {
+      return [t.ticket_number, t.weight_in_at, t.weight_out_at, vaultStatus(t), shCustomerKey(t), getMaterialLabel(t.tire_type), ticketKind(t), t.vehicle_plate, t.driver_display_name, t.weight_in, t.weight_out, 'same ticket'].map(cell).join(',');
+    }));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join(String.fromCharCode(13, 10))], { type: 'text/csv' }));
+    a.download = 'photo-vault-' + shLocalDate(new Date()) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  // Escape: the camera console must stop its feeds when it closes, and an
+  // unsaved branding draft reverts. Capture phase, ahead of the page handler.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (activeModalId === 'cam-edit-modal') { e.preventDefault(); e.stopPropagation(); closeCamEditor(); return; }
+    if (activeModalId === 'cam-console') { e.preventDefault(); e.stopPropagation(); closeCamConsole(); return; }
+    const card = document.getElementById('br-card');
+    if (brandDirty && card && card.contains(document.activeElement)) { e.preventDefault(); e.stopPropagation(); brandCancel(); }
+  }, true);
 
   // ══════════════════════════════════════════
   // DROP-OFF / PICKUP
@@ -6059,7 +6807,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     const printArea = document.getElementById('print-area');
     if (printArea.parentNode !== document.body) document.body.appendChild(printArea);
     printArea.innerHTML =
-      '<div class="print-center print-bold" style="font-size:15px;letter-spacing:2px">REUSE CANADA</div>' +
+      '<div class="print-center print-bold" style="font-size:15px;letter-spacing:2px">' + escHtml(r.company || 'REUSE CANADA') + '</div>' +
       '<div class="print-center" style="font-size:9px">Waste-to-Value Recycling &middot; Alberta</div>' +
       '<div class="print-center" style="font-size:9px">www.reusecanadascale.com</div>' +
       '<div class="print-divider"></div>' +

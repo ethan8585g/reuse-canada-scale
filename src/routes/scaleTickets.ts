@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { photoOversize } from '../utils/photo'
 import { GST_RATE, cents, billableKg } from '../utils/money'
+import { getBranding } from '../utils/branding'
 import { parseTicketType, ticketTypeOf, ticketNet, pickupRate, priceTicket } from '../utils/ticketPricing'
 import { todayEdmonton } from '../utils/date'
 import { hashPassword } from '../utils/passwords'
@@ -1091,7 +1092,7 @@ scaleTicketRoutes.get('/:id/receipt', async (c) => {
 
     return c.json({
       receipt: {
-        company: 'REUSE CANADA',
+        company: (await getBranding(c.env.DB)).business_name.toUpperCase(),
         tagline: 'Waste-to-Value Recycling',
         location: 'Alberta, Canada',
         ticket_number: ticket.ticket_number,

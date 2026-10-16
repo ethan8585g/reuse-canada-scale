@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import Anthropic from '@anthropic-ai/sdk'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { ticketTypeOf, ticketNet, priceTicket } from '../utils/ticketPricing'
+import { getBranding, validateBranding, BRANDING_DEFAULTS } from '../utils/branding'
 
 // ANTHROPIC_API_KEY is a Cloudflare secret and is read only here. The frame it
 // describes is captured in the browser, but the key must never go there.
@@ -712,6 +713,31 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
     candidates: fresh,
   }
 }
+
+// ─── Station branding ───
+// Read by every employee (the page needs it to draw itself); changed only by
+// admin/manager. Validation, including colour contrast, lives in
+// utils/branding.ts.
+scaleAgentRoutes.get('/branding', async (c) => {
+  return c.json({ branding: await getBranding(c.env.DB), defaults: BRANDING_DEFAULTS })
+})
+scaleAgentRoutes.put('/branding', roleRequired('admin', 'manager'), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const v = validateBranding(body)
+    if (!v.ok) return c.json({ error: v.error }, 400)
+    await c.env.DB.prepare(
+      `INSERT INTO station_branding (id, business_name, primary_color, accent_color, updated_by, updated_at)
+       VALUES (1, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET business_name = excluded.business_name, primary_color = excluded.primary_color,
+         accent_color = excluded.accent_color, updated_by = excluded.updated_by, updated_at = excluded.updated_at`
+    ).bind(v.value.business_name, v.value.primary_color, v.value.accent_color, c.get('userId')).run()
+    return c.json({ success: true, branding: v.value })
+  } catch (err: any) {
+    console.error('branding PUT error:', err)
+    return c.json({ error: 'Server error' }, 500)
+  }
+})
 
 // ─── GET /settings ───
 scaleAgentRoutes.get('/settings', async (c) => {
