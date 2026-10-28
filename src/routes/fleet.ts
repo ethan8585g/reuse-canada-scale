@@ -1,12 +1,139 @@
 import { Hono } from 'hono'
 import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { todayEdmonton } from '../utils/date'
+import { postDispatchMessage } from './dispatch'
 
 type Bindings = { DB: D1Database }
 
 export const fleetRoutes = new Hono<{ Bindings: Bindings }>()
 
 fleetRoutes.use('*', authMiddleware, employeeOnly)
+
+// Drivers get only their own trucks ("My Truck" in the driver portal) — never
+// the office fleet. Everything else under /api/fleet is closed to them.
+fleetRoutes.use('*', async (c, next) => {
+  if (c.req.path.startsWith('/api/fleet/my-trucks')) return next()
+  const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(c.get('userId')).first()
+  if (me?.role === 'driver') return c.json({ error: 'Insufficient permissions' }, 403)
+  return next()
+})
+
+// ── My Truck (driver-owned vehicles) ─────────────────────────────────────
+// Every query is pinned to owner_employee_id = caller, so a driver can neither
+// see nor change anyone else's truck or the office fleet. Each change also
+// drops a system note into the driver's dispatch thread, which is how the
+// office finds out (it shows as unread in Dispatch).
+const MY_TRUCK_FIELDS = ['name', 'plate_number', 'vehicle_type', 'model', 'year', 'color', 'vin', 'tare_weight', 'odometer', 'insurance_expiry', 'registration_expiry', 'driver_notes', 'photo']
+const MY_TRUCK_TYPES = ['pickup', 'cube_van', 'flatbed', 'tandem', 'tractor', 'trailer', 'roll_off', 'other']
+const MAX_TRUCK_PHOTO = 900_000 // chars of data URL, ~650 KB image
+
+function cleanTruck(body: any): { values: Record<string, any> } | { error: string } {
+  const v: Record<string, any> = {}
+  for (const f of MY_TRUCK_FIELDS) {
+    if (body[f] === undefined) continue
+    let x = body[f]
+    if (typeof x === 'string') x = x.trim()
+    v[f] = x === '' ? null : x
+  }
+  if ('name' in v && !v.name) return { error: 'Give the truck a name' }
+  if (v.name && String(v.name).length > 80) return { error: 'Name is too long' }
+  if (v.vehicle_type && !MY_TRUCK_TYPES.includes(v.vehicle_type)) return { error: 'Unknown truck type' }
+  if (v.year != null) {
+    const y = Number(v.year)
+    if (!Number.isInteger(y) || y < 1950 || y > new Date().getFullYear() + 1) return { error: 'Year looks wrong' }
+    v.year = y
+  }
+  for (const n of ['tare_weight', 'odometer']) {
+    if (v[n] != null) {
+      const x = Number(v[n])
+      if (!Number.isFinite(x) || x < 0) return { error: (n === 'odometer' ? 'Odometer' : 'Empty weight') + ' must be a positive number' }
+      v[n] = x
+    }
+  }
+  for (const d of ['insurance_expiry', 'registration_expiry']) {
+    if (v[d] != null && !/^\d{4}-\d{2}-\d{2}$/.test(v[d])) return { error: 'Dates must be YYYY-MM-DD' }
+  }
+  if (v.photo != null && (!String(v.photo).startsWith('data:image/') || String(v.photo).length > MAX_TRUCK_PHOTO)) {
+    return { error: 'Photo is too large or not an image' }
+  }
+  for (const t of ['plate_number', 'model', 'color', 'vin']) if (v[t] != null && String(v[t]).length > 60) return { error: 'A field is too long' }
+  if (v.driver_notes != null && String(v.driver_notes).length > 1000) return { error: 'Notes are too long' }
+  return { values: v }
+}
+
+function truckSummary(t: any) {
+  return [t.name, [t.year, t.color, t.model].filter(Boolean).join(' '), t.plate_number ? 'plate ' + t.plate_number : '']
+    .filter(Boolean).join(' · ')
+}
+
+fleetRoutes.get('/my-trucks', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT id, name, plate_number, vehicle_type, model, year, color, vin, tare_weight, odometer,
+              insurance_expiry, registration_expiry, driver_notes, photo, created_at
+       FROM vehicles WHERE owner_employee_id = ? AND is_active = 1 ORDER BY created_at`
+    ).bind(c.get('userId')).all()
+    return c.json({ trucks: results })
+  } catch (err: any) {
+    console.error('my trucks error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.post('/my-trucks', async (c) => {
+  try {
+    const parsed = cleanTruck(await c.req.json())
+    if ('error' in parsed) return c.json({ error: parsed.error }, 400)
+    const v = parsed.values
+    if (!v.name) return c.json({ error: 'Give the truck a name' }, 400)
+    const me = c.get('userId') as number
+    const cols = Object.keys(v)
+    const res = await c.env.DB.prepare(
+      `INSERT INTO vehicles (${cols.join(', ')}, owner_employee_id, icon) VALUES (${cols.map(() => '?').join(', ')}, ?, 'fas fa-truck')`
+    ).bind(...cols.map((k) => v[k]), me).run()
+    await postDispatchMessage(c.env.DB, me, me, 'system', 'Added a truck in My Truck: ' + truckSummary(v) + '. It is now in My Garage.')
+    return c.json({ success: true, id: res.meta.last_row_id })
+  } catch (err: any) {
+    console.error('my truck create error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+fleetRoutes.put('/my-trucks/:id', async (c) => {
+  try {
+    const me = c.get('userId') as number
+    const own = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ? AND owner_employee_id = ? AND is_active = 1').bind(c.req.param('id'), me).first()
+    if (!own) return c.json({ error: 'Truck not found' }, 404)
+    const parsed = cleanTruck(await c.req.json())
+    if ('error' in parsed) return c.json({ error: parsed.error }, 400)
+    const v = parsed.values
+    const cols = Object.keys(v)
+    if (!cols.length) return c.json({ error: 'Nothing to update' }, 400)
+    await c.env.DB.prepare(`UPDATE vehicles SET ${cols.map((k) => k + ' = ?').join(', ')} WHERE id = ? AND owner_employee_id = ?`)
+      .bind(...cols.map((k) => v[k]), own.id, me).run()
+    const changed = cols.filter((k) => k !== 'photo' && String((own as any)[k] ?? '') !== String(v[k] ?? ''))
+    if (changed.length || ('photo' in v && v.photo !== (own as any).photo)) {
+      await postDispatchMessage(c.env.DB, me, me, 'system', 'Updated truck ' + truckSummary({ ...own, ...v }) +
+        (changed.length ? ' (changed: ' + changed.map((k) => k.replace(/_/g, ' ')).join(', ') + ')' : ' (new photo)'))
+    }
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('my truck update error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// Removing hides the truck rather than deleting it: the office may already
+// have tickets, fuel logs or notes against it.
+fleetRoutes.delete('/my-trucks/:id', async (c) => {
+  try {
+    const me = c.get('userId') as number
+    const own = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ? AND owner_employee_id = ? AND is_active = 1').bind(c.req.param('id'), me).first()
+    if (!own) return c.json({ error: 'Truck not found' }, 404)
+    await c.env.DB.prepare('UPDATE vehicles SET is_active = 0 WHERE id = ?').bind(own.id).run()
+    await postDispatchMessage(c.env.DB, me, me, 'system', 'Removed truck ' + truckSummary(own) + ' from My Truck.')
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error('my truck remove error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
 
 // Whole numbers of days between today (Edmonton) and an ISO date. Negative
 // means expired. Null dates return null so the UI can show "not on file"
@@ -92,7 +219,13 @@ fleetRoutes.get('/vehicles', async (c) => {
   try {
     const today = todayEdmonton()
     const [{ results: vehicles }, { results: repairs }] = await Promise.all([
-      c.env.DB.prepare('SELECT * FROM vehicles ORDER BY name').all(),
+      c.env.DB.prepare(
+        `SELECT v.*, o.first_name || ' ' || o.last_name AS owner_name
+         FROM vehicles v LEFT JOIN employees o ON o.id = v.owner_employee_id
+         -- a truck its driver removed from My Truck is history, not fleet
+         WHERE NOT (v.owner_employee_id IS NOT NULL AND v.is_active = 0)
+         ORDER BY v.name`
+      ).all(),
       c.env.DB.prepare(
         "SELECT vehicle_id, COUNT(*) as n FROM work_orders WHERE status != 'completed' AND work_type = 'repair' GROUP BY vehicle_id"
       ).all(),

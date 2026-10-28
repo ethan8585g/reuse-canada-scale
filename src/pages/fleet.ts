@@ -330,13 +330,15 @@ export function renderFleet(): string {
             '<div class="flex items-center gap-3">' +
               '<div class="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center"><i class="' + (v.icon || 'fas fa-truck') + ' text-blue-600"></i></div>' +
               '<div><div class="font-bold text-gray-800">' + escHtml(v.name) + '</div>' +
-              '<div class="text-xs text-gray-500 font-mono">' + escHtml(v.plate_number || 'no plate') + '</div></div>' +
+              '<div class="text-xs text-gray-500 font-mono">' + escHtml(v.plate_number || 'no plate') + '</div>' +
+              (v.owner_employee_id ? '<div class="mt-1"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700" title="' + escAttr(v.driver_notes ? 'Driver notes: ' + v.driver_notes : 'Set up by the driver in the driver portal') + '"><i class="fas fa-user mr-1"></i>Driver' + String.fromCharCode(39) + 's truck · ' + escHtml(v.owner_name || 'driver') + '</span></div>' : '') +
+              '</div>' +
             '</div>' +
             '<span class="px-2.5 py-1 rounded-full text-xs font-semibold ' +
               (!v.tracked ? 'bg-gray-100 text-gray-500' : pct >= 80 ? 'bg-green-50 text-green-800' : pct >= 65 ? 'bg-orange-50 text-orange-800' : 'bg-red-50 text-red-800') + '">' +
               (v.tracked ? pct + '%' : 'Not set up') + '</span>' +
           '</div>' +
-          '<div class="text-xs text-gray-500 mb-2.5">' + escHtml(v.model || '—') + '</div>' +
+          '<div class="text-xs text-gray-500 mb-2.5">' + escHtml([v.year, v.color, v.model].filter(Boolean).join(' ') || '—') + '</div>' +
           '<div class="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-1.5"><div class="h-full rounded-full" style="width:' + pct + '%;background:' + healthColor(pct) + '"></div></div>' +
           '<div class="flex justify-between text-[11px] text-gray-400 mb-3.5"><span>' + num(v.odometer) + ' ' + v.unit + '</span><span>' + escHtml(v.next_service || 'no interval set') + '</span></div>' +
           '<div class="grid grid-cols-3 gap-2 mb-3.5">' +

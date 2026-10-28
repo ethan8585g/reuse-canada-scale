@@ -320,7 +320,8 @@ employeeRoutes.get('/drivers', async (c) => {
 })
 
 // Get all vehicles
-employeeRoutes.get('/vehicles', async (c) => {
+// Office fleet list — drivers only ever see their own trucks (/api/fleet/my-trucks).
+employeeRoutes.get('/vehicles', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const showAll = c.req.query('all')
     const sql = showAll ? 'SELECT * FROM vehicles ORDER BY name' : 'SELECT * FROM vehicles WHERE is_active = 1 ORDER BY name'

@@ -7,6 +7,7 @@ export function employeeSidebar(activePage: string): string {
     { id: 'scale-tickets', icon: 'fas fa-receipt', label: 'Ticket History', href: '/employee/scale-tickets', roles: ['admin','manager','yard_operator'] },
     { id: 'pickups', icon: 'fas fa-truck-pickup', label: 'Pickup Requests', href: '/employee/pickups', roles: ['admin','manager'] },
     { id: 'routing', icon: 'fas fa-route', label: 'Routing', href: '/employee/routing', roles: ['admin','manager'] },
+    { id: 'dispatch', icon: 'fas fa-headset', label: 'Dispatch', href: '/employee/dispatch', roles: ['admin','manager'] },
     { id: 'customers', icon: 'fas fa-users', label: 'Customers', href: '/employee/customers', roles: ['admin','manager'] },
     { id: 'drivers', icon: 'fas fa-id-badge', label: 'Drivers & Staff', href: '/employee/drivers', roles: ['admin','manager'] },
     { id: 'fleet', icon: 'fas fa-screwdriver-wrench', label: 'My Garage', href: '/employee/fleet', roles: ['admin','manager','yard_operator'] },
@@ -76,6 +77,7 @@ export function employeeSidebar(activePage: string): string {
           }">
           <i class="${item.icon} w-5 text-center"></i>
           <span>${item.label}</span>
+          ${item.id === 'dispatch' ? '<span id="nav-dispatch-badge" class="ml-auto min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold items-center justify-center" style="display:none;"></span>' : ''}
         </a>
         `).join('')}
         
@@ -500,6 +502,21 @@ export function employeePageWrapper(activePage: string, pageTitle: string, conte
       const allowedRoles = (el.getAttribute('data-roles') || '').split(',');
       if (!allowedRoles.includes(userRole)) el.style.display = 'none';
     });
+
+    // Unread driver messages on the Dispatch nav item (admin/manager only).
+    window.refreshDispatchBadge = async function() {
+      if (userRole !== 'admin' && userRole !== 'manager') return;
+      if (typeof axios === 'undefined' || document.hidden) return;
+      try {
+        const r = await axios.get('/api/dispatch/unread');
+        const b = document.getElementById('nav-dispatch-badge');
+        const n = r.data.unread || 0;
+        b.textContent = n > 9 ? '9+' : String(n);
+        b.style.display = n > 0 ? 'flex' : 'none';
+      } catch (e) {}
+    };
+    setTimeout(window.refreshDispatchBadge, 1500);
+    setInterval(window.refreshDispatchBadge, 30000);
 
     // Kiosk mode detection
     if (window.location.search.includes('kiosk')) {

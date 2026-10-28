@@ -1157,7 +1157,7 @@ scaleTicketRoutes.post('/:id/receipt-printed', async (c) => {
 // ═══════════════════════════════════════
 
 // List vehicles with stored tare weights
-scaleTicketRoutes.get('/vehicles/tare', async (c) => {
+scaleTicketRoutes.get('/vehicles/tare', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
       'SELECT id, name, plate_number, vehicle_type, tare_weight, stored_tare_weight FROM vehicles WHERE is_active = 1 ORDER BY name'

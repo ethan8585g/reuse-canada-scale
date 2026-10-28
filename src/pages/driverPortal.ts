@@ -1,4 +1,5 @@
 import { layout } from '../utils/layout'
+import { dispatchComposerHtml, DISPATCH_CHAT_SCRIPT } from '../utils/dispatchChat'
 
 export function renderDriverPortal(): string {
   return layout('Driver Portal', `
@@ -47,6 +48,13 @@ export function renderDriverPortal(): string {
             <a href="#" onclick="showDriverTab('scaletickets')" id="nav-scaletickets" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-green-100 hover:bg-white/10 transition-colors text-sm">
               <i class="fas fa-weight w-5 text-center"></i> Scale Tickets
             </a>
+            <a href="#" onclick="showDriverTab('dispatch')" id="nav-dispatch" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-green-100 hover:bg-white/10 transition-colors text-sm">
+              <i class="fas fa-headset w-5 text-center"></i> Dispatch
+              <span id="dispatch-badge" class="ml-auto min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center" style="display:none;"></span>
+            </a>
+            <a href="#" onclick="showDriverTab('mytruck')" id="nav-mytruck" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-green-100 hover:bg-white/10 transition-colors text-sm">
+              <i class="fas fa-truck w-5 text-center"></i> My Truck
+            </a>
             <a href="/employee/field-form?from=driver" id="nav-fieldform" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-green-100 hover:bg-white/10 transition-colors text-sm">
               <i class="fas fa-camera w-5 text-center"></i> Field Form
             </a>
@@ -71,11 +79,11 @@ export function renderDriverPortal(): string {
     <div class="lg:hidden fixed inset-0 bg-black/50 z-40" id="driver-sidebar-overlay" style="display:none" onclick="toggleDriverSidebar()"></div>
 
     <!-- Main Content -->
-    <main class="flex-1 lg:ml-0 min-h-screen">
+    <main class="flex-1 min-w-0 lg:ml-0 min-h-screen">
       <div class="pt-16 lg:pt-0 p-4 lg:p-6 max-w-6xl mx-auto">
 
         <!-- Top Bar -->
-        <div class="flex items-center justify-between mb-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4 lg:mb-6">
           <div>
             <h1 class="text-xl font-bold text-gray-800" id="page-title">Dashboard</h1>
             <p class="text-sm text-gray-500" id="page-date"></p>
@@ -174,8 +182,124 @@ export function renderDriverPortal(): string {
           </div>
         </div>
 
+        <!-- ═══ TAB: DISPATCH ═══ -->
+        <div id="tab-dispatch" style="display:none">
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden" style="height: calc(100vh - 170px); min-height: 420px;">
+            <div class="p-4 border-b border-gray-100 flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-green-50 text-rc-green flex items-center justify-center"><i class="fas fa-headset"></i></div>
+              <div>
+                <div class="font-bold text-gray-800 text-sm">Dispatch</div>
+                <div class="text-xs text-gray-400">Questions, photos and files go straight to the pickup coordinators</div>
+              </div>
+            </div>
+            ${dispatchComposerHtml()}
+          </div>
+        </div>
+
+        <!-- ═══ TAB: MY TRUCK ═══ -->
+        <div id="tab-mytruck" style="display:none">
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+            <div class="p-4 border-b border-gray-100 flex items-center justify-between gap-3">
+              <div>
+                <h2 class="font-bold text-gray-800"><i class="fas fa-truck text-rc-green mr-2"></i> My Truck</h2>
+                <p class="text-xs text-gray-400 mt-0.5">Trucks you add here are sent to the office. Only you can see them.</p>
+              </div>
+              <button onclick="openTruckModal()" class="shrink-0 px-3 py-2 bg-rc-green hover:bg-rc-green-light text-white text-sm font-semibold rounded-lg"><i class="fas fa-plus mr-1"></i> Add truck</button>
+            </div>
+            <div id="trucks-list" class="p-4 grid sm:grid-cols-2 gap-4">
+              <div class="sm:col-span-2 p-6 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </main>
+
+    <!-- My Truck Modal -->
+    <div id="truck-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
+          <h3 class="text-lg font-bold text-gray-800" id="truck-modal-title"><i class="fas fa-truck mr-2 text-rc-green"></i>Add a truck</h3>
+          <button onclick="closeTruckModal()" class="text-gray-400 hover:text-gray-600" aria-label="Close"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <form class="p-5 space-y-4" onsubmit="saveTruck(event)">
+          <input type="hidden" id="t-id">
+          <div>
+            <div id="t-photo-box" onclick="document.getElementById('t-photo-input').click()" class="cursor-pointer border-2 border-dashed border-gray-300 rounded-xl h-36 flex items-center justify-center bg-gray-50 hover:border-rc-green overflow-hidden">
+              <div id="t-photo-empty" class="text-center text-gray-400 text-sm"><i class="fas fa-camera text-2xl mb-1 block"></i>Add a photo (optional)</div>
+              <img id="t-photo-img" class="w-full h-full object-cover" style="display:none" alt="Truck photo">
+            </div>
+            <input type="file" id="t-photo-input" accept="image/*" class="hidden" onchange="pickTruckPhoto(this)">
+            <button type="button" id="t-photo-clear" onclick="setTruckPhoto(null)" class="text-xs text-gray-400 hover:text-red-600 mt-1" style="display:none">Remove photo</button>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="col-span-2">
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-name">Name *</label>
+              <input id="t-name" required maxlength="80" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="e.g. My white F-550">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-type">Type</label>
+              <select id="t-type" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none bg-white">
+                <option value="">Choose...</option>
+                <option value="pickup">Pickup truck</option>
+                <option value="cube_van">Cube van</option>
+                <option value="flatbed">Flatbed</option>
+                <option value="tandem">Tandem / straight truck</option>
+                <option value="tractor">Tractor (semi)</option>
+                <option value="trailer">Trailer</option>
+                <option value="roll_off">Roll-off</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-year">Year</label>
+              <input id="t-year" type="number" inputmode="numeric" min="1950" max="2100" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="2019">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-model">Make &amp; model</label>
+              <input id="t-model" maxlength="60" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="Ford F-550">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-color">Colour</label>
+              <input id="t-color" maxlength="60" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="White">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-plate">Licence plate</label>
+              <input id="t-plate" maxlength="60" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none uppercase" placeholder="ABC1234">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-vin">VIN</label>
+              <input id="t-vin" maxlength="60" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none uppercase" placeholder="17 characters">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-tare">Empty weight (kg)</label>
+              <input id="t-tare" type="number" inputmode="decimal" min="0" step="any" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="If you know it">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-odo">Odometer (km)</label>
+              <input id="t-odo" type="number" inputmode="numeric" min="0" step="any" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-ins">Insurance expires</label>
+              <input id="t-ins" type="date" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-reg">Registration expires</label>
+              <input id="t-reg" type="date" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none">
+            </div>
+            <div class="col-span-2">
+              <label class="block text-sm font-medium text-gray-600 mb-1" for="t-notes">Notes for the office</label>
+              <textarea id="t-notes" rows="2" maxlength="1000" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="Anything dispatch should know about this truck"></textarea>
+            </div>
+          </div>
+          <div id="t-error" class="text-sm text-red-600" style="display:none"></div>
+          <div class="flex gap-3">
+            <button type="submit" id="t-save" class="flex-1 bg-rc-green hover:bg-rc-green-light text-white font-bold py-3 rounded-xl disabled:opacity-50"><i class="fas fa-check mr-1"></i> <span id="t-save-text">Add truck</span></button>
+            <button type="button" onclick="closeTruckModal()" class="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <!-- Upload Proof of Work Modal -->
     <div id="proof-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none">
@@ -215,7 +339,7 @@ export function renderDriverPortal(): string {
     </div>
 
     <!-- Notification Success Toast -->
-    <div id="proof-toast" class="fixed top-4 right-4 bg-green-600 text-white px-6 py-4 rounded-xl shadow-2xl z-50 transform translate-x-full transition-transform duration-300">
+    <div id="proof-toast" class="fixed top-4 right-4 bg-green-600 text-white px-6 py-4 rounded-xl shadow-2xl z-50 transition-transform duration-300" style="transform: translateX(calc(100% + 2rem));">
       <div class="flex items-center gap-3">
         <i class="fas fa-check-circle text-xl"></i>
         <div>
@@ -226,6 +350,7 @@ export function renderDriverPortal(): string {
     </div>
   </div>
 
+  ${DISPATCH_CHAT_SCRIPT}
   <script>
     // ═══ AUTH CHECK ═══
     const session = JSON.parse(localStorage.getItem('rc_session') || '{}');
@@ -278,7 +403,7 @@ export function renderDriverPortal(): string {
     }
 
     // ═══ TAB NAVIGATION ═══
-    const tabs = ['dashboard', 'pickups', 'routes', 'scaletickets'];
+    const tabs = ['dashboard', 'pickups', 'routes', 'scaletickets', 'dispatch', 'mytruck'];
     function showDriverTab(tab) {
       tabs.forEach(t => {
         document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
@@ -291,13 +416,15 @@ export function renderDriverPortal(): string {
           }
         }
       });
-      const titles = { dashboard: 'Dashboard', pickups: 'My Pickups', routes: 'Routes', scaletickets: 'Scale Tickets' };
+      const titles = { dashboard: 'Dashboard', pickups: 'My Pickups', routes: 'Routes', scaletickets: 'Scale Tickets', dispatch: 'Dispatch', mytruck: 'My Truck' };
       document.getElementById('page-title').textContent = titles[tab] || 'Dashboard';
       // Load data for the tab
       if (tab === 'dashboard') loadDriverDashboard();
       if (tab === 'pickups') loadDriverPickups();
       if (tab === 'routes') loadDriverRoutes();
       if (tab === 'scaletickets') loadDriverScaleTickets();
+      if (tab === 'dispatch') openDispatchChat(); else dcStop();
+      if (tab === 'mytruck') loadMyTrucks();
       // Close mobile sidebar
       const sidebar = document.getElementById('driver-sidebar');
       if (!sidebar.classList.contains('-translate-x-full') && window.innerWidth < 1024) {
@@ -615,7 +742,7 @@ export function renderDriverPortal(): string {
         const toast = document.getElementById('proof-toast');
         document.getElementById('proof-toast-msg').textContent = res.data.message || 'Customer notified';
         toast.style.transform = 'translateX(0)';
-        setTimeout(() => { toast.style.transform = 'translateX(150%)'; }, 4000);
+        setTimeout(() => { toast.style.transform = 'translateX(calc(100% + 2rem))'; }, 4000);
         loadDriverDashboard();
         loadDriverPickups();
       } catch (err) {
@@ -625,9 +752,145 @@ export function renderDriverPortal(): string {
       btn.innerHTML = '<i class="fas fa-check mr-1"></i> Submit Proof & Notify Customer';
     }
 
+
+    // ═══ DISPATCH CHAT ═══
+    function openDispatchChat() {
+      dcStart({
+        threadUrl: '/api/dispatch/me',
+        sendUrl: '/api/dispatch/me',
+        mine: 'driver',
+        emptyText: 'Ask dispatch anything — you can also send photos and files.',
+        onLoaded: function() { setDispatchBadge(0); }
+      });
+      setTimeout(function() { var t = document.getElementById('dc-text'); if (t && window.innerWidth >= 1024) t.focus(); }, 50);
+    }
+    function setDispatchBadge(n) {
+      var b = document.getElementById('dispatch-badge');
+      b.textContent = n > 9 ? '9+' : String(n);
+      b.style.display = n > 0 ? 'flex' : 'none';
+    }
+    async function pollDispatchUnread() {
+      if (document.hidden || document.getElementById('tab-dispatch').style.display === 'block') return;
+      try { var r = await axios.get('/api/dispatch/me/unread'); setDispatchBadge(r.data.unread || 0); } catch (e) {}
+    }
+
+    // ═══ MY TRUCK ═══
+    var myTrucks = [];
+    var truckPhoto = null;
+    var TRUCK_TYPES = { pickup: 'Pickup truck', cube_van: 'Cube van', flatbed: 'Flatbed', tandem: 'Tandem / straight truck', tractor: 'Tractor (semi)', trailer: 'Trailer', roll_off: 'Roll-off', other: 'Other' };
+
+    function expiryLine(label, iso) {
+      if (!iso) return '';
+      var days = Math.round((new Date(iso + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000);
+      var cls = days < 0 ? 'text-red-600 font-semibold' : days <= 30 ? 'text-orange-600 font-semibold' : 'text-gray-500';
+      var note = days < 0 ? ' (expired)' : days <= 30 ? ' (' + days + ' days left)' : '';
+      return '<div class="' + cls + '"><i class="fas fa-calendar mr-1 opacity-60"></i>' + label + ' ' + escHtml(iso) + note + '</div>';
+    }
+
+    async function loadMyTrucks() {
+      var box = document.getElementById('trucks-list');
+      try {
+        var res = await axios.get('/api/fleet/my-trucks');
+        myTrucks = res.data.trucks || [];
+        if (!myTrucks.length) {
+          box.innerHTML = '<div class="sm:col-span-2 py-10 text-center text-gray-400"><i class="fas fa-truck text-4xl mb-3 block text-gray-300"></i><p class="text-sm">You have not added a truck yet.</p>' +
+            '<button onclick="openTruckModal()" class="mt-3 text-sm font-semibold text-rc-green hover:underline"><i class="fas fa-plus mr-1"></i>Add your truck</button></div>';
+          return;
+        }
+        box.innerHTML = myTrucks.map(function(t) {
+          var sub = [t.year, t.color, t.model].filter(Boolean).join(' ');
+          return '<div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm">' +
+            (t.photo ? '<img src="' + escAttr(t.photo) + '" class="w-full h-36 object-cover" alt="">' : '<div class="h-20 bg-gray-50 flex items-center justify-center text-gray-300"><i class="fas fa-truck text-3xl"></i></div>') +
+            '<div class="p-4">' +
+              '<div class="font-bold text-gray-800">' + escHtml(t.name) + '</div>' +
+              (sub ? '<div class="text-sm text-gray-500">' + escHtml(sub) + '</div>' : '') +
+              '<div class="mt-2 text-xs space-y-1 text-gray-500">' +
+                (t.plate_number ? '<div><i class="fas fa-id-card mr-1 opacity-60"></i>Plate ' + escHtml(t.plate_number) + '</div>' : '') +
+                (t.vehicle_type ? '<div><i class="fas fa-truck mr-1 opacity-60"></i>' + escHtml(TRUCK_TYPES[t.vehicle_type] || t.vehicle_type) + '</div>' : '') +
+                (t.tare_weight ? '<div><i class="fas fa-weight mr-1 opacity-60"></i>Empty ' + Number(t.tare_weight).toLocaleString() + ' kg</div>' : '') +
+                expiryLine('Insurance', t.insurance_expiry) + expiryLine('Registration', t.registration_expiry) +
+              '</div>' +
+              '<div class="flex gap-2 mt-3">' +
+                '<button onclick="openTruckModal(' + t.id + ')" class="flex-1 px-3 py-2 text-sm font-semibold rounded-lg border-2 border-gray-200 hover:border-rc-green text-gray-700"><i class="fas fa-pen mr-1"></i>Edit</button>' +
+                '<button onclick="removeTruck(' + t.id + ')" class="px-3 py-2 text-sm rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" aria-label="Remove truck"><i class="fas fa-trash"></i></button>' +
+              '</div>' +
+            '</div></div>';
+        }).join('');
+      } catch (e) {
+        box.innerHTML = '<div class="sm:col-span-2 p-6 text-center text-red-500 text-sm">Could not load your trucks. <button class="underline" onclick="loadMyTrucks()">Retry</button></div>';
+      }
+    }
+
+    function setTruckPhoto(url) {
+      truckPhoto = url;
+      var img = document.getElementById('t-photo-img');
+      img.style.display = url ? 'block' : 'none';
+      if (url) img.src = url;
+      document.getElementById('t-photo-empty').style.display = url ? 'none' : 'block';
+      document.getElementById('t-photo-clear').style.display = url ? 'inline' : 'none';
+    }
+    async function pickTruckPhoto(input) {
+      var f = input.files && input.files[0];
+      input.value = '';
+      if (!f) return;
+      try { var p = await dcShrink(f); setTruckPhoto(p.data); }
+      catch (e) { truckError(e.message); }
+    }
+    function truckError(msg) {
+      var el = document.getElementById('t-error');
+      el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none';
+    }
+
+    var TRUCK_INPUTS = { name: 't-name', vehicle_type: 't-type', year: 't-year', model: 't-model', color: 't-color', plate_number: 't-plate', vin: 't-vin', tare_weight: 't-tare', odometer: 't-odo', insurance_expiry: 't-ins', registration_expiry: 't-reg', driver_notes: 't-notes' };
+    function openTruckModal(id) {
+      var t = id ? myTrucks.find(function(x) { return x.id === id; }) : null;
+      document.getElementById('t-id').value = t ? t.id : '';
+      Object.keys(TRUCK_INPUTS).forEach(function(k) { document.getElementById(TRUCK_INPUTS[k]).value = t && t[k] != null ? t[k] : ''; });
+      setTruckPhoto(t ? t.photo : null);
+      truckError('');
+      document.getElementById('truck-modal-title').innerHTML = '<i class="fas fa-truck mr-2 text-rc-green"></i>' + (t ? 'Edit truck' : 'Add a truck');
+      document.getElementById('t-save-text').textContent = t ? 'Save changes' : 'Add truck';
+      document.getElementById('truck-modal').style.display = 'flex';
+    }
+    function closeTruckModal() { document.getElementById('truck-modal').style.display = 'none'; }
+
+    async function saveTruck(e) {
+      e.preventDefault();
+      var btn = document.getElementById('t-save');
+      if (btn.disabled) return;
+      btn.disabled = true; truckError('');
+      var data = {};
+      Object.keys(TRUCK_INPUTS).forEach(function(k) { data[k] = document.getElementById(TRUCK_INPUTS[k]).value.trim(); });
+      if (data.plate_number) data.plate_number = data.plate_number.toUpperCase();
+      if (data.vin) data.vin = data.vin.toUpperCase();
+      data.photo = truckPhoto || '';
+      var id = document.getElementById('t-id').value;
+      try {
+        if (id) await axios.put('/api/fleet/my-trucks/' + id, data);
+        else await axios.post('/api/fleet/my-trucks', data);
+        closeTruckModal();
+        loadMyTrucks();
+      } catch (err) {
+        truckError((err.response && err.response.data && err.response.data.error) || 'Could not save the truck');
+      } finally { btn.disabled = false; }
+    }
+    async function removeTruck(id) {
+      var t = myTrucks.find(function(x) { return x.id === id; });
+      if (!confirm('Remove ' + (t ? t.name : 'this truck') + ' from My Truck? The office will be told.')) return;
+      try { await axios.delete('/api/fleet/my-trucks/' + id); loadMyTrucks(); }
+      catch (err) { alert((err.response && err.response.data && err.response.data.error) || 'Could not remove the truck'); }
+    }
+
     // ═══ INIT ═══
     (function init() {
-      if (typeof axios !== 'undefined') { loadDriverDashboard(); }
+      if (typeof axios !== 'undefined') {
+        loadDriverDashboard();
+        pollDispatchUnread();
+        setInterval(pollDispatchUnread, 30000);
+        // ?tab=dispatch lets a link or notification open the chat directly.
+        var startTab = new URLSearchParams(location.search).get('tab');
+        if (startTab && tabs.indexOf(startTab) >= 0) showDriverTab(startTab);
+      }
       else { setTimeout(init, 500); }
     })();
   </script>
