@@ -353,6 +353,17 @@ function cleanPhones(raw: any): { phone: string; label: string | null }[] | stri
   return out
 }
 
+// Customer tire categories, stored as a comma list in customers.tire_types.
+const CUSTOMER_TIRE_TYPES = ['pltt', 'mtt', 'otr']
+function cleanTireTypes(raw: any): string | null | { error: string } {
+  if (raw === null || raw === undefined || raw === '') return null
+  const list = Array.isArray(raw) ? raw : String(raw).split(',')
+  const codes = [...new Set(list.map((t: any) => String(t).trim().toLowerCase()).filter(Boolean))]
+  if (codes.some((t) => !CUSTOMER_TIRE_TYPES.includes(t))) return { error: 'Tire type must be PLTT, MTT or OTR' }
+  // Fixed order so the stored value and filters never depend on click order.
+  return CUSTOMER_TIRE_TYPES.filter((t) => codes.includes(t)).join(',') || null
+}
+
 function cleanZone(z: any): number | null | string {
   if (z === null || z === '' || z === undefined) return null
   const n = Number(z)
@@ -372,7 +383,7 @@ async function savePhones(db: D1Database, customerId: number | string, phones: {
 employeeRoutes.get('/customers/all', async (c) => {
   try {
     const status = c.req.query('status')
-    let sql = `SELECT c.id, c.email, c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code, c.lat, c.lng, c.region, c.zone, c.notes, c.is_active, c.created_at, c.updated_at,
+    let sql = `SELECT c.id, c.email, c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code, c.lat, c.lng, c.region, c.zone, c.tire_types, c.notes, c.is_active, c.created_at, c.updated_at,
                (SELECT COUNT(*) FROM pickup_requests pr WHERE pr.customer_id = c.id AND pr.status IN ('pending','confirmed')) as pending_pickups
                FROM customers c`
     if (status === 'active') { sql += ' WHERE c.is_active = 1'; }
@@ -403,12 +414,14 @@ employeeRoutes.get('/customers/all', async (c) => {
 
 employeeRoutes.post('/customers', roleRequired('admin', 'manager'), async (c) => {
   try {
-    const { email, password, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, notes, phones } = await c.req.json()
+    const { email, password, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, tire_types, notes, phones } = await c.req.json()
     if (!email || !password || !company_name || !contact_name) {
       return c.json({ error: 'Username, password, company name, and contact name are required' }, 400)
     }
     const z = cleanZone(zone)
     if (typeof z === 'string') return c.json({ error: z }, 400)
+    const tires = cleanTireTypes(tire_types)
+    if (tires && typeof tires === 'object') return c.json({ error: tires.error }, 400)
     const phoneList = phones === undefined ? (phone ? [{ phone: String(phone).trim(), label: null }] : []) : cleanPhones(phones)
     if (typeof phoneList === 'string') return c.json({ error: phoneList }, 400)
     const existing = await c.env.DB.prepare('SELECT id FROM customers WHERE LOWER(email) = LOWER(?)').bind(email.trim()).first()
@@ -417,12 +430,12 @@ employeeRoutes.post('/customers', roleRequired('admin', 'manager'), async (c) =>
     }
     const passwordHash = await hashPassword(password)
     const result = await c.env.DB.prepare(
-      `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, tire_types, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       email.trim(), passwordHash, company_name, contact_name,
       phoneList[0]?.phone || null, address || null, city || null, province || 'AB',
-      postal_code || null, lat || null, lng || null, region || 'north', z, notes || null
+      postal_code || null, lat || null, lng || null, region || 'north', z, tires, notes || null
     ).run()
     const newId = result.meta.last_row_id
     if (phoneList.length) await savePhones(c.env.DB, newId, phoneList)
@@ -448,6 +461,11 @@ employeeRoutes.put('/customers/:id', roleRequired('admin', 'manager'), async (c)
       const z = cleanZone(body.zone)
       if (typeof z === 'string') return c.json({ error: z }, 400)
       fields.push('zone = ?'); params.push(z)
+    }
+    if (body.tire_types !== undefined) {
+      const tires = cleanTireTypes(body.tire_types)
+      if (tires && typeof tires === 'object') return c.json({ error: tires.error }, 400)
+      fields.push('tire_types = ?'); params.push(tires)
     }
     // phone is owned by savePhones() whenever a phone list is sent.
     const allowed = ['email','company_name','contact_name','phone','address','city','province','postal_code','lat','lng','region','notes','is_active']

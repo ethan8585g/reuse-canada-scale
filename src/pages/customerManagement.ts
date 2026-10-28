@@ -16,7 +16,7 @@ export function renderCustomerManagement(): string {
       <div class="flex items-center gap-2 flex-wrap">
         <div class="relative">
           <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
-          <input type="text" id="search-input" placeholder="Search company, contact, city..." oninput="filterCustomers()"
+          <input type="text" id="search-input" placeholder="Search company, contact, phone, tire type..." oninput="filterCustomers()"
             class="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all w-64">
         </div>
         <select id="filter-status" onchange="loadCustomers()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none bg-white">
@@ -37,6 +37,13 @@ export function renderCustomerManagement(): string {
           <option value="2">Zone 2</option>
           <option value="3">Zone 3</option>
           <option value="none">No zone set</option>
+        </select>
+        <select id="filter-tire" onchange="filterCustomers()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none bg-white">
+          <option value="">All tire types</option>
+          <option value="pltt">PLTT - Passenger &amp; light truck</option>
+          <option value="mtt">MTT - Medium truck</option>
+          <option value="otr">OTR - Off-the-road</option>
+          <option value="none">No tire type set</option>
         </select>
         <button type="button" onclick="clearCustomerFilters()" id="clear-cust-filters" style="display:none;" class="px-3 py-2.5 text-xs font-semibold text-gray-400 hover:text-gray-600"><i class="fas fa-times mr-1"></i>Clear</button>
       </div>
@@ -125,6 +132,23 @@ export function renderCustomerManagement(): string {
                   <div id="f-phones" class="space-y-2"></div>
                   <p class="text-xs text-gray-400 mt-1">The first number is the main one — it is the number shown on routes, tickets and receipts.</p>
                 </div>
+              </div>
+            </div>
+
+            <!-- Tire types -->
+            <div class="mb-6">
+              <h4 class="font-semibold text-gray-700 mb-1 flex items-center gap-2"><i class="fas fa-circle-dot text-gray-700"></i> Tire Types</h4>
+              <p class="text-xs text-gray-400 mb-3">What this customer brings. Pick all that apply.</p>
+              <div class="grid sm:grid-cols-3 gap-2" role="group" aria-label="Tire types">
+                <button type="button" id="tire-btn-pltt" onclick="toggleTireType('pltt')" aria-pressed="false" class="tire-btn text-left px-4 py-3 rounded-xl border-2 transition-all">
+                  <div class="font-bold text-sm">PLTT</div><div class="text-xs opacity-80">Passenger &amp; light truck</div>
+                </button>
+                <button type="button" id="tire-btn-mtt" onclick="toggleTireType('mtt')" aria-pressed="false" class="tire-btn text-left px-4 py-3 rounded-xl border-2 transition-all">
+                  <div class="font-bold text-sm">MTT</div><div class="text-xs opacity-80">Medium truck</div>
+                </button>
+                <button type="button" id="tire-btn-otr" onclick="toggleTireType('otr')" aria-pressed="false" class="tire-btn text-left px-4 py-3 rounded-xl border-2 border-dashed transition-all">
+                  <div class="font-bold text-sm">OTR <span class="ml-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Future</span></div><div class="text-xs opacity-80">Off-the-road &middot; not accepted yet</div>
+                </button>
               </div>
             </div>
 
@@ -293,19 +317,23 @@ export function renderCustomerManagement(): string {
         const q = (document.getElementById('search-input').value || '').toLowerCase();
         const region = document.getElementById('filter-region').value;
         const zone = document.getElementById('filter-zone').value;
+        const tire = document.getElementById('filter-tire').value;
         const status = document.getElementById('filter-status').value;
-        document.getElementById('clear-cust-filters').style.display = (q || region || zone || status !== 'active') ? 'block' : 'none';
+        document.getElementById('clear-cust-filters').style.display = (q || region || zone || tire || status !== 'active') ? 'block' : 'none';
         let filtered = allCustomers;
         if (q) filtered = filtered.filter(c =>
           (c.company_name || '').toLowerCase().includes(q) ||
           (c.contact_name || '').toLowerCase().includes(q) ||
           (c.city || '').toLowerCase().includes(q) ||
           (c.email || '').toLowerCase().includes(q) ||
-          custPhones(c).some(p => p.phone.toLowerCase().includes(q))
+          custPhones(c).some(p => p.phone.toLowerCase().includes(q)) ||
+          custTireTypes(c).some(t => t.includes(q) || TIRE_LONG[t].toLowerCase().includes(q))
         );
         if (region) filtered = filtered.filter(c => c.region === region);
         if (zone === 'none') filtered = filtered.filter(c => !c.zone);
         else if (zone) filtered = filtered.filter(c => String(c.zone) === zone);
+        if (tire === 'none') filtered = filtered.filter(c => !custTireTypes(c).length);
+        else if (tire) filtered = filtered.filter(c => custTireTypes(c).indexOf(tire) >= 0);
         renderCustomers(filtered);
       }
 
@@ -313,6 +341,7 @@ export function renderCustomerManagement(): string {
         document.getElementById('search-input').value = '';
         document.getElementById('filter-region').value = '';
         document.getElementById('filter-zone').value = '';
+        document.getElementById('filter-tire').value = '';
         document.getElementById('filter-status').value = 'active';
         loadCustomers();
       }
@@ -327,9 +356,10 @@ export function renderCustomerManagement(): string {
                 '<div class="text-xs text-gray-400 truncate">' + phoneSummary(c) + ' &middot; <span class="font-mono">' + escHtml(c.email || '') + '</span></div>' +
               '</div>' +
               '<div class="w-40 shrink-0 hidden lg:block"><div class="text-sm text-gray-700 truncate">' + escHtml(c.contact_name || '-') + '</div></div>' +
-              '<div class="w-52 shrink-0 hidden xl:block text-xs text-gray-500 truncate">' + custLocation(c) + '</div>' +
+              '<div class="w-52 shrink-0 hidden 2xl:block text-xs text-gray-500 truncate">' + custLocation(c) + '</div>' +
               '<div class="w-20 shrink-0 text-center">' + regionPill(c) + '</div>' +
               '<div class="w-20 shrink-0 text-center">' + zonePill(c) + '</div>' +
+              '<div class="w-28 shrink-0 text-center hidden md:block">' + tirePills(c) + '</div>' +
               '<div class="w-28 shrink-0 text-center">' + pendingPill(c) + '</div>' +
               '<div class="w-24 shrink-0 text-center">' + custStatusPill(c) + '</div>' +
               '<div class="shrink-0 flex items-center gap-1">' + custActions(c) + '</div>' +
@@ -351,6 +381,7 @@ export function renderCustomerManagement(): string {
                 '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Zone</div><div class="mt-1">' + zonePill(c) + '</div></div>' +
                 '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Pickups</div><div class="mt-1">' + pendingPill(c) + '</div></div>' +
               '</div>' +
+              '<div class="pb-3"><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Tire types</div><div class="mt-1">' + tirePills(c) + '</div></div>' +
               '<div class="text-xs text-gray-500 pt-2 border-t border-gray-50 space-y-1">' +
                 custPhones(c).map(function(p) {
                   return '<div><i class="fas fa-phone text-gray-300 mr-1.5"></i>' + escHtml(p.phone) + (p.label ? ' <span class="text-gray-400">&middot; ' + PHONE_LABEL_TEXT[p.label] + '</span>' : '') + '</div>';
@@ -364,7 +395,7 @@ export function renderCustomerManagement(): string {
       }
 
       function renderCustCompact(list) {
-        var head = ['', 'Company', 'Contact', 'Phone', 'Location', 'Region', 'Zone', 'Username', 'Status', 'Pickups', ''];
+        var head = ['', 'Company', 'Contact', 'Phone', 'Location', 'Region', 'Zone', 'Tires', 'Username', 'Status', 'Pickups', ''];
         return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
           '<thead class="bg-gray-50/80"><tr>' + head.map(function(h) {
             return '<th class="px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">' + h + '</th>';
@@ -378,6 +409,7 @@ export function renderCustomerManagement(): string {
               '<td class="px-3 py-2 text-gray-500 whitespace-nowrap">' + custLocation(c) + '</td>' +
               '<td class="px-3 py-2">' + regionPill(c) + '</td>' +
               '<td class="px-3 py-2">' + zonePill(c) + '</td>' +
+              '<td class="px-3 py-2 whitespace-nowrap">' + tirePills(c) + '</td>' +
               '<td class="px-3 py-2"><span class="font-mono text-xs bg-gray-100 px-2 py-1 rounded">' + escHtml(c.email || '') + '</span></td>' +
               '<td class="px-3 py-2">' + custStatusPill(c) + '</td>' +
               '<td class="px-3 py-2 text-center">' + pendingPill(c) + '</td>' +
@@ -452,11 +484,11 @@ export function renderCustomerManagement(): string {
       function exportCustomersCsv() {
         var rows = selectedCustomerRows();
         if (!rows.length) return;
-        var out = [['Company','Contact','Username','Phone','Other Phones','Address','City','Province','Postal Code','Region','Zone','Status','Pending Pickups']];
+        var out = [['Company','Contact','Username','Phone','Other Phones','Address','City','Province','Postal Code','Region','Zone','Tire Types','Status','Pending Pickups']];
         rows.forEach(function(c) {
           var ph = custPhones(c).map(function(p) { return p.phone + (p.label ? ' (' + PHONE_LABEL_TEXT[p.label] + ')' : ''); });
           out.push([c.company_name || '', c.contact_name || '', c.email || '', ph[0] || '', ph.slice(1).join('; '), c.address || '',
-            c.city || '', c.province || '', c.postal_code || '', c.region || '', c.zone ? 'Zone ' + c.zone : '',
+            c.city || '', c.province || '', c.postal_code || '', c.region || '', c.zone ? 'Zone ' + c.zone : '', custTireTypes(c).map(function(t) { return TIRE_TEXT[t]; }).join('; '),
             c.is_active ? 'Active' : 'Inactive', c.pending_pickups || 0]);
         });
         var csv = out.map(function(r) { return r.map(csvCell).join(','); }).join('\\r\\n');
@@ -485,6 +517,7 @@ export function renderCustomerManagement(): string {
         document.getElementById('f-province').value = 'AB';
         document.getElementById('f-region').value = 'north';
         setZone(null);
+        setTireTypes([]);
         renderPhoneRows([]);
         document.getElementById('f-password').required = true;
         document.getElementById('modal-title').innerHTML = '<i class="fas fa-user-plus mr-2 text-rc-green"></i>New Customer Account';
@@ -503,6 +536,7 @@ export function renderCustomerManagement(): string {
         document.getElementById('f-contact').value = c.contact_name || '';
         renderPhoneRows(c.phones && c.phones.length ? c.phones : (c.phone ? [{ phone: c.phone, label: null }] : []));
         setZone(c.zone || null);
+        setTireTypes(custTireTypes(c));
         document.getElementById('f-address').value = c.address || '';
         document.getElementById('f-city').value = c.city || '';
         document.getElementById('f-province').value = c.province || 'AB';
@@ -517,6 +551,35 @@ export function renderCustomerManagement(): string {
       function closeModal() { document.getElementById('customer-modal').style.display = 'none'; }
 
       // ── Zone picker ──
+      // ── Tire types (multi-select) ──
+      var TIRE_TYPES = ['pltt', 'mtt', 'otr'];
+      var TIRE_TEXT = { pltt: 'PLTT', mtt: 'MTT', otr: 'OTR' };
+      var TIRE_LONG = { pltt: 'Passenger & light truck', mtt: 'Medium truck', otr: 'Off-the-road' };
+      var TIRE_CLS = { pltt: 'bg-sky-50 text-sky-700', mtt: 'bg-orange-50 text-orange-700', otr: 'bg-gray-100 text-gray-600' };
+      var formTireTypes = new Set();
+      function custTireTypes(c) { return (c.tire_types || '').split(',').filter(function(t) { return TIRE_TYPES.indexOf(t) >= 0; }); }
+      function setTireTypes(list) {
+        formTireTypes = new Set(list || []);
+        TIRE_TYPES.forEach(function(t) {
+          var b = document.getElementById('tire-btn-' + t);
+          var on = formTireTypes.has(t);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+          b.className = 'tire-btn text-left px-4 py-3 rounded-xl border-2 transition-all ' + (t === 'otr' ? 'border-dashed ' : '') +
+            (on ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-700 hover:border-rc-green');
+        });
+      }
+      function toggleTireType(t) {
+        if (formTireTypes.has(t)) formTireTypes.delete(t); else formTireTypes.add(t);
+        setTireTypes(Array.from(formTireTypes));
+      }
+      function tirePills(c) {
+        var list = custTireTypes(c);
+        if (!list.length) return '<span class="text-xs text-gray-300">-</span>';
+        return list.map(function(t) {
+          return '<span class="px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ' + TIRE_CLS[t] + '" title="' + escAttr(TIRE_LONG[t]) + '">' + TIRE_TEXT[t] + '</span>';
+        }).join(' ');
+      }
+
       // Tapping the selected zone again clears it.
       function toggleZone(z) {
         setZone(String(z) === document.getElementById('f-zone').value ? null : z);
@@ -583,6 +646,7 @@ export function renderCustomerManagement(): string {
           contact_name: document.getElementById('f-contact').value,
           phones: readPhoneRows(),
           zone: document.getElementById('f-zone').value ? Number(document.getElementById('f-zone').value) : null,
+          tire_types: TIRE_TYPES.filter(function(t) { return formTireTypes.has(t); }),
           address: document.getElementById('f-address').value,
           city: document.getElementById('f-city').value,
           province: document.getElementById('f-province').value,
