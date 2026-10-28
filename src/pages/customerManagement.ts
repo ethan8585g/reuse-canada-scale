@@ -31,9 +31,16 @@ export function renderCustomerManagement(): string {
           <option value="east">East</option>
           <option value="west">West</option>
         </select>
+        <select id="filter-zone" onchange="filterCustomers()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none bg-white">
+          <option value="">All zones</option>
+          <option value="1">Zone 1</option>
+          <option value="2">Zone 2</option>
+          <option value="3">Zone 3</option>
+          <option value="none">No zone set</option>
+        </select>
         <button type="button" onclick="clearCustomerFilters()" id="clear-cust-filters" style="display:none;" class="px-3 py-2.5 text-xs font-semibold text-gray-400 hover:text-gray-600"><i class="fas fa-times mr-1"></i>Clear</button>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3">
         <div class="inline-flex bg-gray-100 rounded-xl p-1">
           <button type="button" id="cview-list" onclick="setCustView('list')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">List</button>
           <button type="button" id="cview-cards" onclick="setCustView('cards')" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all">Cards</button>
@@ -110,9 +117,13 @@ export function renderCustomerManagement(): string {
                   <label class="block text-sm font-medium text-gray-600 mb-1">Contact Name *</label>
                   <input type="text" id="f-contact" required class="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="e.g. David Chen">
                 </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-600 mb-1">Phone</label>
-                  <input type="tel" id="f-phone" class="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="780-555-0201">
+                <div class="md:col-span-2">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-sm font-medium text-gray-600">Phone Numbers</label>
+                    <button type="button" onclick="addPhoneRow()" class="text-xs font-semibold text-rc-green hover:bg-green-50 px-2 py-1 rounded-lg" title="Add another phone number"><i class="fas fa-plus mr-1"></i>Add number</button>
+                  </div>
+                  <div id="f-phones" class="space-y-2"></div>
+                  <p class="text-xs text-gray-400 mt-1">The first number is the main one — it is the number shown on routes, tickets and receipts.</p>
                 </div>
               </div>
             </div>
@@ -143,6 +154,16 @@ export function renderCustomerManagement(): string {
                 <div>
                   <label class="block text-sm font-medium text-gray-600 mb-1">Postal Code</label>
                   <input type="text" id="f-postal" class="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none" placeholder="T6J 2A8">
+                </div>
+                <div class="md:col-span-2">
+                  <label class="block text-sm font-medium text-gray-600 mb-1">Zone</label>
+                  <input type="hidden" id="f-zone" value="">
+                  <div class="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Zone">
+                    <button type="button" id="zone-btn-1" onclick="toggleZone(1)" role="radio" class="zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all">Zone 1</button>
+                    <button type="button" id="zone-btn-2" onclick="toggleZone(2)" role="radio" class="zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all">Zone 2</button>
+                    <button type="button" id="zone-btn-3" onclick="toggleZone(3)" role="radio" class="zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all">Zone 3</button>
+                  </div>
+                  <p class="text-xs text-gray-400 mt-1" id="zone-hint">Not set — tap a zone. Tap it again to clear.</p>
                 </div>
                 <div>
                   <label class="block text-sm font-medium text-gray-600 mb-1">Region</label>
@@ -229,6 +250,26 @@ export function renderCustomerManagement(): string {
         return '<span class="px-2 py-0.5 rounded-full text-xs font-semibold ' + (REGION_CLS[c.region] || 'bg-gray-50 text-gray-600') + '">' +
           escHtml((c.region || 'N/A').toUpperCase()) + '</span>';
       }
+      var ZONE_CLS = { 1: 'bg-teal-50 text-teal-700', 2: 'bg-amber-50 text-amber-700', 3: 'bg-indigo-50 text-indigo-700' };
+      function zonePill(c) {
+        return c.zone
+          ? '<span class="px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ' + ZONE_CLS[c.zone] + '">ZONE ' + c.zone + '</span>'
+          : '<span class="text-xs text-gray-300">-</span>';
+      }
+      var PHONE_LABEL_TEXT = { manager: 'Manager', owner: 'Owner', worker: 'Worker' };
+      function custPhones(c) {
+        if (c.phones && c.phones.length) return c.phones;
+        return c.phone ? [{ phone: c.phone, label: null }] : [];
+      }
+      // Main number, plus "+N" with every number in the tooltip.
+      function phoneSummary(c) {
+        var ph = custPhones(c);
+        if (!ph.length) return 'No phone';
+        var first = escHtml(ph[0].phone) + (ph[0].label ? ' (' + PHONE_LABEL_TEXT[ph[0].label] + ')' : '');
+        if (ph.length === 1) return first;
+        var all = ph.map(function(p) { return p.phone + (p.label ? ' - ' + PHONE_LABEL_TEXT[p.label] : ''); }).join(', ');
+        return first + ' <span class="text-gray-500 font-semibold" title="' + escAttr(all) + '">+' + (ph.length - 1) + '</span>';
+      }
       function custStatusPill(c) {
         return '<span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + (c.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800') + '">' +
           (c.is_active ? 'ACTIVE' : 'INACTIVE') + '</span>';
@@ -251,22 +292,27 @@ export function renderCustomerManagement(): string {
       function filterCustomers() {
         const q = (document.getElementById('search-input').value || '').toLowerCase();
         const region = document.getElementById('filter-region').value;
+        const zone = document.getElementById('filter-zone').value;
         const status = document.getElementById('filter-status').value;
-        document.getElementById('clear-cust-filters').style.display = (q || region || status !== 'active') ? 'block' : 'none';
+        document.getElementById('clear-cust-filters').style.display = (q || region || zone || status !== 'active') ? 'block' : 'none';
         let filtered = allCustomers;
         if (q) filtered = filtered.filter(c =>
           (c.company_name || '').toLowerCase().includes(q) ||
           (c.contact_name || '').toLowerCase().includes(q) ||
           (c.city || '').toLowerCase().includes(q) ||
-          (c.email || '').toLowerCase().includes(q)
+          (c.email || '').toLowerCase().includes(q) ||
+          custPhones(c).some(p => p.phone.toLowerCase().includes(q))
         );
         if (region) filtered = filtered.filter(c => c.region === region);
+        if (zone === 'none') filtered = filtered.filter(c => !c.zone);
+        else if (zone) filtered = filtered.filter(c => String(c.zone) === zone);
         renderCustomers(filtered);
       }
 
       function clearCustomerFilters() {
         document.getElementById('search-input').value = '';
         document.getElementById('filter-region').value = '';
+        document.getElementById('filter-zone').value = '';
         document.getElementById('filter-status').value = 'active';
         loadCustomers();
       }
@@ -278,11 +324,12 @@ export function renderCustomerManagement(): string {
               custCheckbox(c) +
               '<div class="flex-1 min-w-0">' +
                 '<div class="text-sm font-bold text-gray-800 truncate">' + escHtml(c.company_name || '') + '</div>' +
-                '<div class="text-xs text-gray-400 truncate">' + escHtml(c.phone || 'No phone') + ' &middot; <span class="font-mono">' + escHtml(c.email || '') + '</span></div>' +
+                '<div class="text-xs text-gray-400 truncate">' + phoneSummary(c) + ' &middot; <span class="font-mono">' + escHtml(c.email || '') + '</span></div>' +
               '</div>' +
               '<div class="w-40 shrink-0 hidden lg:block"><div class="text-sm text-gray-700 truncate">' + escHtml(c.contact_name || '-') + '</div></div>' +
               '<div class="w-52 shrink-0 hidden xl:block text-xs text-gray-500 truncate">' + custLocation(c) + '</div>' +
               '<div class="w-20 shrink-0 text-center">' + regionPill(c) + '</div>' +
+              '<div class="w-20 shrink-0 text-center">' + zonePill(c) + '</div>' +
               '<div class="w-28 shrink-0 text-center">' + pendingPill(c) + '</div>' +
               '<div class="w-24 shrink-0 text-center">' + custStatusPill(c) + '</div>' +
               '<div class="shrink-0 flex items-center gap-1">' + custActions(c) + '</div>' +
@@ -299,12 +346,15 @@ export function renderCustomerManagement(): string {
                 '<div class="text-sm font-bold text-gray-800 truncate">' + escHtml(c.company_name || '') + '</div></div>' + custStatusPill(c) +
               '</div>' +
               '<div class="text-xs text-gray-400 mb-3">' + escHtml(c.contact_name || 'No contact') + '</div>' +
-              '<div class="grid grid-cols-2 gap-2 py-3 border-t border-gray-50">' +
+              '<div class="grid grid-cols-3 gap-2 py-3 border-t border-gray-50">' +
                 '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Region</div><div class="mt-1">' + regionPill(c) + '</div></div>' +
+                '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Zone</div><div class="mt-1">' + zonePill(c) + '</div></div>' +
                 '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Pickups</div><div class="mt-1">' + pendingPill(c) + '</div></div>' +
               '</div>' +
               '<div class="text-xs text-gray-500 pt-2 border-t border-gray-50 space-y-1">' +
-                '<div><i class="fas fa-phone text-gray-300 mr-1.5"></i>' + escHtml(c.phone || 'No phone') + '</div>' +
+                custPhones(c).map(function(p) {
+                  return '<div><i class="fas fa-phone text-gray-300 mr-1.5"></i>' + escHtml(p.phone) + (p.label ? ' <span class="text-gray-400">&middot; ' + PHONE_LABEL_TEXT[p.label] + '</span>' : '') + '</div>';
+                }).join('') + (custPhones(c).length ? '' : '<div><i class="fas fa-phone text-gray-300 mr-1.5"></i>No phone</div>') +
                 '<div class="truncate"><i class="fas fa-user text-gray-300 mr-1.5"></i><span class="font-mono">' + escHtml(c.email || '') + '</span></div>' +
                 '<div class="truncate"><i class="fas fa-location-dot text-gray-300 mr-1.5"></i>' + custLocation(c) + '</div>' +
               '</div>' +
@@ -314,7 +364,7 @@ export function renderCustomerManagement(): string {
       }
 
       function renderCustCompact(list) {
-        var head = ['', 'Company', 'Contact', 'Location', 'Region', 'Username', 'Status', 'Pickups', ''];
+        var head = ['', 'Company', 'Contact', 'Phone', 'Location', 'Region', 'Zone', 'Username', 'Status', 'Pickups', ''];
         return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm">' +
           '<thead class="bg-gray-50/80"><tr>' + head.map(function(h) {
             return '<th class="px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">' + h + '</th>';
@@ -324,8 +374,10 @@ export function renderCustomerManagement(): string {
               '<td class="px-3 py-2">' + custCheckbox(c) + '</td>' +
               '<td class="px-3 py-2 font-semibold text-gray-800 whitespace-nowrap">' + escHtml(c.company_name || '') + '</td>' +
               '<td class="px-3 py-2 text-gray-600 whitespace-nowrap">' + escHtml(c.contact_name || '-') + '</td>' +
+              '<td class="px-3 py-2 text-gray-500 whitespace-nowrap">' + phoneSummary(c) + '</td>' +
               '<td class="px-3 py-2 text-gray-500 whitespace-nowrap">' + custLocation(c) + '</td>' +
               '<td class="px-3 py-2">' + regionPill(c) + '</td>' +
+              '<td class="px-3 py-2">' + zonePill(c) + '</td>' +
               '<td class="px-3 py-2"><span class="font-mono text-xs bg-gray-100 px-2 py-1 rounded">' + escHtml(c.email || '') + '</span></td>' +
               '<td class="px-3 py-2">' + custStatusPill(c) + '</td>' +
               '<td class="px-3 py-2 text-center">' + pendingPill(c) + '</td>' +
@@ -400,10 +452,11 @@ export function renderCustomerManagement(): string {
       function exportCustomersCsv() {
         var rows = selectedCustomerRows();
         if (!rows.length) return;
-        var out = [['Company','Contact','Username','Phone','Address','City','Province','Postal Code','Region','Status','Pending Pickups']];
+        var out = [['Company','Contact','Username','Phone','Other Phones','Address','City','Province','Postal Code','Region','Zone','Status','Pending Pickups']];
         rows.forEach(function(c) {
-          out.push([c.company_name || '', c.contact_name || '', c.email || '', c.phone || '', c.address || '',
-            c.city || '', c.province || '', c.postal_code || '', c.region || '',
+          var ph = custPhones(c).map(function(p) { return p.phone + (p.label ? ' (' + PHONE_LABEL_TEXT[p.label] + ')' : ''); });
+          out.push([c.company_name || '', c.contact_name || '', c.email || '', ph[0] || '', ph.slice(1).join('; '), c.address || '',
+            c.city || '', c.province || '', c.postal_code || '', c.region || '', c.zone ? 'Zone ' + c.zone : '',
             c.is_active ? 'Active' : 'Inactive', c.pending_pickups || 0]);
         });
         var csv = out.map(function(r) { return r.map(csvCell).join(','); }).join('\\r\\n');
@@ -431,6 +484,8 @@ export function renderCustomerManagement(): string {
         document.getElementById('f-city').value = 'Edmonton';
         document.getElementById('f-province').value = 'AB';
         document.getElementById('f-region').value = 'north';
+        setZone(null);
+        renderPhoneRows([]);
         document.getElementById('f-password').required = true;
         document.getElementById('modal-title').innerHTML = '<i class="fas fa-user-plus mr-2 text-rc-green"></i>New Customer Account';
         document.getElementById('submit-text').textContent = 'Create Customer Account';
@@ -446,7 +501,8 @@ export function renderCustomerManagement(): string {
         document.getElementById('f-password').required = false;
         document.getElementById('f-company').value = c.company_name || '';
         document.getElementById('f-contact').value = c.contact_name || '';
-        document.getElementById('f-phone').value = c.phone || '';
+        renderPhoneRows(c.phones && c.phones.length ? c.phones : (c.phone ? [{ phone: c.phone, label: null }] : []));
+        setZone(c.zone || null);
         document.getElementById('f-address').value = c.address || '';
         document.getElementById('f-city').value = c.city || '';
         document.getElementById('f-province').value = c.province || 'AB';
@@ -460,6 +516,62 @@ export function renderCustomerManagement(): string {
 
       function closeModal() { document.getElementById('customer-modal').style.display = 'none'; }
 
+      // ── Zone picker ──
+      // Tapping the selected zone again clears it.
+      function toggleZone(z) {
+        setZone(String(z) === document.getElementById('f-zone').value ? null : z);
+      }
+      function setZone(z) {
+        document.getElementById('f-zone').value = z ? String(z) : '';
+        [1, 2, 3].forEach(function(n) {
+          var b = document.getElementById('zone-btn-' + n);
+          var on = z === n;
+          b.setAttribute('aria-checked', on ? 'true' : 'false');
+          b.className = 'zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ' +
+            (on ? 'border-rc-green bg-rc-green text-white' : 'border-gray-200 text-gray-600 hover:border-rc-green');
+        });
+        document.getElementById('zone-hint').textContent = z ? 'Zone ' + z + ' selected. Tap it again to clear.' : 'Not set — tap a zone. Tap it again to clear.';
+      }
+
+      // ── Phone numbers ──
+      var PHONE_LABELS = [['', 'Label...'], ['manager', 'Manager'], ['owner', 'Owner'], ['worker', 'Worker']];
+      function phoneRowHtml(p, i) {
+        return '<div class="flex items-center gap-2 phone-row">' +
+          '<div class="relative flex-1 min-w-0">' +
+            '<input type="tel" class="phone-num w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none' + (i === 0 ? ' pr-16' : '') + '" placeholder="780-555-0201" value="' + escAttr(p.phone || '') + '" aria-label="Phone number ' + (i + 1) + '">' +
+            (i === 0 ? '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold uppercase tracking-wide text-rc-green bg-green-50 px-1.5 py-0.5 rounded">Main</span>' : '') +
+          '</div>' +
+          '<select class="phone-label w-32 shrink-0 px-3 py-2.5 border-2 border-gray-200 rounded-xl focus:border-rc-green outline-none bg-white text-sm" aria-label="Who this number belongs to">' +
+            PHONE_LABELS.map(function(l) { return '<option value="' + l[0] + '"' + ((p.label || '') === l[0] ? ' selected' : '') + '>' + l[1] + '</option>'; }).join('') +
+          '</select>' +
+          '<button type="button" onclick="removePhoneRow(' + i + ')" class="shrink-0 w-9 h-9 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Remove this number" aria-label="Remove phone number ' + (i + 1) + '"><i class="fas fa-times"></i></button>' +
+        '</div>';
+      }
+      // Always at least one (possibly empty) row, so the form never shows no phone field.
+      function renderPhoneRows(list) {
+        var rows = list && list.length ? list : [{ phone: '', label: '' }];
+        document.getElementById('f-phones').innerHTML = rows.map(phoneRowHtml).join('');
+      }
+      function currentPhoneRows() {
+        return Array.prototype.map.call(document.querySelectorAll('#f-phones .phone-row'), function(r) {
+          return { phone: r.querySelector('.phone-num').value.trim(), label: r.querySelector('.phone-label').value || null };
+        });
+      }
+      function readPhoneRows() { return currentPhoneRows().filter(function(p) { return p.phone; }); }
+      function addPhoneRow() {
+        var rows = currentPhoneRows();
+        if (rows.length >= 10) { alert('At most 10 phone numbers per customer'); return; }
+        rows.push({ phone: '', label: '' });
+        renderPhoneRows(rows);
+        var inputs = document.querySelectorAll('#f-phones .phone-num');
+        inputs[inputs.length - 1].focus();
+      }
+      function removePhoneRow(i) {
+        var rows = currentPhoneRows();
+        rows.splice(i, 1);
+        renderPhoneRows(rows);
+      }
+
       async function submitCustomer(e) {
         e.preventDefault();
         const btn = document.getElementById('submit-btn');
@@ -469,7 +581,8 @@ export function renderCustomerManagement(): string {
           email: document.getElementById('f-email').value,
           company_name: document.getElementById('f-company').value,
           contact_name: document.getElementById('f-contact').value,
-          phone: document.getElementById('f-phone').value,
+          phones: readPhoneRows(),
+          zone: document.getElementById('f-zone').value ? Number(document.getElementById('f-zone').value) : null,
           address: document.getElementById('f-address').value,
           city: document.getElementById('f-city').value,
           province: document.getElementById('f-province').value,

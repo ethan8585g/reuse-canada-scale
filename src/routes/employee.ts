@@ -334,17 +334,68 @@ employeeRoutes.get('/vehicles', async (c) => {
 // ══════════════════════════════════════════
 // CUSTOMER ONBOARDING (CRUD)
 // ══════════════════════════════════════════
+const PHONE_LABELS = ['manager', 'owner', 'worker']
+
+// Validate the form's phone list: blank rows dropped, label one of the three
+// or null. Returns a string error, or the cleaned list.
+function cleanPhones(raw: any): { phone: string; label: string | null }[] | string {
+  if (!Array.isArray(raw)) return 'Phones must be a list'
+  const out: { phone: string; label: string | null }[] = []
+  for (const p of raw) {
+    const phone = String(p?.phone ?? '').trim()
+    if (!phone) continue
+    if (phone.length > 40) return 'Phone number is too long'
+    const label = p?.label ? String(p.label).toLowerCase() : null
+    if (label && !PHONE_LABELS.includes(label)) return 'Phone label must be Manager, Owner or Worker'
+    out.push({ phone, label })
+  }
+  if (out.length > 10) return 'At most 10 phone numbers per customer'
+  return out
+}
+
+function cleanZone(z: any): number | null | string {
+  if (z === null || z === '' || z === undefined) return null
+  const n = Number(z)
+  return [1, 2, 3].includes(n) ? n : 'Zone must be 1, 2 or 3'
+}
+
+// Replace a customer's numbers and mirror the first one into customers.phone,
+// which everything outside this page reads.
+async function savePhones(db: D1Database, customerId: number | string, phones: { phone: string; label: string | null }[]) {
+  const stmts = [db.prepare('DELETE FROM customer_phones WHERE customer_id = ?').bind(customerId)]
+  phones.forEach((p, i) => stmts.push(
+    db.prepare('INSERT INTO customer_phones (customer_id, phone, label, sort_order) VALUES (?, ?, ?, ?)').bind(customerId, p.phone, p.label, i)
+  ))
+  stmts.push(db.prepare(`UPDATE customers SET phone = ?, updated_at = datetime('now') WHERE id = ?`).bind(phones[0]?.phone ?? null, customerId))
+  await db.batch(stmts)
+}
 employeeRoutes.get('/customers/all', async (c) => {
   try {
     const status = c.req.query('status')
-    let sql = `SELECT c.id, c.email, c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code, c.lat, c.lng, c.region, c.notes, c.is_active, c.created_at, c.updated_at,
+    let sql = `SELECT c.id, c.email, c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code, c.lat, c.lng, c.region, c.zone, c.notes, c.is_active, c.created_at, c.updated_at,
                (SELECT COUNT(*) FROM pickup_requests pr WHERE pr.customer_id = c.id AND pr.status IN ('pending','confirmed')) as pending_pickups
                FROM customers c`
     if (status === 'active') { sql += ' WHERE c.is_active = 1'; }
     else if (status === 'inactive') { sql += ' WHERE c.is_active = 0'; }
     sql += ' ORDER BY c.company_name'
     const { results } = await c.env.DB.prepare(sql).all()
-    return c.json({ customers: results })
+    const { results: phoneRows } = await c.env.DB.prepare(
+      'SELECT customer_id, phone, label FROM customer_phones ORDER BY customer_id, sort_order, id'
+    ).all()
+    const byCustomer = new Map<number, any[]>()
+    for (const p of phoneRows as any[]) {
+      if (!byCustomer.has(p.customer_id)) byCustomer.set(p.customer_id, [])
+      byCustomer.get(p.customer_id)!.push({ phone: p.phone, label: p.label })
+    }
+    // customers.phone can also be written elsewhere (quick-customer at the
+    // scale, the customer's own profile). If it isn't in the list, show it
+    // first so the form never silently drops it on the next save.
+    const customers = (results as any[]).map((cu) => {
+      const phones = byCustomer.get(cu.id) || []
+      if (cu.phone && !phones.some((p) => p.phone === cu.phone)) phones.unshift({ phone: cu.phone, label: null })
+      return { ...cu, phones }
+    })
+    return c.json({ customers })
   } catch (err: any) {
     console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
@@ -352,24 +403,30 @@ employeeRoutes.get('/customers/all', async (c) => {
 
 employeeRoutes.post('/customers', roleRequired('admin', 'manager'), async (c) => {
   try {
-    const { email, password, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, notes } = await c.req.json()
+    const { email, password, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, notes, phones } = await c.req.json()
     if (!email || !password || !company_name || !contact_name) {
       return c.json({ error: 'Username, password, company name, and contact name are required' }, 400)
     }
+    const z = cleanZone(zone)
+    if (typeof z === 'string') return c.json({ error: z }, 400)
+    const phoneList = phones === undefined ? (phone ? [{ phone: String(phone).trim(), label: null }] : []) : cleanPhones(phones)
+    if (typeof phoneList === 'string') return c.json({ error: phoneList }, 400)
     const existing = await c.env.DB.prepare('SELECT id FROM customers WHERE LOWER(email) = LOWER(?)').bind(email.trim()).first()
     if (existing) {
       return c.json({ error: 'A customer with this username already exists' }, 409)
     }
     const passwordHash = await hashPassword(password)
     const result = await c.env.DB.prepare(
-      `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       email.trim(), passwordHash, company_name, contact_name,
-      phone || null, address || null, city || null, province || 'AB',
-      postal_code || null, lat || null, lng || null, region || 'north', notes || null
+      phoneList[0]?.phone || null, address || null, city || null, province || 'AB',
+      postal_code || null, lat || null, lng || null, region || 'north', z, notes || null
     ).run()
-    return c.json({ success: true, id: result.meta.last_row_id })
+    const newId = result.meta.last_row_id
+    if (phoneList.length) await savePhones(c.env.DB, newId, phoneList)
+    return c.json({ success: true, id: newId })
   } catch (err: any) {
     console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
   }
@@ -381,15 +438,31 @@ employeeRoutes.put('/customers/:id', roleRequired('admin', 'manager'), async (c)
     const body = await c.req.json()
     const fields: string[] = []
     const params: any[] = []
+    let phoneList: { phone: string; label: string | null }[] | null = null
+    if (body.phones !== undefined) {
+      const cleaned = cleanPhones(body.phones)
+      if (typeof cleaned === 'string') return c.json({ error: cleaned }, 400)
+      phoneList = cleaned
+    }
+    if (body.zone !== undefined) {
+      const z = cleanZone(body.zone)
+      if (typeof z === 'string') return c.json({ error: z }, 400)
+      fields.push('zone = ?'); params.push(z)
+    }
+    // phone is owned by savePhones() whenever a phone list is sent.
     const allowed = ['email','company_name','contact_name','phone','address','city','province','postal_code','lat','lng','region','notes','is_active']
     for (const key of allowed) {
+      if (key === 'phone' && phoneList) continue
       if (body[key] !== undefined) { fields.push(`${key} = ?`); params.push(body[key]); }
     }
     if (body.password) { fields.push('password_hash = ?'); params.push(await hashPassword(body.password)); }
-    if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400)
-    fields.push("updated_at = datetime('now')")
-    params.push(id)
-    await c.env.DB.prepare(`UPDATE customers SET ${fields.join(', ')} WHERE id = ?`).bind(...params).run()
+    if (fields.length === 0 && !phoneList) return c.json({ error: 'No fields to update' }, 400)
+    if (fields.length) {
+      fields.push("updated_at = datetime('now')")
+      params.push(id)
+      await c.env.DB.prepare(`UPDATE customers SET ${fields.join(', ')} WHERE id = ?`).bind(...params).run()
+    }
+    if (phoneList) await savePhones(c.env.DB, id, phoneList)
     return c.json({ success: true })
   } catch (err: any) {
     console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)
