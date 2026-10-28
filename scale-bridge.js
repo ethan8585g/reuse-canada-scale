@@ -21,6 +21,8 @@
 //   GET  /camera/probe  → ?url=  test a LAN camera URL, report what it is
 //   GET  /camera/snapshot → ?url=  one still frame, CORS-clean
 //   GET  /camera/mjpeg  → ?url=  piped multipart stream
+//   GET  /cams/:id/snapshot → a Cameras-module camera by id (needs the relay)
+//   (outbound) camera relay → CRM_URL + CRM_CAMERA_TOKEN, see relayTick()
 //   GET  /              → friendly status page
 
 // ESM imports: package.json sets "type": "module", so this file is loaded as an
@@ -30,7 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import https from 'node:https';
-import { execSync, execFileSync } from 'node:child_process';
+import { execSync, execFileSync, execFile } from 'node:child_process';
 
 // libuv runs every async fs and DNS call on a 4-thread pool by default, and a
 // read already handed to a thread cannot be cancelled. The serial reader below
@@ -527,6 +529,12 @@ function cameraRequest(u, onResponse, onError) {
   };
   const req = mod.request(opts, onResponse);
   req.setTimeout(8000, () => { req.destroy(new Error('Camera did not respond within 8s')); });
+  // req.setTimeout is a socket idle timer and does not run while the TCP
+  // connect is still pending, so an unplugged camera's IP waited for the OS's
+  // own ~75 s connect timeout. This one covers the wait for the response.
+  const connectTimer = setTimeout(() => req.destroy(new Error('Camera did not respond within 8s')), 8000);
+  req.on('response', () => clearTimeout(connectTimer));
+  req.on('close', () => clearTimeout(connectTimer));
   req.on('error', onError);
   req.end();
   return req;
@@ -539,6 +547,274 @@ function authHint(res) {
   if (/digest/i.test(wa)) return 'Camera requires Digest auth, which this proxy does not speak. Enable Basic auth on the camera (Hikvision: Security → Authentication → WEB = digest/basic; Dahua: Enable "Compatible with older editions").';
   if (/basic/i.test(wa)) return 'Camera rejected the username/password.';
   return 'Camera refused the request (HTTP ' + res.statusCode + ').';
+}
+
+// ── Camera relay (Cameras module) ──────────────────────────────────────────
+// The CRM's Cameras page is watched from anywhere, but the cameras are on this
+// LAN. When CRM_URL and CRM_CAMERA_TOKEN are set, this loop asks the CRM which
+// cameras somebody is looking at, pulls a still from each one, shrinks it and
+// uploads it. Cameras nobody is watching only get a health check once a
+// minute, and nothing is uploaded for them. Server side: src/routes/cameras.ts.
+const CRM_URL = (process.env.CRM_URL || '').replace(/\/+$/, '');
+const CRM_CAMERA_TOKEN = process.env.CRM_CAMERA_TOKEN || '';
+const RELAY_ON = !!(CRM_URL && CRM_CAMERA_TOKEN);
+const AGENT_DVR_URL = (process.env.AGENT_DVR_URL || 'http://127.0.0.1:8090').replace(/\/+$/, '');
+const RELAY_VERSION = 'relay-1';
+const FRAME_MAX_B64 = 600000;          // matches MAX_FRAME in src/routes/cameras.ts
+const SIZE_PX = { thumb: 640, full: 1280, local: 1920 };
+const UPLOAD_EVERY_MS = { thumb: 2000, full: 900 };
+const HEALTH_EVERY_MS = 60000;
+// Reolink locks an account after a run of bad logins, which would also lock
+// the owner out of the Reolink app. After a password failure a camera is only
+// retried every 15 min, or at once if somebody edits it in the CRM.
+const AUTH_BACKOFF_MS = 15 * 60000;
+
+let relayCams = [];                    // last /work answer, credentials included
+const relayMeta = new Map();           // id -> { updatedAt, lastUpload, lastHealth, authFailAt, scheme }
+let relayLastError = '';
+let relayDvrAt = 0;
+
+async function crm(method, p, body) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const r = await fetch(CRM_URL + '/api/camera-station' + p, {
+      method, signal: ctrl.signal,
+      headers: { 'X-Camera-Station-Token': CRM_CAMERA_TOKEN, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('CRM answered HTTP ' + r.status));
+    return d;
+  } finally { clearTimeout(t); }
+}
+
+// Fetch one JPEG. Resolves a Buffer or rejects with a message fit to show the
+// owner on the Cameras page.
+function grabJpeg(u) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    cameraRequest(u, (cr) => {
+      cr.on('data', (c) => {
+        size += c.length;
+        if (size > 12 * 1024 * 1024) { cr.destroy(); return reject(new Error('Camera sent a stream, not a picture')); }
+        chunks.push(c);
+      });
+      cr.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        if (cr.statusCode === 401 || cr.statusCode === 403) return reject(Object.assign(new Error(authHint(cr)), { auth: true }));
+        if (cr.statusCode !== 200) return reject(new Error('Camera answered HTTP ' + cr.statusCode));
+        if (buf[0] === 0xff && buf[1] === 0xd8) return resolve(buf);
+        // Reolink answers errors as JSON with a 200.
+        let detail = '';
+        try {
+          const j = JSON.parse(buf.toString('utf8'));
+          const e = (Array.isArray(j) ? j[0] : j) || {};
+          const code = e.error && e.error.rspCode;
+          detail = (e.error && e.error.detail) || '';
+          if ([-6, -7, -502, -503].includes(code) || /login|password|user/i.test(detail)) {
+            return reject(Object.assign(new Error('Wrong username or password'), { auth: true }));
+          }
+          if (code === -9 || /not support/i.test(detail)) return reject(new Error('This camera does not support snapshots on this channel'));
+        } catch {}
+        reject(new Error(detail ? 'Camera said: ' + detail : 'Camera did not send a picture'));
+      });
+      cr.on('error', (e) => reject(e));
+    }, (err) => {
+      const m = String(err && err.message || err);
+      reject(Object.assign(new Error(/ECONNREFUSED/.test(m) ? 'Connection refused' : /EHOSTUNREACH|EHOSTDOWN|ENETUNREACH|within 8s|ETIMEDOUT/.test(m) ? 'Camera not reachable' : m), { network: true }));
+    });
+  });
+}
+
+function reolinkUrl(cam, scheme) {
+  const port = cam.port ? ':' + cam.port : '';
+  const q = 'cmd=Snap&channel=' + (cam.channel || 0) + '&rs=' + Math.random().toString(36).slice(2, 10) +
+    '&user=' + encodeURIComponent(cam.username || '') + '&password=' + encodeURIComponent(cam.password || '');
+  return scheme + '://' + cam.host + port + '/cgi-bin/api.cgi?' + q;
+}
+
+// Newer Reolink firmware turns HTTP off and HTTPS on; older is the reverse.
+// Try the remembered scheme first, then the other one, but only fall back on a
+// connection problem -- a wrong password is wrong on both.
+// Agent DVR keeps answering grab.jpg with its own grey "no signal" picture
+// while it cannot reach the camera behind it, so a grab alone would look
+// healthy. Its object list says whether the camera is actually connected.
+let dvrObjects = null, dvrObjectsAt = 0;
+async function agentDvrObjects() {
+  if (Date.now() - dvrObjectsAt < 10000) return dvrObjects;
+  dvrObjectsAt = Date.now();
+  dvrObjects = await new Promise((resolve) => {
+    let body = '';
+    try {
+      cameraRequest(cameraTarget(AGENT_DVR_URL + '/command.cgi?cmd=getObjects'), (cr) => {
+        cr.setEncoding('utf8');
+        cr.on('data', (c) => { body += c; });
+        cr.on('end', () => {
+          try { resolve((JSON.parse(body).objectList || []).filter((o) => o && o.typeID === 2)); } catch { resolve(null); }
+        });
+      }, () => resolve(null));
+    } catch { resolve(null); }
+  });
+  return dvrObjects;
+}
+
+async function grabCamera(cam) {
+  if (cam.kind === 'agent_dvr') {
+    const objs = await agentDvrObjects();
+    if (!objs) throw Object.assign(new Error('Agent DVR is not running on the scale-house computer'), { network: true });
+    const o = objs.find((x) => x.id === cam.agent_dvr_oid);
+    if (!o) throw new Error('Agent DVR has no camera #' + cam.agent_dvr_oid);
+    if (o.data && o.data.connected === false) {
+      throw new Error('Agent DVR is not receiving this camera' + (o.data.error ? ' (' + o.data.error + ')' : '') + '. Check the camera has power and is on the network.');
+    }
+    return grabJpeg(cameraTarget(AGENT_DVR_URL + '/grab.jpg?oid=' + cam.agent_dvr_oid + '&size=1920x1080'));
+  }
+  if (cam.kind === 'snapshot_url') {
+    return grabJpeg(cameraTarget(cam.snapshot_url, cam.username, cam.password));
+  }
+  const meta = relayMeta.get(cam.id) || {};
+  const order = cam.use_https === 1 ? ['https'] : cam.use_https === 0 ? ['http']
+    : meta.scheme === 'http' ? ['http', 'https'] : ['https', 'http'];
+  let lastErr = null;
+  for (const scheme of order) {
+    try {
+      const buf = await grabJpeg(cameraTarget(reolinkUrl(cam, scheme)));
+      meta.scheme = scheme; relayMeta.set(cam.id, meta);
+      return buf;
+    } catch (e) {
+      lastErr = e;
+      if (!e.network) break;
+    }
+  }
+  if (lastErr && lastErr.network && order.length > 1) {
+    lastErr.message = lastErr.message + ' (tried HTTPS and HTTP; check the IP, and that HTTPS is on in the Reolink app)';
+  }
+  throw lastErr;
+}
+
+// Width/height from the JPEG's SOF marker, so the page can say what the
+// camera's real resolution is without another tool call.
+function jpegSize(buf) {
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) { i++; continue; }
+    const m = buf[i + 1];
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+    }
+    i += 2 + buf.readUInt16BE(i + 2);
+  }
+  return null;
+}
+
+// Shrink (and rotate) with macOS's built-in sips, keeping this file free of
+// image libraries. Elsewhere the picture goes as-is.
+function shrinkJpeg(buf, maxPx, rotate) {
+  if (!isMac) return Promise.resolve(buf);
+  const base = path.join(os.tmpdir(), 'rc-cam-' + process.pid + '-' + Math.random().toString(36).slice(2));
+  const src = base + '-in.jpg', out = base + '-out.jpg';
+  fs.writeFileSync(src, buf);
+  const args = ['-Z', String(maxPx), '-s', 'formatOptions', '70'];
+  if (rotate) args.push('-r', String(rotate));
+  args.push(src, '--out', out);
+  return new Promise((resolve) => {
+    execFile('/usr/bin/sips', args, { timeout: 10000 }, (err) => {
+      let res = buf;
+      if (!err) { try { res = fs.readFileSync(out); } catch {} }
+      try { fs.unlinkSync(src); } catch {}
+      try { fs.unlinkSync(out); } catch {}
+      resolve(res);
+    });
+  });
+}
+
+async function relayUpload(cam, size) {
+  const raw = await grabCamera(cam);
+  const dim = jpegSize(raw);
+  const small = await shrinkJpeg(raw, SIZE_PX[size], cam.rotate);
+  const image = 'data:image/jpeg;base64,' + small.toString('base64');
+  if (image.length > FRAME_MAX_B64) throw new Error('Picture too large to relay');
+  await crm('POST', '/frame', { camera_id: cam.id, image, width: dim && dim.w, height: dim && dim.h });
+}
+
+async function agentDvrList() {
+  dvrObjectsAt = 0;
+  const objs = await agentDvrObjects();
+  return objs ? objs.map((o) => ({ id: o.id, name: o.name || ('Camera ' + o.id) })) : null;
+}
+
+// Each camera's work runs on its own (meta.busy), so one slow or unplugged
+// camera never holds up the pictures somebody is watching on another.
+let relayResults = [];
+function relayCameraWork(cam, now) {
+  const meta = relayMeta.get(cam.id) || { lastUpload: 0, lastHealth: 0, authFailAt: 0, busy: false };
+  if (meta.updatedAt !== cam.updated_at) { meta.updatedAt = cam.updated_at; meta.lastHealth = 0; meta.authFailAt = 0; }
+  relayMeta.set(cam.id, meta);
+  if (meta.busy) return;
+  if (meta.authFailAt && now - meta.authFailAt < AUTH_BACKOFF_MS) return;
+  let job = null;
+  if (cam.watch !== 'none') {
+    if (now - meta.lastUpload < UPLOAD_EVERY_MS[cam.watch]) return;
+    meta.lastUpload = now;
+    job = () => relayUpload(cam, cam.watch);
+  } else if (now - meta.lastHealth >= HEALTH_EVERY_MS) {
+    job = async () => {
+      const dim = jpegSize(await grabCamera(cam));
+      relayResults.push({ camera_id: cam.id, ok: true, width: dim && dim.w, height: dim && dim.h });
+    };
+  }
+  if (!job) return;
+  meta.busy = true;
+  meta.lastHealth = now;
+  job().catch((e) => {
+    if (e.auth) meta.authFailAt = Date.now();
+    relayResults.push({ camera_id: cam.id, ok: false, error: e.message + (e.auth ? ' (paused 15 min so the camera does not lock the account)' : '') });
+  }).finally(() => { meta.busy = false; });
+}
+
+async function relayTick() {
+  let watched = false;
+  const started = Date.now();
+  try {
+    const work = await crm('GET', '/work');
+    relayCams = work.cameras || [];
+    const now = Date.now();
+    for (const cam of relayCams) {
+      if (cam.watch !== 'none') watched = true;
+      relayCameraWork(cam, now);
+    }
+    let agentdvr;
+    if (now - relayDvrAt > 5 * 60000) { relayDvrAt = now; agentdvr = await agentDvrList(); }
+    if (relayResults.length || agentdvr) {
+      const results = relayResults; relayResults = [];
+      await crm('POST', '/status', { results, agentdvr: agentdvr || undefined, version: RELAY_VERSION });
+    }
+    if (relayLastError) { console.log('[relay] connected to ' + CRM_URL + ' again'); relayLastError = ''; }
+  } catch (e) {
+    const m = String(e && e.message || e);
+    if (m !== relayLastError) { console.log('[relay] ' + m); relayLastError = m; }
+  }
+  const wait = watched ? 500 : 2500;
+  setTimeout(relayTick, Math.max(100, wait - (Date.now() - started)));
+}
+
+// GET /cams/:id/snapshot -- for the Cameras page on this very computer: a
+// fresh still straight from the camera, much faster than the round trip
+// through the CRM. Uses the credentials from the last /work answer, so the
+// browser never holds a camera password.
+async function serveLocalCam(res, id) {
+  const cam = relayCams.find((c) => c.id === id);
+  if (!cam) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Unknown camera' })); }
+  try {
+    const raw = await grabCamera(cam);
+    const img = await shrinkJpeg(raw, SIZE_PX.local, cam.rotate);
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' });
+    res.end(img);
+  } catch (e) {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message }));
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -556,6 +832,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
 
   const url = new URL(req.url, 'http://localhost');
+
+  const camMatch = url.pathname.match(/^[/]cams[/]([0-9]+)[/]snapshot$/);
+  if (camMatch) return serveLocalCam(res, Number(camMatch[1]));
 
   // Ask a local Agent DVR which cameras it has, so the operator picks a camera
   // by name instead of hand-assembling /grab.jpg?oid=N&size=WxH. Agent DVR runs
@@ -831,6 +1110,7 @@ const server = http.createServer(async (req, res) => {
       bytes: totalBytes,
       lastByteAt,
       availablePorts: listPorts(),
+      camera_relay: RELAY_ON,
     }));
     return;
   }
@@ -916,6 +1196,7 @@ server.listen(HTTP_PORT, '127.0.0.1', () => {
   // installs must not also open its SPP serial port. /reconfigure can still
   // explicitly start serial reading when the operator chooses Bridge.
   if (process.env.BRIDGE_SERIAL !== '0') startReading();
+  if (RELAY_ON) { console.log('[relay] camera relay on -> ' + CRM_URL); relayTick(); }
 });
 
 process.on('SIGINT',  () => { console.log('\n[bridge] shutting down'); closeStream(); process.exit(0); });

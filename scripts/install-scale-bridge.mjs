@@ -19,6 +19,20 @@ const domain = 'gui/' + process.getuid();
 const xml = value => String(value).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c]);
 
 for (const dir of [destination, agents, logs]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+// Camera relay for the CRM's Cameras page: CRM_URL + CRM_CAMERA_TOKEN (the
+// same value as the CAMERA_STATION_TOKEN Pages secret). Taken from this run's
+// environment, else kept from the plist being replaced, so a routine reinstall
+// does not silently turn the relay off.
+const previous = key => {
+  try { return execFileSync('/usr/bin/plutil', ['-extract', 'EnvironmentVariables.' + key, 'raw', '-o', '-', plist], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); }
+  catch { return ''; }
+};
+const env = { BRIDGE_SERIAL: '0' };
+for (const key of ['CRM_URL', 'CRM_CAMERA_TOKEN']) {
+  const value = process.env[key] || previous(key);
+  if (value) env[key] = value;
+}
+const envXml = Object.entries(env).map(([k, v]) => `<key>${xml(k)}</key><string>${xml(v)}</string>`).join('');
 // A standalone .mjs works even on a second Mac without this repository's package.json.
 fs.copyFileSync(path.join(root, 'scale-bridge.js'), path.join(destination, 'scale-bridge.mjs'));
 fs.writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?>
@@ -27,7 +41,7 @@ fs.writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?>
 <key>Label</key><string>${label}</string>
 <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(path.join(destination, 'scale-bridge.mjs'))}</string></array>
 <key>WorkingDirectory</key><string>${xml(destination)}</string>
-<key>EnvironmentVariables</key><dict><key>BRIDGE_SERIAL</key><string>0</string></dict>
+<key>EnvironmentVariables</key><dict>${envXml}</dict>
 <key>RunAtLoad</key><true/>
 <key>KeepAlive</key><true/>
 <key>ThrottleInterval</key><integer>10</integer>
@@ -62,4 +76,5 @@ for (let attempt = 0; attempt < 20; attempt++) {
 if (!ready) throw new Error('Bridge did not start. Check ' + logs);
 console.log('Scale House bridge is ready and will start whenever you log in to this Mac.');
 console.log('Camera and printing are enabled. Chrome keeps its existing Bluetooth scale connection.');
+console.log(env.CRM_CAMERA_TOKEN ? 'Camera relay is on: the Cameras page can be watched from anywhere.' : 'Camera relay is off (set CRM_URL and CRM_CAMERA_TOKEN to turn it on).');
 console.log('Open Scale House in Chrome and allow local network access when asked.');

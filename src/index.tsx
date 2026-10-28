@@ -15,6 +15,7 @@ import { invoiceRoutes } from './routes/invoices'
 import { junkRemovalRoutes } from './routes/junkRemoval'
 import { fleetRoutes } from './routes/fleet'
 import { dispatchRoutes } from './routes/dispatch'
+import { cameraRoutes, cameraStationRoutes } from './routes/cameras'
 import { renderLogin } from './pages/login'
 import { renderCustomerDashboard } from './pages/customerDashboard'
 import { renderEmployeeDashboard } from './pages/employeeDashboard'
@@ -30,6 +31,7 @@ import { renderDriverPortal } from './pages/driverPortal'
 import { renderJunkRemovalQuoting } from './pages/junkRemovalQuoting'
 import { renderFleet } from './pages/fleet'
 import { renderDispatch } from './pages/dispatch'
+import { renderCameras } from './pages/cameras'
 import { renderInvoices } from './pages/invoices'
 import { renderInvoiceBuilder } from './pages/invoiceBuilder'
 import { renderInvoicePrint } from './pages/invoicePrint'
@@ -41,6 +43,7 @@ type Bindings = {
   SQUARE_APP_ID: string
   SQUARE_ACCESS_TOKEN: string
   open_ai: string
+  CAMERA_STATION_TOKEN?: string
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -63,6 +66,8 @@ app.route('/api/invoices', invoiceRoutes)
 app.route('/api/junk-removal', junkRemovalRoutes)
 app.route('/api/fleet', fleetRoutes)
 app.route('/api/dispatch', dispatchRoutes)
+app.route('/api/cameras', cameraRoutes)
+app.route('/api/camera-station', cameraStationRoutes)
 
 // ── Which build is live. The Scale House page polls this and reloads itself
 // when a newer build is deployed, because that tab stays open for days. ──
@@ -136,6 +141,7 @@ app.get('/employee/pickups', (c) => c.html(renderPickupManagement()))
 app.get('/employee/routing', (c) => c.html(renderRouting()))
 app.get('/employee/fleet', (c) => c.html(renderFleet()))
 app.get('/employee/dispatch', (c) => c.html(renderDispatch()))
+app.get('/employee/cameras', (c) => c.html(renderCameras()))
 app.get('/employee/customers', (c) => c.html(renderCustomerManagement()))
 app.get('/employee/drivers', (c) => c.html(renderDriverManagement()))
 app.get('/employee/junk-removal', (c) => c.html(renderJunkRemovalQuoting()))

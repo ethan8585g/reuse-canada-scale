@@ -5,6 +5,7 @@ export function employeeSidebar(activePage: string): string {
     { id: 'dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', href: '/employee/dashboard', roles: ['admin','manager','yard_operator'] },
     { id: 'scale-house', icon: 'fas fa-balance-scale', label: 'Scale House', href: '/employee/scale-house', roles: ['admin','manager','yard_operator'] },
     { id: 'scale-tickets', icon: 'fas fa-receipt', label: 'Ticket History', href: '/employee/scale-tickets', roles: ['admin','manager','yard_operator'] },
+    { id: 'cameras', icon: 'fas fa-video', label: 'Cameras', href: '/employee/cameras', roles: ['admin','manager','yard_operator'] },
     { id: 'pickups', icon: 'fas fa-truck-pickup', label: 'Pickup Requests', href: '/employee/pickups', roles: ['admin','manager'] },
     { id: 'routing', icon: 'fas fa-route', label: 'Routing', href: '/employee/routing', roles: ['admin','manager'] },
     { id: 'dispatch', icon: 'fas fa-headset', label: 'Dispatch', href: '/employee/dispatch', roles: ['admin','manager'] },
