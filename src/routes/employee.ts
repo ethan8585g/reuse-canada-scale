@@ -14,7 +14,7 @@ employeeRoutes.use('*', authMiddleware, employeeOnly)
 // ══════════════════════════════════════════
 // DASHBOARD DATA (with performance stats)
 // ══════════════════════════════════════════
-employeeRoutes.get('/dashboard', async (c) => {
+employeeRoutes.get('/dashboard', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     // "Today" must be Edmonton-local. Worker runs in UTC, so plain
      // toISOString().split('T')[0] flips at 5pm/6pm local — daily roll-ups
@@ -108,7 +108,7 @@ employeeRoutes.get('/dashboard', async (c) => {
 // ══════════════════════════════════════════
 // DRIVER STATUS SUMMARY (for sidebar widget)
 // ══════════════════════════════════════════
-employeeRoutes.get('/driver-status-summary', async (c) => {
+employeeRoutes.get('/driver-status-summary', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const onRoad = await c.env.DB.prepare(
       "SELECT COUNT(*) as count FROM driver_status WHERE status = 'on_road'"
@@ -132,7 +132,7 @@ employeeRoutes.get('/driver-status-summary', async (c) => {
 // Who is behind the sidebar's on-road / idle counts. Same rule as the summary
 // above: an active driver with no driver_status row counts as idle, so the names
 // here always add up to the numbers shown.
-employeeRoutes.get('/driver-status-list', async (c) => {
+employeeRoutes.get('/driver-status-list', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
       `SELECT e.id, e.first_name, e.last_name, e.phone, e.role,
@@ -179,7 +179,7 @@ employeeRoutes.post('/driver-status', async (c) => {
 // ══════════════════════════════════════════
 // TODAY'S PICKUPS MAP DATA (for dashboard mini-map)
 // ══════════════════════════════════════════
-employeeRoutes.get('/todays-pickups-map', async (c) => {
+employeeRoutes.get('/todays-pickups-map', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const today = todayEdmonton()
     const { results } = await c.env.DB.prepare(
@@ -264,7 +264,7 @@ employeeRoutes.post('/pickup-proof', async (c) => {
 })
 
 // Get proof records for a pickup
-employeeRoutes.get('/pickup-proof/:pickupId', async (c) => {
+employeeRoutes.get('/pickup-proof/:pickupId', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   const pickupId = c.req.param('pickupId')
   try {
     const { results } = await c.env.DB.prepare(
@@ -283,7 +283,7 @@ employeeRoutes.get('/pickup-proof/:pickupId', async (c) => {
 // ══════════════════════════════════════════
 // NOTIFICATION ENDPOINTS
 // ══════════════════════════════════════════
-employeeRoutes.get('/notifications', async (c) => {
+employeeRoutes.get('/notifications', roleRequired('admin', 'manager'), async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM notification_log ORDER BY created_at DESC LIMIT 50'
@@ -297,7 +297,7 @@ employeeRoutes.get('/notifications', async (c) => {
 // ══════════════════════════════════════════
 // CUSTOMER & DRIVER DROPDOWN DATA
 // ══════════════════════════════════════════
-employeeRoutes.get('/customers', async (c) => {
+employeeRoutes.get('/customers', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
       'SELECT id, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region FROM customers WHERE is_active = 1 ORDER BY company_name'
@@ -308,7 +308,7 @@ employeeRoutes.get('/customers', async (c) => {
   }
 })
 
-employeeRoutes.get('/drivers', async (c) => {
+employeeRoutes.get('/drivers', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
       "SELECT id, first_name, last_name, phone, role FROM employees WHERE is_active = 1 AND role IN ('driver', 'admin', 'manager') ORDER BY first_name"
@@ -381,7 +381,7 @@ async function savePhones(db: D1Database, customerId: number | string, phones: {
   stmts.push(db.prepare(`UPDATE customers SET phone = ?, updated_at = datetime('now') WHERE id = ?`).bind(phones[0]?.phone ?? null, customerId))
   await db.batch(stmts)
 }
-employeeRoutes.get('/customers/all', async (c) => {
+employeeRoutes.get('/customers/all', roleRequired('admin', 'manager'), async (c) => {
   try {
     const status = c.req.query('status')
     let sql = `SELECT c.id, c.email, c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code, c.lat, c.lng, c.region, c.zone, c.tire_types, c.notes, c.is_active, c.created_at, c.updated_at,
@@ -503,7 +503,7 @@ employeeRoutes.post('/customers/:id/toggle', roleRequired('admin', 'manager'), a
 // ══════════════════════════════════════════
 // DRIVER / EMPLOYEE MANAGEMENT (CRUD)
 // ══════════════════════════════════════════
-employeeRoutes.get('/staff', async (c) => {
+employeeRoutes.get('/staff', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const role = c.req.query('role')
     let sql = 'SELECT id, email, first_name, last_name, phone, role, is_active, created_at, updated_at FROM employees'
@@ -582,9 +582,12 @@ employeeRoutes.post('/staff/:id/phone', roleRequired('admin', 'manager', 'yard_o
     const { phone } = await c.req.json()
     const clean = (phone || '').trim().slice(0, 50)
     if (!clean) return c.json({ error: 'Phone is required' }, 400)
-    await c.env.DB.prepare(
-      "UPDATE employees SET phone = ?, updated_at = datetime('now') WHERE id = ?"
-    ).bind(clean, id).run()
+    // This exists so the scale house can fix a DRIVER's number from the ticket
+    // form. Only an admin may change anyone else's (an admin's included).
+    const res = c.get('userRole') === 'admin'
+      ? await c.env.DB.prepare("UPDATE employees SET phone = ?, updated_at = datetime('now') WHERE id = ?").bind(clean, id).run()
+      : await c.env.DB.prepare("UPDATE employees SET phone = ?, updated_at = datetime('now') WHERE id = ? AND role = 'driver'").bind(clean, id).run()
+    if (!res.meta.changes) return c.json({ error: "Only an admin can change this person's phone number" }, 403)
     return c.json({ success: true, phone: clean })
   } catch (err: any) {
     console.error('employee error:', err); return c.json({ error: 'Server error' }, 500)

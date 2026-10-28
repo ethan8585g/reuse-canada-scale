@@ -301,6 +301,17 @@ export function renderDriverPortal(): string {
       </div>
     </div>
 
+    <!-- Scale Ticket Detail (driver view: no prices) -->
+    <div id="dticket-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none" onclick="if (event.target === this) closeDriverTicket()">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
+          <h3 class="text-lg font-bold text-gray-800 font-mono" id="dticket-title">Scale ticket</h3>
+          <button onclick="closeDriverTicket()" class="text-gray-400 hover:text-gray-600" aria-label="Close"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <div id="dticket-body" class="p-5"></div>
+      </div>
+    </div>
+
     <!-- Complete Pickup Modal -->
     <div id="complete-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
@@ -654,11 +665,10 @@ export function renderDriverPortal(): string {
     // ═══ SCALE TICKETS TAB (NO REVENUE/PRICING DATA) ═══
     async function loadDriverScaleTickets() {
       try {
-        const res = await axios.get('/api/scale-tickets');
-        // Show all tickets but filter to those the driver was involved in (or all field tickets)
-        const tickets = (res.data.tickets || []).filter(t => 
-          t.employee_id === session.user_id || t.status === 'field_pending' || t.status === 'field_complete'
-        );
+        // The server returns only this driver's loads (their pickups, their
+        // routes, their field forms) and strips every price before it leaves.
+        const res = await axios.get('/api/scale-tickets?limit=100');
+        const tickets = res.data.tickets || [];
         const container = document.getElementById('scaletickets-list');
 
         if (tickets.length === 0) {
@@ -674,11 +684,11 @@ export function renderDriverPortal(): string {
           voided: 'bg-red-100 text-red-800'
         };
 
-        container.innerHTML = tickets.slice(0, 30).map(t => \`
-          <div class="p-4 hover:bg-gray-50 transition-colors">
+        container.innerHTML = tickets.slice(0, 50).map(t => \`
+          <button type="button" onclick="openDriverTicket(\${t.id})" class="block w-full text-left p-4 hover:bg-gray-50 transition-colors focus:outline-none focus:bg-green-50">
             <div class="flex items-center justify-between mb-1">
               <div>
-                <div class="font-mono text-sm font-bold text-rc-green">\${escHtml(t.ticket_number)}</div>
+                <div class="font-mono text-sm font-bold text-rc-green">\${escHtml(t.ticket_number)}\${t.job_number ? ' <span class="font-sans text-xs text-gray-500">· Job J-' + t.job_number + '</span>' : ''}</div>
                 <div class="text-xs text-gray-500">\${escHtml(t.company_name || t.field_store_name || 'Walk-in')}</div>
               </div>
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold \${statusColors[t.status] || 'bg-gray-100 text-gray-600'}">
@@ -689,8 +699,9 @@ export function renderDriverPortal(): string {
               <span><i class="fas fa-tag mr-1"></i>\${(t.tire_type || 'mixed').replace('_',' ')}</span>
               \${t.net_weight ? '<span><i class="fas fa-weight mr-1"></i>' + parseFloat(t.net_weight).toFixed(1) + ' kg</span>' : '<span class="text-yellow-600">Pending weigh</span>'}
               <span><i class="fas fa-clock mr-1"></i>\${t.created_at ? new Date(t.created_at).toLocaleDateString('en-CA') : ''}</span>
+              <span class="ml-auto text-gray-300"><i class="fas fa-chevron-right"></i></span>
             </div>
-          </div>
+          </button>
         \`).join('');
         // NOTE: No pricing, revenue, or payment data is shown to drivers
       } catch (err) {
@@ -698,6 +709,54 @@ export function renderDriverPortal(): string {
         document.getElementById('scaletickets-list').innerHTML = '<div class="p-6 text-center text-red-400">Failed to load tickets</div>';
       }
     }
+
+    // ═══ SCALE TICKET DETAIL ═══
+    const DT_STATUS = { field_pending: 'Field form started', field_complete: 'Field form done', weighed_in: 'In the yard', completed: 'Completed', voided: 'Voided' };
+    function dtRow(label, value) {
+      return value || value === 0 ? '<div class="flex justify-between gap-3 py-1.5 border-b border-gray-50 text-sm"><span class="text-gray-500 shrink-0">' + label + '</span><span class="font-semibold text-gray-800 text-right">' + value + '</span></div>' : '';
+    }
+    function dtWhen(v) {
+      if (!v) return '';
+      const s = String(v);
+      const d = new Date(s.indexOf('T') >= 0 ? s : s.replace(' ', 'T') + 'Z');
+      return isNaN(d) ? escHtml(s) : escHtml(d.toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }));
+    }
+    function dtKg(v) { return v != null && v !== '' ? escHtml(Number(v).toLocaleString('en-CA', { maximumFractionDigits: 1 })) + ' kg' : ''; }
+    async function openDriverTicket(id) {
+      const body = document.getElementById('dticket-body');
+      document.getElementById('dticket-title').textContent = 'Scale ticket';
+      body.innerHTML = '<div class="py-10 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Loading...</div>';
+      document.getElementById('dticket-modal').style.display = 'flex';
+      try {
+        const res = await axios.get('/api/scale-tickets/' + id);
+        const t = res.data.ticket;
+        document.getElementById('dticket-title').textContent = t.ticket_number;
+        const origin = [t.origin_address, t.origin_city, t.origin_province, t.origin_postal_code].filter(Boolean).join(', ');
+        body.innerHTML =
+          '<div class="flex items-center justify-between mb-3"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + (t.status === 'completed' ? 'bg-green-100 text-green-800' : t.status === 'voided' ? 'bg-red-100 text-red-800' : 'bg-purple-100 text-purple-800') + '">' + escHtml(DT_STATUS[t.status] || t.status) + '</span>' +
+            (t.job_number ? '<span class="font-bold text-rc-green tabular-nums">Job J-' + t.job_number + '</span>' : '') + '</div>' +
+          (t.status === 'completed' ? '<div class="rounded-xl bg-green-50 border border-green-100 p-4 text-center mb-4"><div class="text-xs font-semibold text-green-700 uppercase tracking-wide">Net weight</div><div class="text-3xl font-extrabold text-green-800 tabular-nums">' + dtKg(Math.abs(Number(t.net_weight) || 0)) + '</div></div>' : '') +
+          dtRow('Customer', escHtml(t.origin_company || t.company_name || t.field_store_name || 'Walk-in')) +
+          dtRow('Picked up from', escHtml(origin)) +
+          dtRow('Zone', t.origin_zone ? 'Zone ' + escHtml(t.origin_zone) : '') +
+          dtRow('Tires', t.origin_tire_count != null ? escHtml(t.origin_tire_count) + (t.origin_tire_count_estimated ? ' (estimate)' : ' (your count)') : '') +
+          dtRow('Material', escHtml((t.tire_type || '').replace(/_/g, ' '))) +
+          dtRow('Weighed in', dtKg(t.weight_in) + (t.weight_in_at ? '<div class="text-xs font-normal text-gray-400">' + dtWhen(t.weight_in_at) + '</div>' : '')) +
+          dtRow('Weighed out', dtKg(t.weight_out) + (t.weight_out_at ? '<div class="text-xs font-normal text-gray-400">' + dtWhen(t.weight_out_at) + '</div>' : '')) +
+          dtRow('Truck', escHtml(t.vehicle_plate || '')) +
+          dtRow('Driver', escHtml(t.driver_display_name || t.origin_driver || '')) +
+          dtRow('Collected', dtWhen(t.origin_collected_at)) +
+          (t.status === 'voided' && t.void_reason ? '<div class="mt-3 bg-red-50 rounded-xl p-3 text-sm text-red-700"><b>Voided:</b> ' + escHtml(t.void_reason) + '</div>' : '') +
+          (t.photo_in || t.photo_out ? '<div class="grid grid-cols-2 gap-2 mt-4">' +
+            (t.photo_in ? '<figure><img src="' + escAttr(t.photo_in) + '" class="w-full rounded-lg border" alt="Weigh-in photo"><figcaption class="text-xs text-gray-400 mt-1">Weigh-in</figcaption></figure>' : '') +
+            (t.photo_out ? '<figure><img src="' + escAttr(t.photo_out) + '" class="w-full rounded-lg border" alt="Weigh-out photo"><figcaption class="text-xs text-gray-400 mt-1">Weigh-out</figcaption></figure>' : '') + '</div>' : '') +
+          '<p class="text-xs text-gray-400 mt-4">Questions about this load? Ask in the Dispatch tab.</p>';
+      } catch (err) {
+        body.innerHTML = '<div class="py-8 text-center text-red-500 text-sm">' + escHtml((err.response && err.response.data && err.response.data.error) || 'Could not open this ticket') + '</div>';
+      }
+    }
+    function closeDriverTicket() { document.getElementById('dticket-modal').style.display = 'none'; }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDriverTicket(); } });
 
     // ═══ PROOF OF WORK ═══
     function triggerProofCamera() {

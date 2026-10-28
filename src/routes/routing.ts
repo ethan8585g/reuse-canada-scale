@@ -59,7 +59,7 @@ async function nominatim(q: string): Promise<{ lat: number; lng: number } | null
 // is about to put on a map. Deliberately does not fall back to a city-only
 // match: a pin in the middle of Edmonton looks precise and would mislead the
 // stop order.
-routeRoutes.post('/geocode-missing', async (c) => {
+routeRoutes.post('/geocode-missing', roleRequired('admin', 'manager'), async (c) => {
   try {
     await ensureGeocodeMisses(c.env.DB)
     const { results } = await c.env.DB.prepare(

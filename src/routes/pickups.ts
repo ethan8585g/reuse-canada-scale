@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { authMiddleware, employeeOnly } from '../middleware/auth'
+import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 
 type Bindings = { DB: D1Database }
 
@@ -11,6 +11,23 @@ export const pickupRoutes = new Hono<{ Bindings: Bindings }>()
 
 // Apply auth middleware
 pickupRoutes.use('*', authMiddleware, employeeOnly)
+
+// Drivers may read and progress only pickups assigned to them (directly or
+// through their route). Creating, assigning, unassigning and notifying are
+// office actions. Before this, any employee login could do all of it to any
+// pickup -- the driver portal simply never showed the buttons.
+async function callerRole(c: any): Promise<string> {
+  const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(c.get('userId')).first()
+  return (me?.role as string) || ''
+}
+async function assignedToMe(c: any, pickupId: string | number): Promise<boolean> {
+  const me = c.get('userId')
+  const row = await c.env.DB.prepare(
+    `SELECT 1 FROM pickup_requests pr LEFT JOIN routes r ON r.id = pr.assigned_route_id
+     WHERE pr.id = ? AND (pr.assigned_employee_id = ? OR r.assigned_employee_id = ?)`
+  ).bind(pickupId, me, me).first()
+  return !!row
+}
 
 // List pickup requests with filters (including region). Drivers see only
 // pickups assigned to them; the previous client-side filter was bypassable.
@@ -161,6 +178,7 @@ pickupRoutes.get('/calendar', async (c) => {
 pickupRoutes.get('/:id', async (c) => {
   const id = c.req.param('id')
   try {
+    if ((await callerRole(c)) === 'driver' && !(await assignedToMe(c, id))) return c.json({ error: 'Not found' }, 404)
     const pickup = await c.env.DB.prepare(
       `SELECT pr.*, c.company_name, c.contact_name, c.phone, c.address, c.city, c.lat, c.lng, c.region
        FROM pickup_requests pr
@@ -218,7 +236,7 @@ async function logScheduleSms(db: D1Database, pickupId: string, phone: string, n
 // Book a pickup on a customer's behalf (the dashboard calendar's "Schedule
 // pickup" form). Passing employee_id assigns a driver and schedules it outright;
 // without one the request lands as 'pending' like a customer-submitted booking.
-pickupRoutes.post('/', async (c) => {
+pickupRoutes.post('/', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const body = await c.req.json().catch(() => ({} as any))
     const { customer_id, estimated_tire_count, tire_type, preferred_date, preferred_time_slot, notes, employee_id, notify_customer } = body
@@ -281,6 +299,11 @@ pickupRoutes.post('/:id/status', async (c) => {
 
     if (!validStatuses.includes(status)) {
       return c.json({ error: 'Invalid status' }, 400)
+    }
+    // A driver can only start or finish a job that is theirs.
+    if ((await callerRole(c)) === 'driver') {
+      if (!['in_progress', 'completed'].includes(status)) return c.json({ error: 'Insufficient permissions' }, 403)
+      if (!(await assignedToMe(c, id))) return c.json({ error: 'Pickup not found' }, 404)
     }
     // Optional real count from the driver at completion. It goes onto the
     // scale ticket's origin record instead of the customer's estimate.
@@ -345,7 +368,7 @@ pickupRoutes.post('/:id/status', async (c) => {
 })
 
 // Toggle notify customer
-pickupRoutes.post('/:id/notify', async (c) => {
+pickupRoutes.post('/:id/notify', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     const { notify_customer } = await c.req.json()
@@ -361,7 +384,7 @@ pickupRoutes.post('/:id/notify', async (c) => {
 // Undo an assignment: clear the driver and drop the pickup back to the status it
 // held before "Assign & Schedule". The Pickup Management card posts here when its
 // green Scheduled toggle is clicked a second time.
-pickupRoutes.post('/:id/unassign', async (c) => {
+pickupRoutes.post('/:id/unassign', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     const body = await c.req.json().catch(() => ({} as any))
@@ -388,7 +411,7 @@ pickupRoutes.post('/:id/unassign', async (c) => {
 })
 
 // Assign pickup to employee and schedule
-pickupRoutes.post('/:id/assign', async (c) => {
+pickupRoutes.post('/:id/assign', roleRequired('admin', 'manager'), async (c) => {
   const id = c.req.param('id')
   try {
     const { employee_id, scheduled_date, notify_customer } = await c.req.json()

@@ -15,7 +15,7 @@ function cleanNotes(v: unknown): string | null {
 }
 
 // Get all pricing
-pricingRoutes.get('/', async (c) => {
+pricingRoutes.get('/', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM pricing WHERE is_active = 1 ORDER BY material_type'

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { authMiddleware, employeeOnly } from '../middleware/auth'
+import { authMiddleware, employeeOnly, roleRequired } from '../middleware/auth'
 import { YARD_ADDRESS } from '../utils/yard'
 
 type Bindings = {
@@ -10,6 +10,8 @@ type Bindings = {
 export const junkRemovalRoutes = new Hono<{ Bindings: Bindings }>()
 
 junkRemovalRoutes.use('*', authMiddleware, employeeOnly)
+// Quoting is office/yard work (sidebar roles); drivers never use it.
+junkRemovalRoutes.use('*', roleRequired('admin', 'manager', 'yard_operator'))
 
 const DUMP_ADDRESS  = '4810 68 Ave NW, Edmonton, Alberta, Canada'  // Core Waste Management
 

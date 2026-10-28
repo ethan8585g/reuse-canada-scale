@@ -1429,7 +1429,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   let openTickets = [], pricingData = [], customersCache = [], vehiclesCache = [];
   let cameraStream = null, lastCapturedPhoto = null;
   // Receipt printing flows through the OS print dialog (see printReceiptToThermal).
-  let pendingMergeTicketId = null, pendingMergeTicket = null, autoRefreshTimer = null;
+  let pendingMergeTicketId = null, pendingMergeTicket = null, pendingMergeWeight = null, autoRefreshTimer = null;
   // New v3 state
   let stableTimer = null, stableStartWeight = 0, autoPromptShown = false;
   let previousWeight = 0, lastWeightTimestamp = 0;
@@ -1751,6 +1751,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     // Refuse to auto-prompt on stale data — currentLiveWeight could be a
     // 5-minute-old reading from before the bridge stalled.
     if (!isLive()) { autoPromptShown = false; return; }
+    // Auto mode weighs the truck itself; the prompt would invite a duplicate.
+    if (agentSettings && agentSettings.mode === 'live') return;
     if (isWeightStable && currentLiveWeight > triggerKg() && !autoPromptShown) {
       if (!stableTimer) {
         stableStartWeight = currentLiveWeight;
@@ -1976,7 +1978,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }
   }
 
+  // True while Auto mode is dealing with the truck on the scale (deciding,
+  // acting, or cooling down until the deck clears). A manual capture then
+  // would open a second ticket for the same truck.
+  function agentOwnsScale() {
+    return !!(agentSettings && agentSettings.mode === 'live' && agentState && agentState !== 'idle');
+  }
+
   async function captureWeight() {
+    if (agentOwnsScale()) { alert('Auto mode is handling the truck on the scale. Check the In the yard list, or switch to Manual first.'); return; }
     if (remoteScale && !isLive()) { remoteCapture(); return; }
     if (currentLiveWeight <= 0) return;
     if (!isLive() && connectionMode !== 'sim') {
@@ -2006,7 +2016,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     lastPrintWeight = weight;
     isWeightStable = true;
     updateLiveWeightDisplay();
-    onPrintTrigger(weight);
+    // The panel only shows when the scale is down, so "live data is stale"
+    // is expected here -- the operator typed the weight on purpose.
+    onPrintTrigger(weight, false, true);
     input.value = '';
   }
 
@@ -3461,7 +3473,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     }, 2000);
   }
 
-  function onPrintTrigger(weight, fromAgent) {
+  function onPrintTrigger(weight, fromAgent, manualEntry) {
     // Single debounce point. Every caller — serial protocol parser,
     // captureWeight() click, manualWeightCapture(), simulateWeight() — funnels
     // through here, so spamming Space or hitting "Capture" while a print frame
@@ -3474,7 +3486,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (!fromAgent && agentSettings && agentSettings.mode === 'live' && agentState !== 'idle') {
       return;
     }
-    if (!isLive()) {
+    if (!isLive() && !manualEntry) {
       try { logSerial('⚠ Refused print-trigger: live data is stale'); } catch(e) {}
       return;
     }
@@ -4650,6 +4662,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     // material's pickup price. Signed, so a wrong-way reading shows as such.
     const pickup = ticketKind(ticket) === 'pickup';
     const weightOut = lastPrintWeight;
+    // Freeze it: confirmMerge must write exactly the weight this dialog shows,
+    // even if a print frame or remote command updates lastPrintWeight meanwhile.
+    pendingMergeWeight = weightOut;
     const netWeight = pickup ? weightOut - (ticket.weight_in||0) : (ticket.weight_in||0) - weightOut;
     const pm = pricingData.find(p => p.material_type === (ticket.tire_type||'mixed'));
     const ppk = pickup && pm && pm.pickup_price_per_kg !== null && pm.pickup_price_per_kg !== undefined ? parseFloat(pm.pickup_price_per_kg) : 0;
@@ -4674,7 +4689,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     closeModal('merge-confirm-modal'); showLoading('Completing...');
     try {
       const photo = autoCapturePhoto('weigh-out');
-      const res = await axios.post('/api/scale-tickets/' + pendingMergeTicketId + '/merge-out', { weight: lastPrintWeight, photo: photo || null });
+      const res = await axios.post('/api/scale-tickets/' + pendingMergeTicketId + '/merge-out', { weight: pendingMergeWeight || lastPrintWeight, photo: photo || null });
       loadTicketDetail(pendingMergeTicketId); autoChargeSquare(pendingMergeTicketId); autoPrintReceipt(pendingMergeTicketId);
       loadOpenTickets(); loadCompletedToday(); loadStats();
       pendingMergeTicketId = null; pendingMergeTicket = null;
@@ -5064,8 +5079,15 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         // the operator. The weigh-out is recorded in the question, so it can
         // be answered after the truck has gone.
         const c0 = Array.isArray(d.candidates) && d.candidates.length === 1 ? d.candidates[0] : null;
-        if (d.mode === 'live' && c0 && ticketKind(c0) === 'dropoff' && weight > Number(c0.weight_in)
-            && (d.rule === 'single_truck_unexpected_arrival' || d.rule === 'plate_match_not_lighter')) {
+        // Without a plate, the server also has to vouch that the open ticket is
+        // recent and the camera does not see a different vehicle
+        // (auto_pickup_ok); otherwise an abandoned ticket would be billed for
+        // the next loaded truck.
+        const sameTruck = d.rule === 'plate_match_not_lighter' || (d.rule === 'single_truck_unexpected_arrival' && d.auto_pickup_ok !== false);
+        if (d.rule === 'single_truck_unexpected_arrival' && d.auto_pickup_ok === false && c0) {
+          agentLog('not billing ' + c0.ticket_number + ' as a pickup: it is past the open-ticket age limit or the camera sees a different vehicle -- asking the operator');
+        }
+        if (d.mode === 'live' && c0 && ticketKind(c0) === 'dropoff' && weight > Number(c0.weight_in) && sameTruck) {
           agentLog(c0.ticket_number + ' is leaving heavier than it arrived — a pickup; billing it automatically');
           autoCloseAsPickup({
             id: c0.id, number: c0.ticket_number, weight: Number(c0.weight_in), pickupMaterial: true,

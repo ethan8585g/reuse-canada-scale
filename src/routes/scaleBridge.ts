@@ -174,7 +174,7 @@ scaleBridgeRoutes.post('/commands', roleRequired(...OPERATOR_ROLES), async (c) =
 })
 
 // The requester polls this for the outcome.
-scaleBridgeRoutes.get('/commands/:id', async (c) => {
+scaleBridgeRoutes.get('/commands/:id', roleRequired(...OPERATOR_ROLES), async (c) => {
   try {
     await ensureRemoteTables(c.env.DB)
     await expireStale(c.env.DB)

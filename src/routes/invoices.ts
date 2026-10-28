@@ -7,6 +7,9 @@ type Bindings = { DB: D1Database }
 export const invoiceRoutes = new Hono<{ Bindings: Bindings }>()
 
 invoiceRoutes.use('*', authMiddleware, employeeOnly)
+// Invoices are office work (sidebar: admin/manager). They carry every total
+// and customer contact, so no other role reads them either.
+invoiceRoutes.use('*', roleRequired('admin', 'manager'))
 
 // Generate invoice number INV-YYYY-NNNNN. Same retry-on-conflict pattern as
 // scale ticket numbers (see generateTicketNumber): two concurrent inserts can

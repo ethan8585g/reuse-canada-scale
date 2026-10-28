@@ -343,6 +343,12 @@ export interface Decision {
   rule: string
   reason: string
   candidates: OpenTicket[]
+  // single_truck_unexpected_arrival only: whether the page may treat this as
+  // the open drop-off's truck leaving LOADED and bill it as a pickup with no
+  // one asked. False when that ticket is past max_open_age_hours (probably
+  // abandoned, so this is a different truck) or the camera sees a different
+  // vehicle -- billing the wrong customer is the one outcome to avoid.
+  auto_pickup_ok?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -605,7 +611,10 @@ export function decide(weight: number, open: OpenTicket[], s: any, plate?: unkno
     // the next truck to leave would then match two candidates and stall.
     if (singleTruck) {
       const t = open[0]
+      const fresh = !Number.isFinite(t.age_hours) || t.age_hours <= maxAge
+      const looksDifferent = !!(nowLook && t.appearance && appearanceMatch(t.appearance, nowLook).conflict)
       return {
+        auto_pickup_ok: !isPickup(t) && fresh && !looksDifferent,
         action: 'defer', ticket: null, confidence: 0, rule: 'single_truck_unexpected_arrival',
         reason: isPickup(t)
           ? `${t.ticket_number} is an open pickup and ${weight.toFixed(1)} kg is lighter than its ${t.weight_in.toFixed(1)} kg weigh-in, so this is not that truck leaving loaded. Sending it to the operator rather than opening a second ticket.`
@@ -833,7 +842,7 @@ scaleAgentRoutes.put('/settings', roleRequired('admin', 'manager'), async (c) =>
 // ─── POST /decide ───
 // Body: { weight }
 // Returns the decision plus everything the cancel banner needs to render.
-scaleAgentRoutes.post('/decide', async (c) => {
+scaleAgentRoutes.post('/decide', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const body = await c.req.json().catch(() => ({})) as any
     const weight = Number(body?.weight)
@@ -971,6 +980,7 @@ scaleAgentRoutes.post('/decide', async (c) => {
       confidence: d.confidence,
       ticket: d.ticket,
       candidates: d.candidates,
+      auto_pickup_ok: d.auto_pickup_ok,
       open_ticket_count: open.length,
       preview,
       settings: s,
@@ -983,7 +993,7 @@ scaleAgentRoutes.post('/decide', async (c) => {
 
 // ─── POST /decisions/:id/outcome ───
 // The browser reports what actually happened: acted, cancelled, or failed.
-scaleAgentRoutes.post('/decisions/:id/outcome', async (c) => {
+scaleAgentRoutes.post('/decisions/:id/outcome', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   const id = c.req.param('id')
   if (!/^\d+$/.test(id)) return c.json({ error: 'Bad id' }, 400)
   try {
@@ -1005,7 +1015,7 @@ scaleAgentRoutes.post('/decisions/:id/outcome', async (c) => {
 })
 
 // ─── GET /log ───
-scaleAgentRoutes.get('/log', async (c) => {
+scaleAgentRoutes.get('/log', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10) || 50, 200)
     const { results } = await c.env.DB.prepare(
@@ -1106,7 +1116,7 @@ const PLATE_PROMPT = [
 
 const VISION_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001']
 
-scaleAgentRoutes.post('/vision', async (c) => {
+scaleAgentRoutes.post('/vision', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   const started = Date.now()
   try {
     const s = await getSettings(c.env.DB)
@@ -1401,7 +1411,7 @@ async function verifyOne(env: Bindings, ticketId: number): Promise<any> {
 
 // ─── POST /verify ───
 // Body: { ticket_id }. Re-checks one closed ticket against its own two photos.
-scaleAgentRoutes.post('/verify', async (c) => {
+scaleAgentRoutes.post('/verify', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   try {
     if (!c.env.ANTHROPIC_API_KEY) {
       return c.json({ ok: false, reason: 'no_api_key', error: 'ANTHROPIC_API_KEY is not set on this Pages project, so tickets cannot be verified.' })
@@ -1426,7 +1436,7 @@ scaleAgentRoutes.post('/verify', async (c) => {
 // Sequential on purpose. D1 is a single writer and this is background work;
 // finishing five tickets slowly beats rate-limiting the live plate read that a
 // truck on the scale is waiting for.
-scaleAgentRoutes.post('/verify-sweep', async (c) => {
+scaleAgentRoutes.post('/verify-sweep', roleRequired('admin', 'manager', 'yard_operator'), async (c) => {
   const started = Date.now()
   try {
     const s = await getSettings(c.env.DB)

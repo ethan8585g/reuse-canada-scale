@@ -4,7 +4,7 @@ import { photoOversize } from '../utils/photo'
 import { GST_RATE, cents, billableKg } from '../utils/money'
 import { getBranding } from '../utils/branding'
 import { parseTicketType, ticketTypeOf, ticketNet, pickupRate, priceTicket } from '../utils/ticketPricing'
-import { todayEdmonton } from '../utils/date'
+import { todayEdmonton, edmontonDayRangeUtc, edmontonDayStartUtc, YMD } from '../utils/date'
 import { hashPassword } from '../utils/passwords'
 import { normalizeAppearance } from './scaleAgent'
 import { parseJobNumber, formatJobNumber, loadJob, jobProblems, jobSnapshot, jobPreview, jobMaterial } from '../utils/jobs'
@@ -23,6 +23,38 @@ function appearanceJson(raw: unknown): string | null {
 
 // Apply auth middleware
 scaleTicketRoutes.use('*', authMiddleware, employeeOnly)
+
+// Drivers may read their own tickets (with no money on them) and submit field
+// forms. Every other scale-ticket action -- weigh-in, void, payment, weight
+// edits, job lookups -- is office/scale-house only. This used to be enforced
+// only by which buttons the driver portal happened to draw.
+const DRIVER_ROUTES: [string, RegExp][] = [
+  ['GET', /^\/api\/scale-tickets\/?$/],
+  ['GET', /^\/api\/scale-tickets\/\d+$/],
+  ['POST', /^\/api\/scale-tickets\/field$/],
+]
+scaleTicketRoutes.use('*', async (c, next) => {
+  const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(c.get('userId')).first()
+  const isDriver = me?.role === 'driver'
+  c.set('isDriver', isDriver)
+  if (isDriver && !DRIVER_ROUTES.some(([m, re]) => m === c.req.method && re.test(c.req.path))) {
+    return c.json({ error: 'Insufficient permissions' }, 403)
+  }
+  return next()
+})
+
+// A driver's tickets: loads from a pickup or route assigned to them, or a
+// field form they filled in. (st.employee_id is the scale operator for
+// everything else, so it is NOT the driver.)
+const DRIVER_TICKET_SQL = '(st.employee_id = ? OR pr.assigned_employee_id = ? OR r.assigned_employee_id = ?)'
+
+// Drivers never see prices, totals, tax or payment state.
+const MONEY_KEY = /price|total|tax|payment|square|invoice|amount|revenue|settle|charge|rate/i
+function forDriver(t: any) {
+  const out: any = {}
+  for (const k of Object.keys(t)) if (!MONEY_KEY.test(k)) out[k] = t[k]
+  return out
+}
 
 // Generate ticket number: RC-YYYY-NNNNN
 // We pick a candidate from the highest existing number for the year, then add
@@ -198,6 +230,12 @@ scaleTicketRoutes.get('/', async (c) => {
                LEFT JOIN employees dr ON dr.id = COALESCE(r.assigned_employee_id, pr.assigned_employee_id)
                WHERE 1=1`
     const params: any[] = []
+    const isDriver = !!c.get('isDriver')
+    if (isDriver) {
+      const me = c.get('userId')
+      sql += ' AND ' + DRIVER_TICKET_SQL
+      params.push(me, me, me)
+    }
 
     if (status) {
       const allStatus = c.req.queries('status') || [status]
@@ -205,17 +243,18 @@ scaleTicketRoutes.get('/', async (c) => {
       sql += ` AND st.status IN (${statuses.map(() => '?').join(',')})`
       params.push(...statuses)
     }
-    if (date) {
-      sql += ' AND DATE(st.created_at) = ?'
-      params.push(date)
+    // Dates are Edmonton calendar days; created_at is UTC (see utils/date).
+    if (date && YMD.test(date)) {
+      sql += ' AND st.created_at >= ? AND st.created_at < ?'
+      params.push(...edmontonDayRangeUtc(date))
     }
-    if (dateFrom) {
-      sql += ' AND DATE(st.created_at) >= ?'
-      params.push(dateFrom)
+    if (dateFrom && YMD.test(dateFrom)) {
+      sql += ' AND st.created_at >= ?'
+      params.push(edmontonDayStartUtc(dateFrom))
     }
-    if (dateTo) {
-      sql += ' AND DATE(st.created_at) <= ?'
-      params.push(dateTo)
+    if (dateTo && YMD.test(dateTo)) {
+      sql += ' AND st.created_at < ?'
+      params.push(edmontonDayRangeUtc(dateTo)[1])
     }
     if (search) {
       // Plate included deliberately: once the camera reads them, "which ticket
@@ -251,6 +290,9 @@ scaleTicketRoutes.get('/', async (c) => {
                            SUM(CASE WHEN st.status = 'completed' THEN st.grand_total ELSE 0 END) AS revenue
                       FROM scale_tickets st
                       LEFT JOIN customers c ON st.customer_id = c.id
+                      LEFT JOIN route_stops rs ON st.route_stop_id = rs.id
+                      LEFT JOIN routes r ON rs.route_id = r.id
+                      LEFT JOIN pickup_requests pr ON st.pickup_request_id = pr.id
                       ${whereOnly}`
 
     sql += ' ORDER BY st.created_at DESC LIMIT ' + limit
@@ -267,7 +309,7 @@ scaleTicketRoutes.get('/', async (c) => {
       const hasOut = !!(t.photo_out && String(t.photo_out).length)
       const row = { ...t, has_photo_in: hasIn, has_photo_out: hasOut }
       if (!wantPhotos) { delete row.photo_in; delete row.photo_out }
-      return row
+      return isDriver ? forDriver(row) : row
     })
 
     return c.json({
@@ -275,7 +317,7 @@ scaleTicketRoutes.get('/', async (c) => {
       summary: {
         count: Number(summary?.n || 0),
         net_kg: Number(summary?.net_kg || 0),
-        revenue: Number(summary?.revenue || 0),
+        revenue: isDriver ? null : Number(summary?.revenue || 0),
         truncated: tickets.length >= limit,
       },
     })
@@ -355,6 +397,24 @@ scaleTicketRoutes.get('/:id', async (c) => {
 
     if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
 
+    // A driver gets only their own loads, with no money and an audit trail
+    // reduced to what happened and when (the details carry prices).
+    if (c.get('isDriver')) {
+      const me = c.get('userId')
+      const mine = await c.env.DB.prepare(
+        `SELECT 1 FROM scale_tickets st
+         LEFT JOIN route_stops rs ON st.route_stop_id = rs.id
+         LEFT JOIN routes r ON rs.route_id = r.id
+         LEFT JOIN pickup_requests pr ON st.pickup_request_id = pr.id
+         WHERE st.id = ? AND ${DRIVER_TICKET_SQL}`
+      ).bind(id, me, me, me).first()
+      if (!mine) return c.json({ error: 'Ticket not found' }, 404)
+      const { results: trail } = await c.env.DB.prepare(
+        `SELECT sal.action, sal.created_at FROM scale_audit_log sal WHERE sal.scale_ticket_id = ? ORDER BY sal.created_at ASC`
+      ).bind(id).all()
+      return c.json({ ticket: forDriver(ticket), audit_trail: trail })
+    }
+
     // Get audit trail
     const { results: auditTrail } = await c.env.DB.prepare(
       `SELECT sal.*, e.first_name || ' ' || e.last_name as employee_name
@@ -423,10 +483,14 @@ scaleTicketRoutes.post('/field', async (c) => {
 
     let customerId = null
     if (pickup_request_id) {
+      // A driver may only file a field form against a pickup that is theirs.
+      const me = c.get('userId')
       const pickup = await c.env.DB.prepare(
-        'SELECT customer_id FROM pickup_requests WHERE id = ?'
-      ).bind(pickup_request_id).first()
-      customerId = pickup?.customer_id
+        `SELECT pr.customer_id, (pr.assigned_employee_id = ? OR r.assigned_employee_id = ?) AS mine
+         FROM pickup_requests pr LEFT JOIN routes r ON r.id = pr.assigned_route_id WHERE pr.id = ?`
+      ).bind(me, me, pickup_request_id).first<any>()
+      if (!pickup || (c.get('isDriver') && !pickup.mine)) return c.json({ error: 'Pickup not found' }, 404)
+      customerId = pickup.customer_id
     }
 
     if (!customerId) {
@@ -458,7 +522,9 @@ scaleTicketRoutes.post('/field', async (c) => {
 
     if (pickup_request_id) {
       await c.env.DB.prepare(
-        "UPDATE pickup_requests SET status = 'in_progress', updated_at = datetime('now') WHERE id = ?"
+        // Only moves a job that has not started yet: a field form must never
+        // reopen a completed or cancelled pickup.
+        "UPDATE pickup_requests SET status = 'in_progress', updated_at = datetime('now') WHERE id = ? AND status IN ('confirmed', 'scheduled')"
       ).bind(pickup_request_id).run()
     }
 
@@ -561,7 +627,7 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
       success: true,
       id: ticketId,
       ticket_number: ticketNumber,
-      weight_in: weight,
+      weight_in: recordedWeight,
       weight_in_at: now,
       job: job ? jobPreview(job) : null,
     })
@@ -642,12 +708,15 @@ scaleTicketRoutes.post('/:id/weight', async (c) => {
       // the bill -- a pickup closed from Ticket History would leave at $0.
       const m = await priceTicket(c.env.DB, ticket.ticket_type, ticket.tire_type as string, ticket.weight_in as number, weight)
       const netWeight = m.net_weight
-      await c.env.DB.prepare(
+      const closed = await c.env.DB.prepare(
         `UPDATE scale_tickets SET weight_out = ?, weight_out_at = ?, net_weight = ?, photo_out = COALESCE(?, photo_out), photo_out_at = COALESCE(?, photo_out_at),
                 price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
-                completed_by = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?`
+                completed_by = ?, status = 'completed', updated_at = datetime('now') WHERE id = ? AND status NOT IN ('completed', 'voided')`
       ).bind(weight, now, netWeight, photo || null, photo ? now : null,
              m.price_per_kg, m.subtotal, GST_RATE, m.tax_amount, m.grand_total, employeeId, id).run()
+      // Conditional so two weigh-outs racing (Auto mode + an operator, or a remote
+      // command + a local close) cannot both close it and overwrite the bill.
+      if (!closed.meta.changes) return c.json({ error: 'This ticket was just closed by another weigh-out.', code: 'already_closed' }, 409)
       await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
         weight, net_weight: netWeight, ticket_type: ticketTypeOf(ticket.ticket_type), grand_total: m.grand_total,
         ...(m.priced ? {} : { unpriced: 'no pickup price set for this material' }),
@@ -760,7 +829,7 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
     const tax = m.tax_amount
     const grandTotal = m.grand_total
 
-    await c.env.DB.prepare(
+    const closed = await c.env.DB.prepare(
       `UPDATE scale_tickets SET
         weight_out = ?, weight_out_at = ?, net_weight = ?,
         photo_out = ?, photo_out_at = ?,
@@ -769,11 +838,14 @@ scaleTicketRoutes.post('/:id/merge-out', async (c) => {
         appearance_out = ?,
         price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
         completed_by = ?, status = 'completed', updated_at = datetime('now')
-       WHERE id = ?`
+       WHERE id = ? AND status NOT IN ('completed', 'voided')`
     ).bind(weight, now, netWeight, photo || null, photo ? now : null,
            outPlate || null, outPlate ? (Number(plate_confidence) || null) : null,
            outPlate || null, lookOut,
            pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, id).run()
+    // Conditional so two weigh-outs racing (Auto mode + an operator, or a remote
+    // command + a local close) cannot both close it and overwrite the bill.
+    if (!closed.meta.changes) return c.json({ error: 'This ticket was just closed by another weigh-out.', code: 'already_closed' }, 409)
 
     await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
       weight_out: weight, net_weight: netWeight, price_per_kg: pricePerKg, grand_total: grandTotal,
@@ -837,14 +909,17 @@ scaleTicketRoutes.post('/:id/stored-tare', async (c) => {
     const tax = m.tax_amount
     const grandTotal = m.grand_total
 
-    await c.env.DB.prepare(
+    const closed = await c.env.DB.prepare(
       `UPDATE scale_tickets SET
         weight_out = ?, weight_out_at = ?, net_weight = ?,
         vehicle_id = ?, vehicle_tare_used = 1,
         price_per_kg = ?, total_amount = ?, tax_rate = ?, tax_amount = ?, grand_total = ?,
         completed_by = ?, status = 'completed', updated_at = datetime('now')
-       WHERE id = ?`
+       WHERE id = ? AND status NOT IN ('completed', 'voided')`
     ).bind(tareWeight, now, netWeight, vehicle_id, pricePerKg, subtotal, GST_RATE, tax, grandTotal, employeeId, id).run()
+    // Conditional so two weigh-outs racing (Auto mode + an operator, or a remote
+    // command + a local close) cannot both close it and overwrite the bill.
+    if (!closed.meta.changes) return c.json({ error: 'This ticket was just closed by another weigh-out.', code: 'already_closed' }, 409)
 
     await auditLog(c.env.DB, parseInt(id), 'weighed_out', employeeId, {
       method: 'stored_tare', vehicle_id, tare_weight: tareWeight, net_weight: netWeight, grand_total: grandTotal
@@ -1071,6 +1146,11 @@ scaleTicketRoutes.post('/:id/void', async (c) => {
     ).bind(id).first()
     if (!existing) return c.json({ error: 'Ticket not found' }, 404)
     if (existing.status === 'voided') return c.json({ error: 'Ticket is already voided' }, 409)
+    // A card checkout is live on the Terminal: voiding now would leave a
+    // charge that lands on a ticket that no longer counts.
+    if (existing.payment_status === 'pending') {
+      return c.json({ error: 'A card payment is waiting on the Square Terminal for this ticket. Cancel it there first, then void.' }, 409)
+    }
 
     await c.env.DB.prepare(
       "UPDATE scale_tickets SET status = 'voided', voided_by = ?, void_reason = ?, updated_at = datetime('now') WHERE id = ?"
@@ -1108,8 +1188,28 @@ scaleTicketRoutes.post('/:id/payment', async (c) => {
     // a card payment overwrote a cash one (or vice versa) — important when
     // a customer disputes a charge later.
     const prev = await c.env.DB.prepare(
-      'SELECT payment_status, payment_method, square_payment_id FROM scale_tickets WHERE id = ?'
-    ).bind(id).first()
+      'SELECT payment_status, payment_method, square_payment_id, status FROM scale_tickets WHERE id = ?'
+    ).bind(id).first<any>()
+    if (!prev) return c.json({ error: 'Ticket not found' }, 404)
+    if (prev.status === 'voided') return c.json({ error: 'This ticket is voided; it cannot take a payment.' }, 409)
+
+    // Once paid, a ticket stays paid. A Terminal checkout that times out or is
+    // cancelled AFTER cash was recorded used to post 'unpaid' here and wipe the
+    // cash payment; a second card payment used to overwrite the first.
+    if (prev.payment_status === 'paid') {
+      const incoming = payment_status || 'paid'
+      if (incoming === 'paid' && square_payment_id && square_payment_id === prev.square_payment_id) {
+        return c.json({ success: true, already_recorded: true })
+      }
+      if (incoming === 'paid') {
+        await auditLog(c.env.DB, Number(id), 'second_payment_refused', employeeId, {
+          already: { method: prev.payment_method, square_payment_id: prev.square_payment_id },
+          attempted: { method: payment_method || 'card', square_payment_id: square_payment_id || null },
+        })
+        return c.json({ error: 'This ticket was already paid by ' + (prev.payment_method || 'another method') + '. If the customer was charged again, refund it in Square.', code: 'already_paid' }, 409)
+      }
+      return c.json({ success: true, unchanged: true, payment_status: 'paid' })
+    }
 
     await c.env.DB.prepare(
       `UPDATE scale_tickets SET
@@ -1316,6 +1416,13 @@ scaleTicketRoutes.patch('/:id/weight', roleRequired('admin', 'manager'), async (
 
     const ticket = await c.env.DB.prepare('SELECT * FROM scale_tickets WHERE id = ?').bind(id).first()
     if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
+    // Editing a weight re-prices the ticket. Once money has moved (or is on
+    // the Terminal) that would leave grand_total disagreeing with what was
+    // actually collected and with the settled batch.
+    if (ticket.payment_status === 'paid' || ticket.payment_status === 'pending') {
+      return c.json({ error: 'This ticket has been paid (or a payment is in progress), so its weights can no longer be edited.' }, 409)
+    }
+    if (ticket.status === 'voided') return c.json({ error: 'This ticket is voided.' }, 409)
 
     const oldValue = ticket[field] as number
     if (!oldValue) return c.json({ error: 'No existing weight to edit for this field' }, 400)
@@ -1462,14 +1569,15 @@ scaleTicketRoutes.get('/settlement/daily', async (c) => {
     // "Today" must be Edmonton-local — the worker runs in UTC and
     // toISOString() flips the date at 5pm/6pm local otherwise.
     const date = c.req.query('date') || todayEdmonton()
+    if (!YMD.test(date)) return c.json({ error: 'Date must be YYYY-MM-DD' }, 400)
 
     const { results: tickets } = await c.env.DB.prepare(
       `SELECT st.id, st.ticket_number, st.grand_total, st.payment_status, st.payment_method, c.company_name
        FROM scale_tickets st
        LEFT JOIN customers c ON st.customer_id = c.id
-       WHERE DATE(st.created_at) = ? AND st.status = 'completed'
+       WHERE st.created_at >= ? AND st.created_at < ? AND st.status = 'completed'
        ORDER BY st.created_at ASC`
-    ).bind(date).all()
+    ).bind(...edmontonDayRangeUtc(date)).all()
 
     const summary = {
       date,
@@ -1507,14 +1615,14 @@ scaleTicketRoutes.post('/settlement/batch', roleRequired('admin', 'manager'), as
   try {
     const { date } = await c.req.json()
     const employeeId = c.get('userId')
-    if (!date) return c.json({ error: 'Date required' }, 400)
+    if (!date || !YMD.test(date)) return c.json({ error: 'Date required (YYYY-MM-DD)' }, 400)
 
     // Sum only paid tickets — unpaid receivables don't belong in a settled
     // cash batch. Backed by the UNIQUE(batch_date) index added in 0010, the
     // INSERT below also fails atomically if two admins race.
     const { results: tickets } = await c.env.DB.prepare(
-      "SELECT id, grand_total FROM scale_tickets WHERE DATE(created_at) = ? AND status = 'completed' AND payment_status = 'paid'"
-    ).bind(date).all()
+      "SELECT id, grand_total FROM scale_tickets WHERE created_at >= ? AND created_at < ? AND status = 'completed' AND payment_status = 'paid'"
+    ).bind(...edmontonDayRangeUtc(date)).all()
 
     const totalAmount = tickets.reduce((s: number, t: any) => s + ((t.grand_total as number) || 0), 0)
     const now = new Date().toISOString()

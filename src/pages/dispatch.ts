@@ -53,6 +53,8 @@ export function renderDispatch(): string {
     ${DISPATCH_CHAT_SCRIPT}
     <script>
       var threads = [];
+      var threadTimer = null;
+      function stopThreadPolling() { if (threadTimer) clearInterval(threadTimer); threadTimer = null; }
       var activeDriver = null;
 
       function initials(name) { return (name || '?').split(' ').map(function(p) { return p.charAt(0); }).join('').slice(0, 2).toUpperCase(); }
@@ -71,6 +73,11 @@ export function renderDispatch(): string {
           threads = res.data.threads || [];
           renderThreads();
         } catch (e) {
+          if (e.response && e.response.status === 403) {
+            stopThreadPolling();
+            document.getElementById('dp-threads').innerHTML = '<div class="p-6 text-center text-gray-500 text-sm"><i class="fas fa-lock text-2xl text-gray-300 mb-2 block"></i>Dispatch is answered by admins and managers.</div>';
+            return;
+          }
           if (!threads.length) document.getElementById('dp-threads').innerHTML = '<div class="p-6 text-center text-red-500 text-sm">Could not load conversations. <button class="underline" onclick="loadThreads()">Retry</button></div>';
         }
       }
@@ -137,7 +144,7 @@ export function renderDispatch(): string {
           var d = parseInt(new URLSearchParams(location.search).get('driver') || '', 10);
           if (d) openThread(d);
         });
-        setInterval(function() { if (!document.hidden) loadThreads(); }, 10000);
+        threadTimer = setInterval(function() { if (!document.hidden) loadThreads(); }, 10000);
       })();
     </script>
   `))

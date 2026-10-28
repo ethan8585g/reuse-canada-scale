@@ -10,6 +10,12 @@ type Bindings = {
 export const squareRoutes = new Hono<{ Bindings: Bindings }>()
 
 squareRoutes.use('*', authMiddleware, employeeOnly)
+// Taking money is a scale-house / office job. Drivers have no business here.
+squareRoutes.use('*', roleRequired('admin', 'manager', 'yard_operator'))
+
+// Square ids are [A-Za-z0-9_-]. Checked before one goes into a Square URL so
+// an encoded "../" in :id can't steer the call at another Square endpoint.
+const SQUARE_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 const SQUARE_BASE = 'https://connect.squareup.com/v2'
 
@@ -306,6 +312,7 @@ squareRoutes.post('/terminal-checkout', async (c) => {
 // Check terminal checkout status
 squareRoutes.get('/terminal-checkout/:id', async (c) => {
   const checkoutId = c.req.param('id')
+  if (!SQUARE_ID.test(checkoutId)) return c.json({ error: 'Invalid checkout id' }, 400)
   try {
     const res = await fetch(`${SQUARE_BASE}/terminals/checkouts/${checkoutId}`, {
       headers: {
@@ -331,6 +338,7 @@ squareRoutes.get('/terminal-checkout/:id', async (c) => {
 // Cancel a terminal checkout
 squareRoutes.post('/terminal-checkout/:id/cancel', async (c) => {
   const checkoutId = c.req.param('id')
+  if (!SQUARE_ID.test(checkoutId)) return c.json({ error: 'Invalid checkout id' }, 400)
   try {
     const res = await fetch(`${SQUARE_BASE}/terminals/checkouts/${checkoutId}/cancel`, {
       method: 'POST',
@@ -413,13 +421,27 @@ squareRoutes.post('/cash-payment', async (c) => {
     if (!Number.isInteger(scale_ticket_id) || scale_ticket_id <= 0) {
       return c.json({ error: 'Valid scale_ticket_id required' }, 400)
     }
-    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
-      return c.json({ error: 'Valid positive amount required' }, 400)
-    }
-
-    // Verify the ticket exists; otherwise the payment_log row points at nothing.
-    const ticket = await c.env.DB.prepare('SELECT id, grand_total FROM scale_tickets WHERE id = ?').bind(scale_ticket_id).first()
+    // The amount is the ticket's own total, never the client's number: this
+    // used to write whatever 'amount' was sent over grand_total, so a request
+    // could mark any bill paid at any price.
+    const ticket = await c.env.DB.prepare(
+      'SELECT id, grand_total, status, payment_status, payment_method FROM scale_tickets WHERE id = ?'
+    ).bind(scale_ticket_id).first<any>()
     if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
+    if (ticket.status !== 'completed') return c.json({ error: 'Only a completed ticket can be paid' }, 409)
+    if (ticket.payment_status === 'paid' && ticket.payment_method !== 'cash') {
+      return c.json({ error: 'This ticket is already paid by ' + (ticket.payment_method || 'card') + '.' }, 409)
+    }
+    // A card checkout is live on the Terminal: recording cash now would let
+    // the customer pay twice, or be wiped back to unpaid when it times out.
+    if (ticket.payment_status === 'pending') {
+      return c.json({ error: 'A card payment is waiting on the Square Terminal. Cancel it there first, then record the cash.' }, 409)
+    }
+    const total = Number(ticket.grand_total)
+    if (!(total > 0)) return c.json({ error: 'This ticket has nothing to pay' }, 409)
+    if (typeof amount === 'number' && Number.isFinite(amount) && Math.abs(amount - total) > 0.005) {
+      return c.json({ error: 'The amount does not match the ticket total of $' + total.toFixed(2) + '. Refresh and try again.' }, 409)
+    }
 
     // Idempotency: a ticket already marked paid in cash should not log again.
     const existing = await c.env.DB.prepare(
@@ -430,12 +452,12 @@ squareRoutes.post('/cash-payment', async (c) => {
     }
 
     await c.env.DB.prepare(
-      `UPDATE scale_tickets SET payment_status = 'paid', payment_method = 'cash', grand_total = ?, updated_at = datetime('now') WHERE id = ?`
-    ).bind(amount, scale_ticket_id).run()
+      `UPDATE scale_tickets SET payment_status = 'paid', payment_method = 'cash', updated_at = datetime('now') WHERE id = ?`
+    ).bind(scale_ticket_id).run()
 
     await c.env.DB.prepare(
       `INSERT INTO payment_log (scale_ticket_id, amount, payment_method, status) VALUES (?, ?, 'cash', 'completed')`
-    ).bind(scale_ticket_id, amount).run()
+    ).bind(scale_ticket_id, total).run()
 
     // Optionally also record the cash in Square, so the Terminal can print
     // Square's receipt for it. The cash is already recorded above; a Square
@@ -449,8 +471,8 @@ squareRoutes.post('/cash-payment', async (c) => {
         if (!t || t.ticket_type !== 'pickup') terminal_receipt = { ok: false, error: 'Only pickups print on the Terminal.' }
         else if (!term || !term.location_id) terminal_receipt = { ok: false, error: 'No paired Square Terminal was found.' }
         else {
-          const cents = Math.round(amount * 100)
-          const orderId = await createPickupOrder(c.env.SQUARE_ACCESS_TOKEN, term.location_id, { ...t, grand_total: amount })
+          const cents = Math.round(total * 100)
+          const orderId = await createPickupOrder(c.env.SQUARE_ACCESS_TOKEN, term.location_id, { ...t, grand_total: total })
           const pay: any = {
             idempotency_key: `cash-${scale_ticket_id}-${cents}`,
             source_id: 'CASH', location_id: term.location_id,
