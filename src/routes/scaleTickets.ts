@@ -268,7 +268,9 @@ scaleTicketRoutes.get('/', async (c) => {
     }
     const zone = c.req.query('zone')
     if (zone === 'none') sql += ' AND st.origin_zone IS NULL'
+    // origin_zone holds 1/2/3 as integers and 1A as text (from customers.zone_code).
     else if (zone && ['1', '2', '3'].includes(zone)) { sql += ' AND st.origin_zone = ?'; params.push(Number(zone)) }
+    else if (zone && zone.toUpperCase() === '1A') { sql += ' AND st.origin_zone = ?'; params.push('1A') }
     if (c.req.query('job') === 'with') sql += ' AND st.job_number IS NOT NULL'
     else if (c.req.query('job') === 'without') sql += ' AND st.job_number IS NULL'
     if (material) {

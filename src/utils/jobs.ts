@@ -37,7 +37,7 @@ export async function loadJob(db: D1Database, jobNumber: number) {
     `SELECT pr.id, pr.job_number, pr.status, pr.customer_id, pr.tire_type, pr.estimated_tire_count, pr.actual_tire_count,
             pr.preferred_date, pr.completed_at, pr.updated_at, pr.notes,
             c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code,
-            c.zone, c.region, c.tire_types AS customer_tire_types, c.is_active AS customer_active,
+            c.zone_code AS zone, c.region, c.tire_types AS customer_tire_types, c.is_active AS customer_active,
             COALESCE(rd.first_name || ' ' || rd.last_name, ad.first_name || ' ' || ad.last_name) AS driver_name,
             COALESCE(rd.phone, ad.phone) AS driver_phone,
             r.vehicle AS route_vehicle

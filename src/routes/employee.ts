@@ -365,10 +365,16 @@ function cleanTireTypes(raw: any): string | null | { error: string } {
   return CUSTOMER_TIRE_TYPES.filter((t) => codes.includes(t)).join(',') || null
 }
 
-function cleanZone(z: any): number | null | string {
+// Zone codes, stored in customers.zone_code (0031). The legacy integer
+// customers.zone is kept in step for 1/2/3 and NULL for 1A.
+const ZONES = ['1', '1A', '2', '3']
+function cleanZone(z: any): string | null | { error: string } {
   if (z === null || z === '' || z === undefined) return null
-  const n = Number(z)
-  return [1, 2, 3].includes(n) ? n : 'Zone must be 1, 2 or 3'
+  const code = String(z).trim().toUpperCase()
+  return ZONES.includes(code) ? code : { error: 'Zone must be 1, 1A, 2 or 3' }
+}
+function legacyZone(code: string | null): number | null {
+  return code && /^[123]$/.test(code) ? Number(code) : null
 }
 
 // Replace a customer's numbers and mirror the first one into customers.phone,
@@ -384,7 +390,7 @@ async function savePhones(db: D1Database, customerId: number | string, phones: {
 employeeRoutes.get('/customers/all', roleRequired('admin', 'manager'), async (c) => {
   try {
     const status = c.req.query('status')
-    let sql = `SELECT c.id, c.email, c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code, c.lat, c.lng, c.region, c.zone, c.tire_types, c.notes, c.is_active, c.created_at, c.updated_at,
+    let sql = `SELECT c.id, c.email, c.company_name, c.contact_name, c.phone, c.address, c.city, c.province, c.postal_code, c.lat, c.lng, c.region, c.zone_code AS zone, c.tire_types, c.notes, c.is_active, c.created_at, c.updated_at,
                (SELECT COUNT(*) FROM pickup_requests pr WHERE pr.customer_id = c.id AND pr.status IN ('pending','confirmed')) as pending_pickups
                FROM customers c`
     if (status === 'active') { sql += ' WHERE c.is_active = 1'; }
@@ -420,7 +426,7 @@ employeeRoutes.post('/customers', roleRequired('admin', 'manager'), async (c) =>
       return c.json({ error: 'Username, password, company name, and contact name are required' }, 400)
     }
     const z = cleanZone(zone)
-    if (typeof z === 'string') return c.json({ error: z }, 400)
+    if (z && typeof z === 'object') return c.json({ error: z.error }, 400)
     const tires = cleanTireTypes(tire_types)
     if (tires && typeof tires === 'object') return c.json({ error: tires.error }, 400)
     const phoneList = phones === undefined ? (phone ? [{ phone: String(phone).trim(), label: null }] : []) : cleanPhones(phones)
@@ -431,12 +437,12 @@ employeeRoutes.post('/customers', roleRequired('admin', 'manager'), async (c) =>
     }
     const passwordHash = await hashPassword(password)
     const result = await c.env.DB.prepare(
-      `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, tire_types, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO customers (email, password_hash, company_name, contact_name, phone, address, city, province, postal_code, lat, lng, region, zone, zone_code, tire_types, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       email.trim(), passwordHash, company_name, contact_name,
       phoneList[0]?.phone || null, address || null, city || null, province || 'AB',
-      postal_code || null, lat || null, lng || null, region || 'north', z, tires, notes || null
+      postal_code || null, lat || null, lng || null, region || 'north', legacyZone(z), z, tires, notes || null
     ).run()
     const newId = result.meta.last_row_id
     if (phoneList.length) await savePhones(c.env.DB, newId, phoneList)
@@ -460,8 +466,8 @@ employeeRoutes.put('/customers/:id', roleRequired('admin', 'manager'), async (c)
     }
     if (body.zone !== undefined) {
       const z = cleanZone(body.zone)
-      if (typeof z === 'string') return c.json({ error: z }, 400)
-      fields.push('zone = ?'); params.push(z)
+      if (z && typeof z === 'object') return c.json({ error: z.error }, 400)
+      fields.push('zone_code = ?', 'zone = ?'); params.push(z, legacyZone(z))
     }
     if (body.tire_types !== undefined) {
       const tires = cleanTireTypes(body.tire_types)

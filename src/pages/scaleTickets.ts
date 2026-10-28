@@ -37,6 +37,7 @@ export function renderScaleTickets(): string {
         <select id="filter-zone" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white" aria-label="Origin zone">
           <option value="">All zones</option>
           <option value="1">Zone 1</option>
+          <option value="1A">Zone 1A</option>
           <option value="2">Zone 2</option>
           <option value="3">Zone 3</option>
           <option value="none">No zone</option>

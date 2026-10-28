@@ -41,7 +41,7 @@ pickupRoutes.get('/', async (c) => {
     const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(userId).first()
     const isDriver = (me?.role as string) === 'driver'
 
-    let sql = `SELECT pr.*, c.company_name, c.contact_name, c.phone, c.address, c.city, c.lat, c.lng, c.region, c.zone,
+    let sql = `SELECT pr.*, c.company_name, c.contact_name, c.phone, c.address, c.city, c.lat, c.lng, c.region, c.zone_code AS zone,
                e.first_name || ' ' || e.last_name as assigned_employee_name,
                (SELECT st.ticket_number FROM scale_tickets st WHERE st.pickup_request_id = pr.id AND st.status != 'voided'
                 ORDER BY st.id DESC LIMIT 1) AS scale_ticket_number

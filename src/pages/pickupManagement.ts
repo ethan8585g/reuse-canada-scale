@@ -283,8 +283,8 @@ export function renderPickupManagement(): string {
                 <div class="text-sm font-semibold text-gray-700 capitalize">\${escHtml((p.tire_type || 'N/A').replace('_',' '))}</div>
               </div>
               <div class="bg-gray-50 rounded-lg p-3 text-center">
-                <div class="text-xs text-gray-500">Preferred Date</div>
-                <div class="text-sm font-semibold text-gray-700">\${escHtml(p.preferred_date || 'No pref')}</div>
+                <div class="text-xs text-gray-500">Pickup Date</div>
+                <div class="text-sm font-semibold text-gray-700">\${escHtml(p.preferred_date || 'Date not set')}</div>
               </div>
               <div class="bg-gray-50 rounded-lg p-3 text-center">
                 <div class="text-xs text-gray-500">Time</div>

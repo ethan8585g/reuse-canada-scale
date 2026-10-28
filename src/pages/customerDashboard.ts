@@ -113,26 +113,8 @@ export function renderCustomerDashboard(): string {
                 </div>
               </div>
             </div>
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-2">Preferred Pickup Date</label>
-              <input type="date" id="pickup-date" required
-                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white">
-            </div>
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-2">Time Preference</label>
-              <div class="relative">
-                <select id="time-slot"
-                  class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-rc-green focus:ring-2 focus:ring-green-100 outline-none bg-white appearance-none cursor-pointer pr-10">
-                  <option value="anytime">Anytime</option>
-                  <option value="morning">Morning (8AM - 12PM)</option>
-                  <option value="afternoon">Afternoon (12PM - 5PM)</option>
-                </select>
-                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                  <i class="fas fa-chevron-down text-gray-400 text-sm"></i>
-                </div>
-              </div>
-            </div>
           </div>
+          <p class="mt-4 text-sm text-gray-500"><i class="fas fa-calendar-check mr-1 text-rc-green"></i>No need to pick a day. We will contact you with a confirmed pickup date.</p>
           <div class="mt-6">
             <label class="block text-sm font-semibold text-gray-700 mb-2">Additional Notes</label>
             <textarea id="pickup-notes" rows="2"
@@ -145,13 +127,13 @@ export function renderCustomerDashboard(): string {
               <i class="fas fa-paper-plane"></i>
               Submit Pickup Request
             </button>
-            <!-- 72-hour pickup guarantee, shown once a request is submitted -->
+            <!-- Shown once a request is submitted -->
             <div id="pickup-success" class="mt-4 flex items-start gap-3 rounded-xl border-2 border-green-200 bg-green-50 p-4" role="status" style="display:none;">
               <i class="fas fa-truck-fast text-rc-green text-xl mt-0.5"></i>
               <div class="text-sm text-gray-700">
                 <p id="pickup-success-job" class="text-xs font-bold text-rc-green uppercase tracking-wide" style="display:none;"></p>
-                <p class="font-bold text-gray-800 text-base">We guarantee your pickup within 72 hours of your request.</p>
-                <p class="mt-1">We do not guarantee the date or time you selected. On the day of your pickup, we will send you a message with the approximate pickup time.</p>
+                <p class="font-bold text-gray-800 text-base">Thank you! Your pickup request has been received.</p>
+                <p class="mt-1">We will get back to you ASAP with a confirmed date for your pickup request.</p>
               </div>
             </div>
           </div>
@@ -213,7 +195,7 @@ export function renderCustomerDashboard(): string {
           <label class="flex flex-col text-xs font-semibold text-gray-500">Date means
             <select id="ph-dateby" onchange="setPickupFilter('dateBy', this.value)" class="mt-1 px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-rc-green outline-none bg-white text-sm text-gray-800">
               <option value="created">Day I requested it</option>
-              <option value="preferred">Preferred pickup day</option>
+              <option value="preferred">Pickup day</option>
             </select>
           </label>
           <label class="flex flex-col text-xs font-semibold text-gray-500">Status
@@ -249,7 +231,7 @@ export function renderCustomerDashboard(): string {
             <tr>
               <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Job #</th>
               <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Requested</th>
-              <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Preferred Date</th>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Pickup Date</th>
               <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Tires</th>
               <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Type</th>
               <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
@@ -271,10 +253,6 @@ export function renderCustomerDashboard(): string {
       window.location.href = '/login';
     }
     document.getElementById('customer-name').textContent = session.company_name || session.name || 'Customer';
-
-    // Set min date for pickup
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('pickup-date').min = today;
 
     // Axios auth - with safety check
     function setupCustomerAxios() {
@@ -345,6 +323,12 @@ export function renderCustomerDashboard(): string {
       if (!ymd) return 'N/A';
       const d = new Date(ymd + 'T12:00:00');
       return isNaN(d.getTime()) ? ymd : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    // Customers no longer pick a day; the office sets it when scheduling.
+    function pickupDateCell(p) {
+      if (p.preferred_date) return '<span class="text-gray-800">' + escHtml(prettyDay(p.preferred_date)) + '</span>';
+      if (p.status === 'pending' || p.status === 'confirmed') return '<span class="text-amber-600 font-semibold">Awaiting confirmed date</span>';
+      return '<span class="text-gray-400">-</span>';
     }
 
     // [from, to] as YYYY-MM-DD for the chosen period, or null for no date limit.
@@ -434,7 +418,7 @@ export function renderCustomerDashboard(): string {
         '<tr class="border-b border-gray-50 hover:bg-gray-50">' +
           '<td class="px-6 py-4 text-sm font-bold text-rc-green whitespace-nowrap tabular-nums">' + (p.job_number ? 'J-' + p.job_number : '-') + '</td>' +
           '<td class="px-6 py-4 text-sm text-gray-800 whitespace-nowrap">' + escHtml(prettyDay(createdYmd(p))) + '</td>' +
-          '<td class="px-6 py-4 text-sm text-gray-800 whitespace-nowrap">' + escHtml(prettyDay(p.preferred_date)) + '</td>' +
+          '<td class="px-6 py-4 text-sm whitespace-nowrap">' + pickupDateCell(p) + '</td>' +
           '<td class="px-6 py-4 text-sm font-semibold text-gray-800">' + escHtml(p.estimated_tire_count || '-') + '</td>' +
           '<td class="px-6 py-4 text-sm text-gray-600">' + escHtml(TIRE_LABELS[p.tire_type] || p.tire_type || '-') + '</td>' +
           '<td class="px-6 py-4"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ' + (statusColors[p.status] || 'bg-gray-100 text-gray-800') + '">' +
@@ -475,10 +459,11 @@ export function renderCustomerDashboard(): string {
           '<i class="fas fa-circle-check text-rc-green mt-0.5"></i>' +
           '<div><p class="font-semibold text-gray-800">' + escHtml(NOTICE_STATUSES[p.status]) + ': ' +
             escHtml(p.estimated_tire_count || '') + ' ' + escHtml(tireLabel[p.tire_type] || '') + ' tires</p>' +
+          (p.preferred_date ? '<p class="text-gray-800 font-semibold">Pickup date: ' + escHtml(prettyDay(p.preferred_date)) + '</p>' : '') +
           '<p class="text-gray-500">Requested ' + escHtml(String(p.created_at || '').slice(0, 10)) + '</p></div>' +
         '</div>'
       ).join('') +
-        '<p>We will pick up within 72 hours of your request. On the day of your pickup, we will send you a message with the approximate time.</p>';
+        '<p>On the day of your pickup, we will send you a message with the approximate time.</p>';
       document.getElementById('pickup-notice-modal').style.display = 'flex';
     }
 
@@ -504,8 +489,6 @@ export function renderCustomerDashboard(): string {
         const created = await axios.post('/api/customer/pickups', {
           estimated_tire_count: parseInt(document.getElementById('tire-count').value),
           tire_type: document.getElementById('tire-type').value,
-          preferred_date: document.getElementById('pickup-date').value,
-          preferred_time_slot: document.getElementById('time-slot').value,
           notes: document.getElementById('pickup-notes').value
         });
         document.getElementById('pickup-form').reset();

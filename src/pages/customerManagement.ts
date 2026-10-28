@@ -34,6 +34,7 @@ export function renderCustomerManagement(): string {
         <select id="filter-zone" onchange="filterCustomers()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none bg-white">
           <option value="">All zones</option>
           <option value="1">Zone 1</option>
+          <option value="1A">Zone 1A</option>
           <option value="2">Zone 2</option>
           <option value="3">Zone 3</option>
           <option value="none">No zone set</option>
@@ -182,8 +183,9 @@ export function renderCustomerManagement(): string {
                 <div class="md:col-span-2">
                   <label class="block text-sm font-medium text-gray-600 mb-1">Zone</label>
                   <input type="hidden" id="f-zone" value="">
-                  <div class="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Zone">
+                  <div class="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Zone">
                     <button type="button" id="zone-btn-1" onclick="toggleZone(1)" role="radio" class="zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all">Zone 1</button>
+                    <button type="button" id="zone-btn-1A" onclick="toggleZone(&quot;1A&quot;)" role="radio" class="zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all">Zone 1A</button>
                     <button type="button" id="zone-btn-2" onclick="toggleZone(2)" role="radio" class="zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all">Zone 2</button>
                     <button type="button" id="zone-btn-3" onclick="toggleZone(3)" role="radio" class="zone-btn py-2.5 rounded-xl border-2 text-sm font-semibold transition-all">Zone 3</button>
                   </div>
@@ -274,7 +276,7 @@ export function renderCustomerManagement(): string {
         return '<span class="px-2 py-0.5 rounded-full text-xs font-semibold ' + (REGION_CLS[c.region] || 'bg-gray-50 text-gray-600') + '">' +
           escHtml((c.region || 'N/A').toUpperCase()) + '</span>';
       }
-      var ZONE_CLS = { 1: 'bg-teal-50 text-teal-700', 2: 'bg-amber-50 text-amber-700', 3: 'bg-indigo-50 text-indigo-700' };
+      var ZONE_CLS = { 1: 'bg-teal-50 text-teal-700', '1A': 'bg-cyan-50 text-cyan-700', 2: 'bg-amber-50 text-amber-700', 3: 'bg-indigo-50 text-indigo-700' };
       function zonePill(c) {
         return c.zone
           ? '<span class="px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ' + ZONE_CLS[c.zone] + '">ZONE ' + c.zone + '</span>'
@@ -585,8 +587,9 @@ export function renderCustomerManagement(): string {
         setZone(String(z) === document.getElementById('f-zone').value ? null : z);
       }
       function setZone(z) {
-        document.getElementById('f-zone').value = z ? String(z) : '';
-        [1, 2, 3].forEach(function(n) {
+        z = z ? String(z) : null;
+        document.getElementById('f-zone').value = z || '';
+        ['1', '1A', '2', '3'].forEach(function(n) {
           var b = document.getElementById('zone-btn-' + n);
           var on = z === n;
           b.setAttribute('aria-checked', on ? 'true' : 'false');
@@ -645,7 +648,7 @@ export function renderCustomerManagement(): string {
           company_name: document.getElementById('f-company').value,
           contact_name: document.getElementById('f-contact').value,
           phones: readPhoneRows(),
-          zone: document.getElementById('f-zone').value ? Number(document.getElementById('f-zone').value) : null,
+          zone: document.getElementById('f-zone').value || null,
           tire_types: TIRE_TYPES.filter(function(t) { return formTireTypes.has(t); }),
           address: document.getElementById('f-address').value,
           city: document.getElementById('f-city').value,
