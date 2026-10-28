@@ -161,7 +161,7 @@ routeRoutes.get('/:id', async (c) => {
 
     const { results: stops } = await c.env.DB.prepare(
       `SELECT rs.*, c.company_name, c.contact_name, c.phone, c.address, c.city, c.lat, c.lng,
-              pr.estimated_tire_count, pr.tire_type
+              pr.estimated_tire_count, pr.tire_type, pr.job_number
        FROM route_stops rs
        LEFT JOIN customers c ON rs.customer_id = c.id
        LEFT JOIN pickup_requests pr ON rs.pickup_request_id = pr.id

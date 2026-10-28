@@ -257,6 +257,7 @@ export function renderPickupManagement(): string {
                   <i class="\${sc.icon}"></i>
                 </div>
                 <div>
+                  \${p.job_number ? '<div class="text-xs font-bold text-rc-green tabular-nums tracking-wide">JOB J-' + p.job_number + (p.scale_ticket_number ? ' <span class="font-semibold text-gray-500">· weighed on ' + escHtml(p.scale_ticket_number) + '</span>' : '') + (p.actual_tire_count != null ? ' <span class="font-semibold text-gray-500">· ' + p.actual_tire_count + ' tires counted</span>' : '') + '</div>' : ''}
                   <h3 class="font-bold text-gray-800">\${escHtml(p.company_name || 'Unknown Customer')}\${regionBadge}</h3>
                   <p class="text-sm text-gray-500">\${escHtml(p.contact_name || '')} \${p.phone ? '- ' + escHtml(p.phone) : ''}</p>
                   <p class="text-xs text-gray-400 mt-1">

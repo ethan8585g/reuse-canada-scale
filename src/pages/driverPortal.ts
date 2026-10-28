@@ -301,6 +301,31 @@ export function renderDriverPortal(): string {
       </div>
     </div>
 
+    <!-- Complete Pickup Modal -->
+    <div id="complete-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="text-base font-bold text-gray-800 truncate" id="complete-title">Complete pickup</h3>
+          <button onclick="closeCompleteModal()" class="text-gray-400 hover:text-gray-600" aria-label="Close"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <form id="complete-form" class="p-5" onsubmit="completePickup(event)">
+          <input type="hidden" id="complete-id">
+          <label for="complete-count" class="block text-sm font-semibold text-gray-700 mb-1">How many tires did you collect?</label>
+          <input id="complete-count" type="number" inputmode="numeric" min="0" step="1" placeholder="Leave empty if you did not count"
+            class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl text-lg font-bold focus:border-rc-green outline-none">
+          <p class="text-xs text-gray-400 mt-1"><span id="complete-est"></span> Optional, but it goes on the scale ticket for ARMA.</p>
+          <div id="complete-error" class="text-sm text-red-600 mt-2" style="display:none"></div>
+          <button type="submit" id="complete-btn" class="mt-4 w-full bg-rc-green hover:bg-rc-green-light text-white font-bold py-3 rounded-xl disabled:opacity-50"><i class="fas fa-check mr-1"></i> Mark complete</button>
+        </form>
+        <div id="complete-done" class="p-6 text-center" style="display:none">
+          <i class="fas fa-circle-check text-4xl text-rc-green mb-2"></i>
+          <p class="text-sm text-gray-600">Done. At the scale, tell them the job number before you pull on:</p>
+          <div id="complete-job" class="text-4xl font-extrabold text-rc-green tabular-nums tracking-wide my-3"></div>
+          <button onclick="closeCompleteModal()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 rounded-xl">OK</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Upload Proof of Work Modal -->
     <div id="proof-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style="display:none">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -467,11 +492,16 @@ export function renderDriverPortal(): string {
         const res = await axios.get('/api/pickups?status=scheduled,in_progress,completed');
         const all = (res.data.pickups || []).filter(p => p.assigned_employee_id === session.user_id);
         const today = new Date().toISOString().split('T')[0];
-        const assigned = all.filter(p => p.status === 'scheduled' || p.status === 'in_progress');
+        // Completed but not weighed yet: the driver is on the way to the scale
+        // and needs the job number in front of them. Gone once it is weighed.
+        const twoDaysAgo = Date.now() - 2 * 86400000;
+        const toScale = all.filter(p => p.status === 'completed' && !p.scale_ticket_number && p.job_number
+          && new Date(String(p.completed_at || p.updated_at || '').replace(' ', 'T') + 'Z').getTime() > twoDaysAgo);
+        const assigned = toScale.concat(all.filter(p => p.status === 'scheduled' || p.status === 'in_progress'));
         const inProg = all.filter(p => p.status === 'in_progress');
         const completedToday = all.filter(p => p.status === 'completed' && p.updated_at && p.updated_at.startsWith(today));
 
-        document.getElementById('d-stat-pickups').textContent = assigned.length;
+        document.getElementById('d-stat-pickups').textContent = assigned.length - toScale.length;
         document.getElementById('d-stat-inprogress').textContent = inProg.length;
         document.getElementById('d-stat-completed').textContent = completedToday.length;
 
@@ -494,10 +524,13 @@ export function renderDriverPortal(): string {
         container.innerHTML = '<div class="p-6 text-center text-gray-400"><i class="fas fa-inbox text-3xl mb-2 block"></i>No assigned pickups</div>';
         return;
       }
+      pickups.forEach(p => { const i = lastPickups.findIndex(x => x.id === p.id); if (i >= 0) lastPickups[i] = p; else lastPickups.push(p); });
       container.innerHTML = pickups.map(p => \`
         <div class="p-4 hover:bg-gray-50 transition-colors">
+          \${p.status === 'completed' && p.job_number ? '<div class="mb-3 rounded-xl bg-rc-green text-white px-4 py-3 flex items-center justify-between gap-3"><div class="text-sm leading-tight"><i class="fas fa-weight-scale mr-1"></i> At the scale, tell them<div class="text-xs opacity-80">before you pull on</div></div><div class="text-2xl font-extrabold tabular-nums tracking-wide">J-' + p.job_number + '</div></div>' : ''}
           <div class="flex items-center justify-between mb-2">
             <div>
+              \${p.job_number ? '<div class="text-xs font-bold text-rc-green tabular-nums tracking-wide">JOB J-' + p.job_number + '</div>' : ''}
               <div class="font-bold text-gray-800">\${escHtml(p.company_name || 'Unknown')}</div>
               <div class="text-xs text-gray-500"><i class="fas fa-map-marker-alt mr-1"></i>\${escHtml(p.address || '')}, \${escHtml(p.city || '')}</div>
             </div>
@@ -506,7 +539,7 @@ export function renderDriverPortal(): string {
             </span>
           </div>
           <div class="flex items-center gap-3 text-xs text-gray-500 mb-3">
-            <span><i class="fas fa-circle-dot mr-1"></i>\${escHtml(p.estimated_tire_count || '?')} tires</span>
+            <span><i class="fas fa-circle-dot mr-1"></i>\${p.actual_tire_count != null ? escHtml(p.actual_tire_count) + ' tires collected' : escHtml(p.estimated_tire_count || '?') + ' tires (est.)'}</span>
             <span><i class="fas fa-calendar mr-1"></i>\${escHtml(p.preferred_date || 'Today')}</span>
             \${p.tire_type ? '<span><i class="fas fa-tag mr-1"></i>' + escHtml(p.tire_type) + '</span>' : ''}
           </div>
@@ -520,7 +553,7 @@ export function renderDriverPortal(): string {
               <i class="fas fa-camera mr-1"></i> Upload Proof
             </button>
             \${p.status === 'in_progress' ? \`
-              <button onclick="completePickup(\${p.id})" class="px-3 py-2 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200">
+              <button onclick="openCompleteModal(\${p.id})" class="px-3 py-2 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200">
                 <i class="fas fa-check"></i> Done
               </button>
             \` : ''}
@@ -541,13 +574,42 @@ export function renderDriverPortal(): string {
       } catch (err) { alert('Failed to start pickup'); }
     }
 
-    async function completePickup(id) {
-      if (!confirm('Mark this pickup as completed?')) return;
+    // Completing asks for the real tire count (optional). It goes on the scale
+    // ticket's origin record instead of the customer's estimate, and the
+    // driver is then shown the job number to give the scale house.
+    let lastPickups = [];
+    function openCompleteModal(id) {
+      const p = lastPickups.find(x => x.id === id) || {};
+      document.getElementById('complete-id').value = id;
+      document.getElementById('complete-count').value = '';
+      document.getElementById('complete-error').style.display = 'none';
+      document.getElementById('complete-title').textContent = (p.job_number ? 'Job J-' + p.job_number + ' · ' : '') + (p.company_name || 'Pickup');
+      document.getElementById('complete-est').textContent = p.estimated_tire_count ? 'The customer estimated ' + p.estimated_tire_count + '.' : '';
+      document.getElementById('complete-form').style.display = 'block';
+      document.getElementById('complete-done').style.display = 'none';
+      document.getElementById('complete-modal').style.display = 'flex';
+      setTimeout(() => document.getElementById('complete-count').focus(), 50);
+    }
+    function closeCompleteModal() { document.getElementById('complete-modal').style.display = 'none'; }
+    async function completePickup(e) {
+      if (e) e.preventDefault();
+      const id = Number(document.getElementById('complete-id').value);
+      const raw = document.getElementById('complete-count').value.trim();
+      const btn = document.getElementById('complete-btn');
+      btn.disabled = true;
       try {
-        await axios.post('/api/pickups/' + id + '/status', { status: 'completed' });
+        await axios.post('/api/pickups/' + id + '/status', { status: 'completed', actual_tire_count: raw === '' ? null : Number(raw) });
+        const p = lastPickups.find(x => x.id === id) || {};
+        document.getElementById('complete-form').style.display = 'none';
+        document.getElementById('complete-done').style.display = 'block';
+        document.getElementById('complete-job').textContent = p.job_number ? 'J-' + p.job_number : '';
         loadDriverDashboard();
         loadDriverPickups();
-      } catch (err) { alert('Failed to complete pickup'); }
+      } catch (err) {
+        const el = document.getElementById('complete-error');
+        el.textContent = (err.response && err.response.data && err.response.data.error) || 'Could not complete the pickup';
+        el.style.display = 'block';
+      } finally { btn.disabled = false; }
     }
 
     // ═══ ROUTES TAB ═══

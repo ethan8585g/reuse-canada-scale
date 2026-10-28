@@ -24,8 +24,10 @@ pickupRoutes.get('/', async (c) => {
     const me = await c.env.DB.prepare('SELECT role FROM employees WHERE id = ?').bind(userId).first()
     const isDriver = (me?.role as string) === 'driver'
 
-    let sql = `SELECT pr.*, c.company_name, c.contact_name, c.phone, c.address, c.city, c.lat, c.lng, c.region,
-               e.first_name || ' ' || e.last_name as assigned_employee_name
+    let sql = `SELECT pr.*, c.company_name, c.contact_name, c.phone, c.address, c.city, c.lat, c.lng, c.region, c.zone,
+               e.first_name || ' ' || e.last_name as assigned_employee_name,
+               (SELECT st.ticket_number FROM scale_tickets st WHERE st.pickup_request_id = pr.id AND st.status != 'voided'
+                ORDER BY st.id DESC LIMIT 1) AS scale_ticket_number
                FROM pickup_requests pr
                LEFT JOIN customers c ON pr.customer_id = c.id
                LEFT JOIN employees e ON pr.assigned_employee_id = e.id
@@ -262,7 +264,9 @@ pickupRoutes.post('/', async (c) => {
       driverId, driverId ? 'scheduled' : 'pending', notify_customer ? 1 : 0
     ).run()
 
-    return c.json({ success: true, id: result.meta.last_row_id })
+    // job_number is set by a trigger on insert (migration 0029).
+    const created = await c.env.DB.prepare('SELECT job_number FROM pickup_requests WHERE id = ?').bind(result.meta.last_row_id).first()
+    return c.json({ success: true, id: result.meta.last_row_id, job_number: created?.job_number ?? null })
   } catch (err: any) {
     console.error('pickups error:', err); return c.json({ error: 'Server error' }, 500)
   }
@@ -272,11 +276,20 @@ pickupRoutes.post('/', async (c) => {
 pickupRoutes.post('/:id/status', async (c) => {
   const id = c.req.param('id')
   try {
-    const { status } = await c.req.json()
+    const { status, actual_tire_count } = await c.req.json()
     const validStatuses = ['pending', 'confirmed', 'scheduled', 'in_progress', 'completed', 'cancelled']
 
     if (!validStatuses.includes(status)) {
       return c.json({ error: 'Invalid status' }, 400)
+    }
+    // Optional real count from the driver at completion. It goes onto the
+    // scale ticket's origin record instead of the customer's estimate.
+    let actualCount: number | null = null
+    if (status === 'completed' && actual_tire_count !== undefined && actual_tire_count !== null && actual_tire_count !== '') {
+      actualCount = Number(actual_tire_count)
+      if (!Number.isInteger(actualCount) || actualCount < 0 || actualCount > 100000) {
+        return c.json({ error: 'Tire count must be a whole number' }, 400)
+      }
     }
 
     const current = await c.env.DB.prepare('SELECT status FROM pickup_requests WHERE id = ?').bind(id).first()
@@ -292,9 +305,20 @@ pickupRoutes.post('/:id/status', async (c) => {
       }
     }
 
-    await c.env.DB.prepare(
-      "UPDATE pickup_requests SET status = ?, updated_at = datetime('now') WHERE id = ?"
-    ).bind(status, id).run()
+    // completed_at is when the load was collected (it goes on the ticket);
+    // undoing a completion clears it, and the count with it.
+    if (status === 'completed') {
+      await c.env.DB.prepare(
+        `UPDATE pickup_requests SET status = ?, updated_at = datetime('now'),
+           completed_at = CASE WHEN status = 'completed' THEN completed_at ELSE datetime('now') END,
+           actual_tire_count = COALESCE(?, actual_tire_count)
+         WHERE id = ?`
+      ).bind(status, actualCount, id).run()
+    } else {
+      await c.env.DB.prepare(
+        "UPDATE pickup_requests SET status = ?, updated_at = datetime('now'), completed_at = NULL, actual_tire_count = NULL WHERE id = ?"
+      ).bind(status, id).run()
+    }
 
     // If status changed to 'scheduled' or 'confirmed' and notify is enabled, log notification
     if (status === 'scheduled' || status === 'confirmed') {

@@ -58,7 +58,9 @@ customerRoutes.post('/pickups', async (c) => {
       'INSERT INTO pickup_requests (customer_id, estimated_tire_count, tire_type, preferred_date, preferred_time_slot, notes) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(customerId, estimated_tire_count, tire_type, preferred_date || null, slot, notes || null).run()
 
-    return c.json({ success: true, id: result.meta.last_row_id })
+    // job_number is set by a trigger on insert (migration 0029).
+    const created = await c.env.DB.prepare('SELECT job_number FROM pickup_requests WHERE id = ?').bind(result.meta.last_row_id).first()
+    return c.json({ success: true, id: result.meta.last_row_id, job_number: created?.job_number ?? null })
   } catch (err: any) {
     console.error('customer /pickups POST error:', err)
     return c.json({ error: 'Server error' }, 500)

@@ -34,6 +34,18 @@ export function renderScaleTickets(): string {
           <option value="dropoff">Drop-offs only</option>
           <option value="pickup">Pickups only</option>
         </select>
+        <select id="filter-zone" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white" aria-label="Origin zone">
+          <option value="">All zones</option>
+          <option value="1">Zone 1</option>
+          <option value="2">Zone 2</option>
+          <option value="3">Zone 3</option>
+          <option value="none">No zone</option>
+        </select>
+        <select id="filter-job" onchange="loadTickets()" class="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all bg-white" aria-label="Job number">
+          <option value="">Job &amp; walk-in loads</option>
+          <option value="with">Pickup jobs only</option>
+          <option value="without">No job number</option>
+        </select>
         <div class="flex items-center gap-1">
           <input type="date" id="filter-date-from" onchange="loadTickets()" class="px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-rc-green outline-none transition-all">
           <span class="text-gray-300 text-xs">to</span>
@@ -341,7 +353,7 @@ export function renderScaleTickets(): string {
                 '<div class="text-xs text-gray-400">' + fmtDate(t.created_at) + '</div>' +
               '</div>' +
               '<div class="flex-1 min-w-0">' +
-                '<div class="text-sm font-semibold text-gray-800 truncate">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</div>' +
+                '<div class="text-sm font-semibold text-gray-800 truncate">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</div>' + jobLine(t) +
                 '<div class="text-xs text-gray-400 truncate">' + escHtml((t.tire_type || '-').replace(/_/g, ' ')) + ' &middot; ' + escHtml(t.employee_name || '') + '</div>' +
               '</div>' +
               '<div class="w-40 shrink-0 text-sm text-gray-600 hidden xl:block">' + driverCell(t) + '</div>' +
@@ -366,7 +378,7 @@ export function renderScaleTickets(): string {
                 '<div><div class="font-mono font-bold text-sm text-rc-green">' + escHtml(t.ticket_number) + ticketIcons(t) + '</div>' +
                 '<div class="text-xs text-gray-400">' + fmtDate(t.created_at) + '</div></div></div>' + statusPill(t) +
               '</div>' +
-              '<div class="text-sm font-semibold text-gray-800 truncate">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</div>' +
+              '<div class="text-sm font-semibold text-gray-800 truncate">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</div>' + jobLine(t) +
               '<div class="text-xs text-gray-400 mb-3 capitalize">' + escHtml((t.tire_type || '-').replace(/_/g, ' ')) + '</div>' +
               '<div class="grid grid-cols-2 gap-2 py-3 border-t border-gray-50">' +
                 '<div><div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Net weight</div>' +
@@ -390,7 +402,7 @@ export function renderScaleTickets(): string {
             return '<tr onclick="viewTicket(' + t.id + ')" class="border-b border-gray-50 hover:bg-gray-50/80 cursor-pointer ' + rowSelClass(t) + '">' +
               '<td class="px-3 py-2">' + ticketCheckbox(t) + '</td>' +
               '<td class="px-3 py-2 font-mono font-bold text-rc-green whitespace-nowrap">' + escHtml(t.ticket_number) + '</td>' +
-              '<td class="px-3 py-2 text-gray-800 whitespace-nowrap">' + escHtml(t.company_name || t.field_store_name || 'N/A') + '</td>' +
+              '<td class="px-3 py-2 text-gray-800 whitespace-nowrap">' + (t.job_number ? '<span class="font-bold text-rc-green">J-' + t.job_number + '</span> · ' : '') + escHtml(t.company_name || t.field_store_name || 'N/A') + (t.origin_zone ? ' <span class="text-xs text-gray-400">Z' + t.origin_zone + '</span>' : '') + '</td>' +
               '<td class="px-3 py-2 text-gray-600 whitespace-nowrap">' + escHtml(t.driver_display_name || '-') + '</td>' +
               '<td class="px-3 py-2">' + statusPill(t) + '</td>' +
               '<td class="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">' + (fmtKg(t.weight_in) || '-') + '</td>' +
@@ -479,16 +491,28 @@ export function renderScaleTickets(): string {
         return a.markings ? (bits ? bits + ' / ' + a.markings : a.markings) : bits;
       }
 
+      // "J-1042 · Sherwood Park · Zone 2 · 57 tires" under the customer name.
+      function jobLine(t) {
+        if (!t.job_number) return '';
+        return '<div class="text-xs text-gray-500 truncate"><span class="font-bold text-rc-green">J-' + t.job_number + '</span> · ' +
+          escHtml([t.origin_city, t.origin_zone ? 'Zone ' + t.origin_zone : 'no zone', t.origin_tire_count != null ? t.origin_tire_count + ' tires' + (t.origin_tire_count_estimated ? ' (est.)' : '') : ''].filter(Boolean).join(' · ')) + '</div>';
+      }
+
       function exportTicketsCsv() {
         var rows = selectedTicketRows();
         if (!rows.length) return;
-        var out = [['Ticket #','Date','Customer','Material','Operator','Driver','Driver Phone','Status','Type','Plate','Vehicle','Photo check','Weight In (kg)','Weight Out (kg)','Net Weight (kg)','Total']];
+        var out = [['Ticket #','Date','Customer','Material','Operator','Driver','Driver Phone','Status','Type','Plate','Vehicle','Photo check','Weight In (kg)','Weight Out (kg)','Net Weight (kg)','Total',
+                    'Job','Origin company','Origin address','Origin city','Origin province','Origin postal code','Origin zone','Origin region','Tire type','Tire count','Count is estimate','Collected at','Collected by']];
         rows.forEach(function(t) {
           out.push([t.ticket_number, fmtDate(t.created_at), t.company_name || t.field_store_name || '', t.tire_type || '',
             t.employee_name || '', t.driver_display_name || '', t.driver_display_phone || '', t.status || '',
             t.ticket_type === 'pickup' ? 'pickup' : 'drop-off',
             t.vehicle_plate || '', csvVehicle(t), t.verify_status || '',
-            t.weight_in || '', t.weight_out || '', t.net_weight || '', t.grand_total || '']);
+            t.weight_in || '', t.weight_out || '', t.net_weight || '', t.grand_total || '',
+            t.job_number ? 'J-' + t.job_number : '', t.origin_company || '', t.origin_address || '', t.origin_city || '', t.origin_province || '',
+            t.origin_postal_code || '', t.origin_zone || '', t.origin_region || '', t.origin_tire_type || '',
+            t.origin_tire_count == null ? '' : t.origin_tire_count, t.job_number ? (t.origin_tire_count_estimated ? 'yes' : 'no') : '',
+            t.origin_collected_at || '', t.origin_driver || '']);
         });
         downloadCsv('scale-tickets-' + new Date().toISOString().slice(0, 10) + '.csv', out);
       }
@@ -511,6 +535,8 @@ export function renderScaleTickets(): string {
         document.getElementById('filter-date-to').value = '';
         document.getElementById('filter-material').value = '';
         document.getElementById('filter-type').value = '';
+        document.getElementById('filter-zone').value = '';
+        document.getElementById('filter-job').value = '';
         loadTickets();
       }
 
@@ -522,8 +548,10 @@ export function renderScaleTickets(): string {
           const search = document.getElementById('filter-search').value.trim();
           const material = document.getElementById('filter-material').value;
           const kind = document.getElementById('filter-type').value;
+          const zone = document.getElementById('filter-zone').value;
+          const job = document.getElementById('filter-job').value;
           document.getElementById('clear-filters').style.display =
-            (status || dateFrom || dateTo || search || material || kind) ? 'block' : 'none';
+            (status || dateFrom || dateTo || search || material || kind || zone || job) ? 'block' : 'none';
           let url = '/api/scale-tickets?';
           if (status) url += 'status=' + status + '&';
           if (dateFrom) url += 'date_from=' + dateFrom + '&';
@@ -531,6 +559,8 @@ export function renderScaleTickets(): string {
           if (search) url += 'search=' + encodeURIComponent(search) + '&';
           if (material) url += 'material=' + encodeURIComponent(material) + '&';
           if (kind) url += 'type=' + encodeURIComponent(kind) + '&';
+          if (zone) url += 'zone=' + encodeURIComponent(zone) + '&';
+          if (job) url += 'job=' + encodeURIComponent(job) + '&';
           const res = await axios.get(url);
           allTickets = res.data.tickets || [];
           selectedTickets = new Set();
@@ -1062,7 +1092,22 @@ export function renderScaleTickets(): string {
             voidInfo = '<div class="mt-4 bg-red-50 rounded-xl p-3"><div class="text-xs text-red-600 font-semibold">VOID REASON</div><div class="text-sm text-red-700">' + t.void_reason + '</div></div>';
           }
 
-          document.getElementById('detail-content').innerHTML = \`
+          var origin = '';
+          if (t.job_number) {
+            var oline = function(l, v) { return v ? '<div class="flex justify-between gap-3"><span class="text-gray-500 shrink-0">' + l + '</span><span class="font-semibold text-right">' + escHtml(String(v)) + '</span></div>' : ''; };
+            origin = '<div class="mb-5 rounded-xl border-2 border-green-200 bg-green-50/60 p-4 text-sm space-y-1.5">' +
+              '<div class="flex items-center justify-between"><span class="text-xs font-bold text-rc-green uppercase tracking-wide"><i class="fas fa-hashtag mr-1"></i>Load origin (ARMA)</span><span class="font-bold text-rc-green">J-' + t.job_number + '</span></div>' +
+              oline('From', t.origin_company) +
+              oline('Address', [t.origin_address, t.origin_city, t.origin_province, t.origin_postal_code].filter(Boolean).join(', ')) +
+              oline('Zone', t.origin_zone ? 'Zone ' + t.origin_zone : 'Not set on the customer') +
+              oline('Region', t.origin_region) +
+              oline('Tires', t.origin_tire_count != null ? t.origin_tire_count + ' ' + (t.origin_tire_type || '').replace('_', ' ') + (t.origin_tire_count_estimated ? ' (customer estimate)' : ' (driver count)') : '') +
+              oline('Collected', t.origin_collected_at ? new Date(String(t.origin_collected_at).replace(' ', 'T') + 'Z').toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : 'Not marked complete') +
+              oline('Collected by', t.origin_driver) +
+              '<div class="text-[11px] text-gray-500 pt-1">Recorded when the load was weighed in. Later changes to the customer do not alter it.</div></div>';
+          }
+
+          document.getElementById('detail-content').innerHTML = origin + \`
             <div class="grid md:grid-cols-2 gap-6">
               <div>
                 <h4 class="font-bold text-gray-700 mb-3 flex items-center gap-2"><i class="fas fa-info-circle text-rc-green"></i> Ticket Info</h4>

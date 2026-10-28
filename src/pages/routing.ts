@@ -380,7 +380,7 @@ export function renderRouting(): string {
               (edit ? '<input type="checkbox" class="mt-1 rounded text-rc-green" aria-label="Select pickup" ' + (sel ? 'checked' : '') + ' onchange="togglePickup(' + p.id + ')">' : '') +
               '<div class="flex-1 min-w-0 cursor-pointer" onclick="focusPickup(' + p.id + ')">' +
                 '<div class="flex items-center justify-between gap-2">' +
-                  '<div class="font-semibold text-xs text-gray-800 truncate">' + escHtml(p.company_name || 'Pickup #' + p.id) + '</div>' +
+                  '<div class="font-semibold text-xs text-gray-800 truncate">' + (p.job_number ? '<span class="text-rc-green tabular-nums">J-' + p.job_number + '</span> · ' : '') + escHtml(p.company_name || 'Pickup #' + p.id) + '</div>' +
                   '<span class="px-2 py-0.5 rounded-full text-xs flex-shrink-0 ' + stCls + '">' + escHtml(p.status) + '</span>' +
                 '</div>' +
                 '<div class="text-xs text-gray-500 truncate">' + (located ? '<i class="fas fa-map-marker-alt text-yellow-500 mr-1"></i>' : '<i class="fas fa-map-marker-alt text-gray-300 mr-1" title="No map location for this address"></i>') +
@@ -496,7 +496,7 @@ export function renderRouting(): string {
           html += '<div class="flex items-center gap-3 p-3 rounded-lg border ' + (done ? 'border-green-200 bg-green-50/50' : arrived ? 'border-orange-200 bg-orange-50/50' : 'border-gray-200 bg-white') + '">' +
             '<div class="w-8 h-8 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style="background:' + stopColor(s) + '">' + (done ? '<i class="fas fa-check"></i>' : (i + 1)) + '</div>' +
             '<div class="flex-1 min-w-0">' +
-              '<div class="font-semibold text-sm text-gray-800 truncate">' + escHtml(s.company_name || 'Stop ' + (i + 1)) + '</div>' +
+              '<div class="font-semibold text-sm text-gray-800 truncate">' + (s.job_number ? '<span class="text-rc-green tabular-nums">J-' + s.job_number + '</span> · ' : '') + escHtml(s.company_name || 'Stop ' + (i + 1)) + '</div>' +
               '<div class="text-xs text-gray-500 truncate">' + (s.lat == null || s.lng == null ? '<i class="fas fa-map-marker-alt text-orange-400 mr-1" title="No map location"></i>' : '') + escHtml(stopAddress(s) || 'No address') + '</div>' +
               '<div class="text-xs text-gray-400 mt-0.5">' + (s.estimated_tire_count ? escHtml(String(s.estimated_tire_count)) + ' est. tires' : '') +
                 (s.phone ? (s.estimated_tire_count ? ' &middot; ' : '') + '<a href="tel:' + escHtml(s.phone) + '" class="text-rc-green hover:underline"><i class="fas fa-phone mr-1"></i>' + escHtml(s.phone) + '</a>' : '') + '</div>' +
@@ -649,7 +649,7 @@ export function renderRouting(): string {
         container.innerHTML = sortedUnassigned().map(function(p) {
           return '<label class="flex items-start gap-2 p-2 hover:bg-gray-50 rounded-lg cursor-pointer">' +
             '<input type="checkbox" name="route-pickup" value="' + p.id + '" class="mt-0.5 rounded text-rc-green" ' + (selectedPickups.has(p.id) ? 'checked' : '') + '>' +
-            '<span class="text-sm"><span class="font-semibold">' + escHtml(p.company_name || 'Pickup #' + p.id) + '</span>' +
+            '<span class="text-sm"><span class="font-semibold">' + (p.job_number ? 'J-' + p.job_number + ' · ' : '') + escHtml(p.company_name || 'Pickup #' + p.id) + '</span>' +
             '<span class="block text-xs text-gray-500">' + escHtml(p.city || '') + (p.city ? ' &middot; ' : '') + escHtml(String(p.estimated_tire_count || '?')) + ' tires &middot; ' + escHtml(prettyDate(p.preferred_date)) + '</span></span>' +
           '</label>';
         }).join('');

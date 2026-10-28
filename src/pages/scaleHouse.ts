@@ -650,6 +650,24 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
         <button type="button" onclick="openPaymentsModal('all')" class="w-full px-5 py-3 border-t border-gray-100 flex items-center justify-between text-xs font-semibold text-rc-green hover:bg-gray-50">Review payments <span>→</span></button>
       </section>
 
+      <!-- Next load: the pickup job number the driver gives before pulling on.
+           The next ticket opened by ANY path (Capture weight, Auto mode,
+           remote capture) carries the job's customer and frozen origin. -->
+      <section class="sh-card p-4 space-y-3" id="sh-job" aria-labelledby="sh-job-title">
+        <div class="flex items-center gap-2">
+          <span class="w-9 h-9 shrink-0 rounded-xl flex items-center justify-center text-white bg-rc-green"><i class="fas fa-hashtag"></i></span>
+          <div><div class="sh-eyebrow">Next load</div><h3 id="sh-job-title" class="font-bold text-sm">Job number</h3></div>
+        </div>
+        <form id="sh-job-form" class="flex gap-2" onsubmit="event.preventDefault(); findJob(document.getElementById('sh-job-input').value);">
+          <input id="sh-job-input" inputmode="numeric" autocomplete="off" placeholder="e.g. 1042" aria-label="Job number"
+            class="flex-1 min-w-0 px-3 py-2 border-2 border-gray-200 rounded-xl text-lg font-bold tabular-nums tracking-wide focus:border-rc-green outline-none">
+          <button type="submit" class="sh-btn sh-btn-primary px-4">Find</button>
+        </form>
+        <div id="sh-job-error" class="text-xs text-red-600" style="display:none;"></div>
+        <div id="sh-job-armed" style="display:none;"></div>
+        <div id="sh-job-incoming"></div>
+      </section>
+
       <!-- Co-pilot. Manual = agent off, Auto = agent live. Dry run stays in
            Equipment & settings. The server enforces the mode; this only asks. -->
       <section class="sh-card p-4 space-y-3" id="sh-copilot" aria-labelledby="sh-cp-title">
@@ -1537,6 +1555,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     if (!(currentLiveWeight > 0)) { alert('There is no weight on the scale.'); return; }
     const r = await sendRemoteCommand('capture', null, 'capturing ' + Math.round(currentLiveWeight).toLocaleString() + ' kg');
     if (!r) return;
+    // The yard computer opened the ticket; this screen's job (if any) is put
+    // on it straight after, through the same route as "Add job #".
+    if (armedJob && await attachJob(r.ticket_id, r.ticket_number, armedJob.job_number, !!armedJob.allow_repeat)) {
+      armedJob = null; jobSave(); renderJobPanel(); loadIncomingJobs();
+      loadOpenTickets(); loadStats();
+      return;
+    }
     loadOpenTickets(); loadStats();
     openAssignModal(r.ticket_id, r.ticket_number, r.weight || currentLiveWeight);
   }
@@ -3680,7 +3705,12 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
     const when = receipt.date ? new Date(receipt.date) : null;
     row('Date', when && !isNaN(when.getTime()) ? when.toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : '');
-    row('Customer', (receipt.customer || 'Walk-in').slice(0, 24));
+    if (receipt.job_number) row('Job', receipt.job_number);
+    row(receipt.job_number ? 'From' : 'Customer', (receipt.customer || 'Walk-in').slice(0, 24));
+    receiptOriginLines(receipt).forEach(function (l) {
+      d.setFont('courier', 'normal'); d.setFontSize(8);
+      d.splitTextToSize(l, W - M * 2).forEach(function (ln) { d.text(ln, W - M, y, { align: 'right' }); y += 3.8; });
+    });
     row('Material', getMaterialLabel(receipt.material).slice(0, 24));
     const veh = receiptVehicleText(receipt);
     if (veh) {
@@ -4269,15 +4299,157 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   // ══════════════════════════════════════════
   // TICKET WORKFLOW
   // ══════════════════════════════════════════
+  // ══════════════════════════════════════════
+  // PICKUP JOB NUMBERS (ARMA origin on every job load)
+  // ══════════════════════════════════════════
+  // The job the next weigh-in will carry. Kept per station in localStorage so
+  // a reload between "driver said 1042" and "truck pulled on" loses nothing;
+  // forgotten after 4 hours so a stale number can't land on tomorrow's truck.
+  let armedJob = null;
+  const JOB_KEY = 'rc_sh_armed_job';
+  function jobSave() {
+    try { if (armedJob) localStorage.setItem(JOB_KEY, JSON.stringify(armedJob)); else localStorage.removeItem(JOB_KEY); } catch (e) {}
+  }
+  function jobRestore() {
+    try {
+      const j = JSON.parse(localStorage.getItem(JOB_KEY) || 'null');
+      if (j && Date.now() - (j.armed_at || 0) < 4 * 3600 * 1000) armedJob = j;
+      else localStorage.removeItem(JOB_KEY);
+    } catch (e) {}
+    renderJobPanel();
+  }
+  function jobErr(msg) {
+    const el = document.getElementById('sh-job-error');
+    if (!el) return;
+    el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none';
+  }
+  function jobFacts(j) {
+    return [j.address, j.zone ? 'Zone ' + j.zone : 'No zone on file', j.tire_count != null ? j.tire_count + ' ' + (TIRE_LABEL_SHORT[j.tire_type] || '') + ' tires' + (j.tire_count_estimated ? ' (estimate)' : '') : '', j.driver_name ? 'Driver ' + j.driver_name : ''].filter(Boolean);
+  }
+  const TIRE_LABEL_SHORT = { passenger: 'PLTT', light_truck: 'PLTT', medium_truck: 'MTT', heavy_truck: 'MTT', truck: 'MTT', otr: 'OTR', 'off-road': 'OTR', mixed: 'mixed' };
+
+  async function findJob(raw) {
+    jobErr('');
+    const v = String(raw || '').trim();
+    if (!v) return;
+    try {
+      const res = await axios.get('/api/scale-tickets/jobs/' + encodeURIComponent(v));
+      const j = res.data.job;
+      if (j.blocking) { jobErr(j.blocking); return; }
+      armedJob = Object.assign({}, j, { allow_repeat: false, armed_at: Date.now() });
+      jobSave(); renderJobPanel();
+      document.getElementById('sh-job-input').value = '';
+    } catch (e) {
+      jobErr((e.response && e.response.data && e.response.data.error) || 'Could not look that job up');
+    }
+  }
+  function clearArmedJob() { armedJob = null; jobSave(); renderJobPanel(); }
+  function setJobRepeat(on) { if (armedJob) { armedJob.allow_repeat = !!on; jobSave(); } }
+
+  function renderJobPanel() {
+    const box = document.getElementById('sh-job-armed');
+    const form = document.getElementById('sh-job-form');
+    if (!box || !form) return;
+    if (!armedJob) {
+      box.style.display = 'none'; box.innerHTML = '';
+      form.style.display = 'flex';
+      document.getElementById('sh-job-incoming').style.display = '';
+      return;
+    }
+    const j = armedJob;
+    form.style.display = 'none';
+    document.getElementById('sh-job-incoming').style.display = 'none';
+    box.style.display = 'block';
+    box.innerHTML = '<div class="rounded-xl border-2 border-rc-green bg-green-50 p-3">'
+      + '<div class="flex items-start justify-between gap-2">'
+        + '<div class="min-w-0"><div class="text-xs font-bold text-rc-green uppercase tracking-wide">Next weigh-in · ' + escHtml(j.label) + '</div>'
+        + '<div class="font-bold text-gray-900 truncate">' + escHtml(j.company_name || '') + '</div></div>'
+        + '<button type="button" class="text-gray-400 hover:text-gray-700" onclick="clearArmedJob()" aria-label="Clear job"><i class="fas fa-times"></i></button>'
+      + '</div>'
+      + '<ul class="mt-1 text-xs text-gray-700 space-y-0.5">' + jobFacts(j).map(function (f) { return '<li>' + escHtml(f) + '</li>'; }).join('') + '</ul>'
+      + (j.warning ? '<div class="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1"><i class="fas fa-triangle-exclamation mr-1"></i>' + escHtml(j.warning) + '</div>' : '')
+      + (j.repeat ? '<label class="mt-2 flex items-start gap-2 text-xs text-red-800 bg-red-50 border border-red-200 rounded-lg px-2 py-1"><input type="checkbox" class="mt-0.5" ' + (j.allow_repeat ? 'checked' : '') + ' onchange="setJobRepeat(this.checked)"><span>' + escHtml(j.repeat) + ' Tick to put it on another ticket anyway.</span></label>' : '')
+      + '<div class="mt-2 text-[11px] text-gray-500">The next ticket opened goes to this job. Then capture the weight as usual.</div>'
+      + '</div>';
+  }
+
+  async function loadIncomingJobs() {
+    const box = document.getElementById('sh-job-incoming');
+    if (!box || document.hidden) return;
+    try {
+      const res = await axios.get('/api/scale-tickets/jobs/incoming');
+      const jobs = res.data.jobs || [];
+      box.innerHTML = jobs.length
+        ? '<div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Coming in · tap to use</div><div class="space-y-1">'
+          + jobs.slice(0, 6).map(function (j) {
+              return '<button type="button" class="w-full text-left px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-rc-green hover:bg-green-50 text-xs" onclick="findJob(&quot;' + j.job_number + '&quot;)">'
+                + '<span class="font-bold text-gray-900 tabular-nums">' + escHtml(j.label) + '</span> · ' + escHtml(j.company_name || '')
+                + '<span class="block text-gray-500">' + escHtml([j.driver_name, j.status === 'completed' ? 'done' : 'still on site', j.tire_count != null ? j.tire_count + ' tires' : ''].filter(Boolean).join(' · ')) + '</span></button>';
+            }).join('') + '</div>'
+        : '<div class="text-[11px] text-gray-400">No completed pickups waiting to be weighed.</div>';
+    } catch (e) {}
+  }
+
+  // print-trigger with the armed job. interactive = an operator is at the
+  // screen and can answer "use this job again?"; the agent is not, so if the
+  // job is refused it opens the ticket without one and leaves the job armed
+  // (the operator adds it with "Add job #").
+  async function jobAwareTrigger(body, interactive) {
+    if (!armedJob) return axios.post('/api/scale-tickets/print-trigger', body);
+    try {
+      return await axios.post('/api/scale-tickets/print-trigger', Object.assign({}, body, { job_number: armedJob.job_number, allow_repeat: !!armedJob.allow_repeat }));
+    } catch (e) {
+      const d = (e.response && e.response.data) || {};
+      if (!d.code || String(d.code).indexOf('job_') !== 0) throw e;
+      if (interactive && d.code === 'job_repeat' && confirm(d.error)) {
+        armedJob.allow_repeat = true; jobSave();
+        return axios.post('/api/scale-tickets/print-trigger', Object.assign({}, body, { job_number: armedJob.job_number, allow_repeat: true }));
+      }
+      if (interactive) { jobErr(d.error); throw Object.assign(new Error(d.error), { handled: true, response: e.response }); }
+      try { agentLog('job ' + armedJob.label + ' refused (' + d.error + ') -- opened the ticket without it'); } catch (x) {}
+      return axios.post('/api/scale-tickets/print-trigger', body);
+    }
+  }
+  function jobConsumed(data) {
+    try { agentLog(data.ticket_number + ' opened for ' + data.job.label + ' · ' + (data.job.company_name || '')); } catch (e) {}
+    armedJob = null; jobSave(); renderJobPanel(); loadIncomingJobs();
+  }
+
+  // Put a job on a ticket that is already open (driver forgot to say it, or
+  // Auto mode weighed the truck in first). Returns true when attached.
+  async function attachJob(ticketId, ticketNum, raw, allowRepeat) {
+    try {
+      const res = await axios.post('/api/scale-tickets/' + ticketId + '/job', { job_number: raw, allow_repeat: !!allowRepeat });
+      logSerial('>>> ' + ticketNum + ' -> job ' + res.data.job.label + ' (' + (res.data.job.company_name || '') + ')');
+      return true;
+    } catch (e) {
+      const d = (e.response && e.response.data) || {};
+      if (d.code === 'job_repeat' && confirm(d.error)) return attachJob(ticketId, ticketNum, raw, true);
+      if (d.code !== 'job_repeat') alert(d.error || 'Could not add the job');
+      return false;
+    }
+  }
+  async function addJobToTicket(ticketId, ticketNum) {
+    const raw = prompt('Job number for ' + ticketNum + ' (the driver gives it, e.g. 1042):', armedJob ? String(armedJob.job_number) : '');
+    if (!raw || !raw.trim()) return;
+    if (await attachJob(ticketId, ticketNum, raw.trim(), false)) {
+      if (armedJob && String(armedJob.job_number) === raw.trim().replace(/[^0-9]/g, '')) clearArmedJob();
+      loadOpenTickets(); loadIncomingJobs();
+    }
+  }
+
   async function createTicketFromPrint() {
     const weight = lastPrintWeight;
     if (!weight || weight <= 0) { alert('No valid weight'); return; }
     dismissPrintCard(); showLoading('Creating ticket...');
     try {
       const photo = lastCapturedPhoto || null;
-      const res = await axios.post('/api/scale-tickets/print-trigger', { weight, photo, test_offset_kg: takeTestLoad() });
-      logSerial('>>> Ticket: ' + res.data.ticket_number + ' @ ' + weight + ' kg');
-      openAssignModal(res.data.id, res.data.ticket_number, weight);
+      const res = await jobAwareTrigger({ weight, photo, test_offset_kg: takeTestLoad() }, true);
+      if (!res) return;
+      logSerial('>>> Ticket: ' + res.data.ticket_number + ' @ ' + weight + ' kg' + (res.data.job ? ' for job ' + res.data.job.label : ''));
+      // A job ticket already knows its customer, so there is nothing to assign.
+      if (res.data.job) jobConsumed(res.data);
+      else openAssignModal(res.data.id, res.data.ticket_number, weight);
       loadOpenTickets(); loadStats();
     } catch(err) { alert(err.response?.data?.error || 'Failed'); }
     finally { hideLoading(); }
@@ -5046,7 +5218,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     let done = false;
     try {
       if (d.action === 'new') {
-        const res = await axios.post('/api/scale-tickets/print-trigger', {
+        const res = await jobAwareTrigger({
           weight: p.weight,
           photo: p.photo || null,
           material: (agentSettings && agentSettings.material) || 'mixed',
@@ -5055,7 +5227,8 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
           plate_confidence: (p.plate && p.plate.confidence) || 0,
           appearance: (p.plate && p.plate.appearance) || null,
           test_offset_kg: takeTestLoad()
-        });
+        }, false);
+        if (res.data.job) jobConsumed(res.data);
         agentLog('opened ' + res.data.ticket_number + ' at ' + p.weight.toFixed(1) + ' kg'
                  + (p.plate && p.plate.plate ? ' for plate ' + p.plate.plate
                     : (p.plate && p.plate.vehicle ? ' for a ' + p.plate.vehicle : '')));
@@ -5245,10 +5418,12 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
             + '<div class="flex items-center gap-2 flex-wrap"><span class="font-semibold text-sm truncate">' + (isUn ? 'Unknown — live ticket' : escHtml(t.company_name)) + '</span>'
               + (isUn ? '<span class="sh-pill sh-pill-need">Needs customer</span>' : '<span class="sh-pill sh-pill-yard">In yard</span>')
               + ticketKindChip(t) + '</div>'
+            + (t.job_number ? '<div class="mt-1"><span class="sh-pill" style="background:#e8f5e9;color:#1B5E20;font-weight:700;">Job J-' + t.job_number + '</span> <span class="text-xs text-gray-500">' + escHtml([t.origin_city, t.origin_zone ? 'Zone ' + t.origin_zone : 'no zone', t.origin_tire_count != null ? t.origin_tire_count + (t.origin_tire_count_estimated ? ' tires (est.)' : ' tires') : ''].filter(Boolean).join(' · ')) + '</span></div>' : '')
             + '<div class="text-xs text-gray-500 mt-0.5">' + escHtml(t.ticket_number) + ' · ' + escHtml(getMaterialLabel(t.tire_type)) + '</div>'
             + '<div class="text-xs text-gray-500"><span class="font-semibold text-gray-700">' + vehicle + '</span> · Arrived ' + arrived + (t.driver_display_name ? ' · ' + escHtml(t.driver_display_name) : '') + '</div>'
             + '<div class="flex items-center gap-2 mt-2 flex-wrap">'
               + '<button type="button" class="sh-btn" onclick="openAssignModal(' + t.id + ',&quot;' + safeNum + '&quot;,' + (Number(t.weight_in) || 0) + ')">' + (isUn ? '<i class="fas fa-plus"></i> Assign customer' : 'Edit details') + '</button>'
+              + (t.job_number ? '' : '<button type="button" class="sh-btn" onclick="addJobToTicket(' + t.id + ',&quot;' + safeNum + '&quot;)"><i class="fas fa-hashtag"></i> Add job #</button>')
               + '<button type="button" class="sh-btn sh-btn-primary" onclick="connectToTruckOnScale(' + t.id + ')">Weigh out →</button>'
               + '<div class="sh-kind">' + ticketKindToggle(t.id, ticketKind(t)) + '</div>'
               + '<button type="button" class="sh-btn" onclick="loadTicketDetail(' + t.id + ')" aria-label="Open ticket ' + safeNum + '"><i class="fas fa-eye"></i></button>'
@@ -5667,10 +5842,13 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
   function exportHistoryCsv() {
     const rows = shHistoryFiltered();
     const cell = function (v) { const x = v === null || v === undefined ? '' : String(v); return '"' + x.replace(/"/g, '""') + '"'; };
-    const head = ['Ticket', 'Created', 'Status', 'Type', 'Customer', 'Material', 'Plate', 'Driver', 'Weight in (kg)', 'Weight out (kg)', 'Net (kg)', 'Total', 'Payment'];
+    const head = ['Ticket', 'Created', 'Status', 'Type', 'Customer', 'Material', 'Plate', 'Driver', 'Weight in (kg)', 'Weight out (kg)', 'Net (kg)', 'Total', 'Payment',
+                  'Job', 'Origin address', 'Origin city', 'Origin postal code', 'Origin zone', 'Tire type', 'Tire count', 'Count is estimate', 'Collected at'];
     const lines = [head.map(cell).join(',')].concat(rows.map(function (t) {
       return [t.ticket_number, t.created_at, t.status, ticketKind(t), shCustomerKey(t), getMaterialLabel(t.tire_type), t.vehicle_plate, t.driver_display_name,
-              t.weight_in, t.weight_out, t.net_weight, t.grand_total, t.payment_status].map(cell).join(',');
+              t.weight_in, t.weight_out, t.net_weight, t.grand_total, t.payment_status,
+              t.job_number ? 'J-' + t.job_number : '', t.origin_address, t.origin_city, t.origin_postal_code, t.origin_zone,
+              TIRE_LABEL_SHORT[t.origin_tire_type] || t.origin_tire_type, t.origin_tire_count, t.job_number ? (t.origin_tire_count_estimated ? 'yes' : 'no') : '', t.origin_collected_at].map(cell).join(',');
     }));
     const blob = new Blob([lines.join(String.fromCharCode(13, 10))], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -5796,6 +5974,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
 
       document.getElementById('detail-body').innerHTML =
         '<div class="space-y-4">' + voidInfo + photosHtml +
+        originBlock(t) +
         '<div class="bg-gray-50 rounded-xl p-4 space-y-2"><div class="flex justify-between text-sm"><span class="text-gray-500">Customer</span><span class="font-semibold">'+escHtml(t.company_name||'Walk-in')+'</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Material</span><span class="font-semibold">'+escHtml(getMaterialLabel(t.tire_type))+'</span></div><div class="flex justify-between items-center text-sm"><span class="text-gray-500">Type</span>'+(t.status !== 'voided' && !settled ? '<div class="w-56">'+ticketKindToggle(t.id, ticketKind(t))+'</div>' : ticketKindChip(t))+'</div>'+(t.payment_status === 'paid' ? '<div class="flex justify-between text-sm"><span class="text-gray-500">Payment</span><span class="font-semibold text-green-600">PAID'+(t.payment_method ? ' · '+escHtml(t.payment_method) : '')+'</span></div>' : t.payment_status === 'pending' ? '<div class="flex justify-between text-sm"><span class="text-gray-500">Payment</span><span class="font-semibold text-blue-600">On the Square Terminal</span></div>' : '')+'<div class="flex justify-between text-sm"><span class="text-gray-500">Status</span><span class="font-bold '+(t.status==='voided'?'text-red-600':'text-green-600')+'">'+escHtml((t.status||'').replace(/_/g,' ').toUpperCase())+'</span></div>'+(t.vehicle_tare_used?'<div class="flex justify-between text-sm"><span class="text-gray-500">Method</span><span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Stored Tare</span></div>':'')+'</div>' +
         '<div class="grid grid-cols-3 gap-3"><div class="bg-indigo-50 rounded-xl p-3 text-center"><div class="text-xs text-indigo-500 font-semibold">'+(pickup ? 'IN (EMPTY)' : 'GROSS')+'</div><div class="text-lg font-bold font-mono text-indigo-700">'+(t.weight_in?parseFloat(t.weight_in).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-orange-50 rounded-xl p-3 text-center"><div class="text-xs text-orange-500 font-semibold">'+(pickup ? 'OUT (LOADED)' : 'TARE')+'</div><div class="text-lg font-bold font-mono text-orange-700">'+(t.weight_out?parseFloat(t.weight_out).toLocaleString('en-CA',{minimumFractionDigits:1}):'—')+'</div></div><div class="bg-green-50 rounded-xl p-3 text-center"><div class="text-xs text-green-500 font-semibold">NET</div><div class="text-lg font-bold font-mono text-green-700">'+parseFloat(netW).toLocaleString('en-CA',{minimumFractionDigits:1})+' kg</div></div></div>' +
         (!pickup && t.status === 'completed' ? '<div class="bg-gray-50 rounded-xl p-3 text-center text-sm font-semibold text-gray-600"><i class="fas fa-circle-check mr-1 text-gray-400"></i>Drop-off · no charge</div>' : '') +
@@ -7716,6 +7895,32 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
     return bits.join(' · ');
   }
 
+  // The frozen origin of a job load, for the ticket windows.
+  function originBlock(t) {
+    if (!t.job_number) return '';
+    const line = function (l, v) { return v ? '<div class="flex justify-between gap-3 text-sm"><span class="text-gray-500 shrink-0">' + l + '</span><span class="font-semibold text-right">' + escHtml(String(v)) + '</span></div>' : ''; };
+    return '<div class="rounded-xl p-4 space-y-1.5 mb-3 border-2 border-green-200 bg-green-50/60">'
+      + '<div class="flex items-center justify-between"><span class="text-xs font-bold text-rc-green uppercase tracking-wide"><i class="fas fa-hashtag mr-1"></i>Load origin</span><span class="font-bold text-rc-green tabular-nums">J-' + t.job_number + '</span></div>'
+      + line('From', t.origin_company)
+      + line('Address', [t.origin_address, t.origin_city, t.origin_province, t.origin_postal_code].filter(Boolean).join(', '))
+      + line('Zone', t.origin_zone ? 'Zone ' + t.origin_zone : 'Not set on the customer')
+      + line('Tires', t.origin_tire_count != null ? t.origin_tire_count + ' ' + (TIRE_LABEL_SHORT[t.origin_tire_type] || t.origin_tire_type || '') + (t.origin_tire_count_estimated ? ' (customer estimate)' : ' (driver count)') : '')
+      + line('Collected', t.origin_collected_at ? new Date(String(t.origin_collected_at).replace(' ', 'T') + 'Z').toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : 'Not marked complete')
+      + line('Driver', t.origin_driver)
+      + '</div>';
+  }
+
+  // Where a job load came from, as receipt lines (ARMA). Frozen on the ticket
+  // at weigh-in; empty for loads that were not a pickup job.
+  function receiptOriginLines(r) {
+    if (!r.job_number) return [];
+    return [
+      [r.address, r.city].filter(Boolean).join(', '),
+      [r.origin_zone ? 'Zone ' + r.origin_zone : 'Zone not set', r.origin_tire_count != null ? r.origin_tire_count + ' tires' + (r.origin_tire_count_estimated ? ' (est.)' : '') : ''].filter(Boolean).join(' · '),
+      r.origin_driver ? 'Collected by ' + r.origin_driver : '',
+    ].filter(Boolean);
+  }
+
   function browserPrintReceipt(r) {
     const netW = parseFloat(r.net_weight) || 0;
     const pickup = receiptIsPickup(r);
@@ -7739,7 +7944,9 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       '<div class="print-center print-bold" style="font-size:11px">' + (pickup ? 'PICKUP' : 'DROP-OFF') + '</div>' +
       '<div class="print-divider"></div>' +
       row('Date', dateStr) +
-      row('Customer', r.customer || 'Walk-in') +
+      (r.job_number ? rowB('Job', escHtml(r.job_number)) : '') +
+      row(r.job_number ? 'From' : 'Customer', escHtml(r.customer || 'Walk-in')) +
+      receiptOriginLines(r).map(function (l) { return '<div style="text-align:right;font-size:10px">' + escHtml(l) + '</div>'; }).join('') +
       row('Material', getMaterialLabel(r.material)) +
       (receiptVehicleText(r) ? row('Vehicle', receiptVehicleText(r)) : '') +
       '<div class="print-divider"></div>' +
@@ -7873,6 +8080,7 @@ export function renderScaleHouse(buildId: string = 'dev'): string {
       startStaleWatchdog();
       startRemoteScaleView();
       startStationLoop();
+      jobRestore(); loadIncomingJobs(); setInterval(loadIncomingJobs, 30000);
       // Reveal price-management button only to roles permitted by the backend
       // (mirrors roleRequired('admin','manager') on POST/DELETE /api/pricing).
       if (['admin','manager'].includes(currentUserRole)) {

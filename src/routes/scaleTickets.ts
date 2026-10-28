@@ -7,6 +7,7 @@ import { parseTicketType, ticketTypeOf, ticketNet, pickupRate, priceTicket } fro
 import { todayEdmonton } from '../utils/date'
 import { hashPassword } from '../utils/passwords'
 import { normalizeAppearance } from './scaleAgent'
+import { parseJobNumber, formatJobNumber, loadJob, jobProblems, jobSnapshot, jobPreview, jobMaterial } from '../utils/jobs'
 
 type Bindings = { DB: D1Database }
 
@@ -93,6 +94,77 @@ async function auditLog(db: D1Database, ticketId: number, action: string, employ
 // ═══════════════════════════════════════
 
 // List all scale tickets with filters
+// ── Pickup jobs ──────────────────────────────────────────────────────────
+// A job number links a ticket to the pickup it came from and freezes the
+// load's origin onto the ticket (ARMA). Resolving it is the same for every
+// entry point, so it lives here once.
+type JobResolution = { job: any } | { error: string; code: string; status: number; job?: any }
+
+async function resolveJob(db: D1Database, raw: unknown, allowRepeat: boolean, ignoreTicketId?: number): Promise<JobResolution> {
+  const n = parseJobNumber(raw)
+  if (!n) return { error: 'That is not a job number. Job numbers look like J-1042.', code: 'job_invalid', status: 400 }
+  const job = await loadJob(db, n)
+  if (!job) return { error: 'No pickup has job number ' + formatJobNumber(n) + '.', code: 'job_not_found', status: 404 }
+  const p = jobProblems(job, ignoreTicketId)
+  if (p.blocking) return { error: p.blocking, code: 'job_blocked', status: 409, job: jobPreview(job) }
+  if (p.repeat && !allowRepeat) return { error: p.repeat + ' One job is one load. Confirm to use it again.', code: 'job_repeat', status: 409, job: jobPreview(job) }
+  return { job }
+}
+
+// Write the origin snapshot onto a ticket. The driver fields are only filled
+// when empty so an operator-typed driver is never overwritten.
+async function applyJobToTicket(db: D1Database, ticketId: number, job: any, employeeId: number, source: string) {
+  const snap = jobSnapshot(job)
+  const cols = Object.keys(snap)
+  await db.prepare(
+    `UPDATE scale_tickets SET ${cols.map((k) => k + ' = ?').join(', ')},
+       driver_name = COALESCE(NULLIF(driver_name, ''), ?),
+       driver_phone = COALESCE(NULLIF(driver_phone, ''), ?),
+       updated_at = datetime('now')
+     WHERE id = ?`
+  ).bind(...cols.map((k) => snap[k]), job.driver_name || null, job.driver_phone || null, ticketId).run()
+  await auditLog(db, ticketId, 'job_attached', employeeId, {
+    job_number: job.job_number, pickup_request_id: job.id, customer_id: job.customer_id,
+    origin_zone: snap.origin_zone, origin_tire_count: snap.origin_tire_count,
+    tire_count_estimated: !!snap.origin_tire_count_estimated, source,
+  })
+}
+
+// Completed (or still in progress) jobs that have no live ticket yet: the
+// trucks the scale house should expect. Newest first, last 7 days.
+scaleTicketRoutes.get('/jobs/incoming', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT pr.job_number FROM pickup_requests pr
+       WHERE pr.status IN ('in_progress', 'completed') AND pr.job_number IS NOT NULL
+         AND COALESCE(pr.completed_at, pr.updated_at) > datetime('now', '-7 days')
+         AND NOT EXISTS (SELECT 1 FROM scale_tickets st WHERE st.pickup_request_id = pr.id AND st.status != 'voided')
+       ORDER BY (pr.status = 'completed') DESC, COALESCE(pr.completed_at, pr.updated_at) DESC LIMIT 20`
+    ).all()
+    const jobs = []
+    for (const r of results as any[]) {
+      const j = await loadJob(c.env.DB, r.job_number)
+      if (j) jobs.push(jobPreview(j))
+    }
+    return c.json({ jobs })
+  } catch (err: any) {
+    console.error('scaleTickets jobs error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
+// Look a job up before the truck pulls on, so the operator sees who it is.
+scaleTicketRoutes.get('/jobs/:number', async (c) => {
+  try {
+    const n = parseJobNumber(c.req.param('number'))
+    if (!n) return c.json({ error: 'That is not a job number. Job numbers look like J-1042.', code: 'job_invalid' }, 400)
+    const job = await loadJob(c.env.DB, n)
+    if (!job) return c.json({ error: 'No pickup has job number ' + formatJobNumber(n) + '.', code: 'job_not_found' }, 404)
+    return c.json({ job: jobPreview(job) })
+  } catch (err: any) {
+    console.error('scaleTickets jobs error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 scaleTicketRoutes.get('/', async (c) => {
   try {
     const status = c.req.query('status')
@@ -149,9 +221,17 @@ scaleTicketRoutes.get('/', async (c) => {
       // Plate included deliberately: once the camera reads them, "which ticket
       // was that truck" is the question an operator actually has, and the
       // ticket number is the one thing they do not have in front of them.
-      sql += ' AND (st.ticket_number LIKE ? OR c.company_name LIKE ? OR st.vehicle_plate LIKE ?)'
-      params.push('%' + search + '%', '%' + search + '%', '%' + search + '%')
+      // A job number ("J-1042" or "1042") matches that job exactly, as well as
+      // the usual partial matches.
+      const jn = parseJobNumber(search)
+      sql += ' AND (st.ticket_number LIKE ? OR c.company_name LIKE ? OR st.vehicle_plate LIKE ? OR st.origin_company LIKE ? OR st.job_number = ?)'
+      params.push('%' + search + '%', '%' + search + '%', '%' + search + '%', '%' + search + '%', jn ?? -1)
     }
+    const zone = c.req.query('zone')
+    if (zone === 'none') sql += ' AND st.origin_zone IS NULL'
+    else if (zone && ['1', '2', '3'].includes(zone)) { sql += ' AND st.origin_zone = ?'; params.push(Number(zone)) }
+    if (c.req.query('job') === 'with') sql += ' AND st.job_number IS NOT NULL'
+    else if (c.req.query('job') === 'without') sql += ' AND st.job_number IS NULL'
     if (material) {
       sql += ' AND st.tire_type = ?'
       params.push(material)
@@ -395,11 +475,23 @@ scaleTicketRoutes.post('/field', async (c) => {
 // Quick-create ticket from scale PRINT trigger (weight-in only, no customer yet)
 scaleTicketRoutes.post('/print-trigger', async (c) => {
   try {
-    const { weight, photo, material, source, plate, plate_confidence, appearance, test_offset_kg, ticket_type } = await c.req.json()
+    const { weight, photo, material, source, plate, plate_confidence, appearance, test_offset_kg, ticket_type, job_number, allow_repeat } = await c.req.json()
     if (!weight || weight <= 0) return c.json({ error: 'Valid weight required' }, 400)
+
+    // A job number from the pickup the driver just completed. Resolved before
+    // anything is written so a bad number fails cleanly instead of leaving a
+    // half-made ticket. A job load is our own truck bringing tires IN, which is
+    // a drop-off -- never the billed "Pickup" ticket type, whatever was asked.
+    let job: any = null
+    if (job_number !== undefined && job_number !== null && String(job_number).trim() !== '') {
+      const r = await resolveJob(c.env.DB, job_number, !!allow_repeat)
+      if ('error' in r) return c.json({ error: r.error, code: r.code, job: r.job }, r.status as any)
+      job = r.job
+    }
+
     // Drop-off unless the operator says otherwise: the agent never knows, and
     // a drop-off is never billed, so the default can't charge anybody.
-    const type = ticketTypeOf(ticket_type)
+    const type = job ? 'dropoff' : ticketTypeOf(ticket_type)
 
     // Simulated load, for proving the loop end to end when there is no real
     // load to drop. This writes a weight the scale never reported, so it is
@@ -443,6 +535,8 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
       if (!known) return c.json({ error: `Unknown or inactive material: ${material}` }, 400)
       tireType = material.trim()
     }
+    // The job knows what tires were collected; that beats the station default.
+    if (job) tireType = (await jobMaterial(c.env.DB, job.tire_type)) || tireType
     if (type === 'pickup' && (await pickupRate(c.env.DB, tireType)) === null) {
       return c.json({ error: `No pickup price is set for ${tireType}. Set one under Pickup Prices first.` }, 400)
     }
@@ -459,14 +553,17 @@ scaleTicketRoutes.post('/print-trigger', async (c) => {
       weight: recordedWeight, has_photo: !!photo, material: tireType, ticket_type: type,
       source: source === 'agent' ? 'agent' : 'operator',
       ...(offset ? { test_offset_kg: offset, actual_scale_weight: actualWeight } : {}),
+      ...(job ? { job_number: job.job_number } : {}),
     })
+    if (job) await applyJobToTicket(c.env.DB, ticketId, job, employeeId, source === 'agent' ? 'agent' : 'operator')
 
     return c.json({
       success: true,
       id: ticketId,
       ticket_number: ticketNumber,
       weight_in: weight,
-      weight_in_at: now
+      weight_in_at: now,
+      job: job ? jobPreview(job) : null,
     })
   } catch (err: any) {
     console.error('scaleTickets error:', err); return c.json({ error: 'Server error' }, 500)
@@ -800,6 +897,32 @@ scaleTicketRoutes.post('/:id/finalize', async (c) => {
 })
 
 // Update ticket customer/material (used after print-trigger creates a blank ticket)
+// Put a job on a ticket that was opened without one (the driver forgot to
+// say it, or Auto mode weighed the truck in first).
+scaleTicketRoutes.post('/:id/job', async (c) => {
+  try {
+    const id = Number(c.req.param('id'))
+    const { job_number, allow_repeat } = await c.req.json()
+    const t = await c.env.DB.prepare('SELECT id, status, ticket_type, job_number FROM scale_tickets WHERE id = ?').bind(id).first<any>()
+    if (!t) return c.json({ error: 'Ticket not found' }, 404)
+    if (t.status === 'voided') return c.json({ error: 'This ticket is voided.' }, 409)
+    if (ticketTypeOf(t.ticket_type) === 'pickup') {
+      return c.json({ error: 'This ticket is marked Pickup (a customer buying material). Switch it to Drop-off before adding a job.' }, 409)
+    }
+    const r = await resolveJob(c.env.DB, job_number, !!allow_repeat, id)
+    if ('error' in r) return c.json({ error: r.error, code: r.code, job: r.job }, r.status as any)
+    const employeeId = c.get('userId')
+    if (t.status === 'weighed_in') {
+      const m = await jobMaterial(c.env.DB, r.job.tire_type)
+      if (m) await c.env.DB.prepare('UPDATE scale_tickets SET tire_type = ? WHERE id = ?').bind(m, id).run()
+    }
+    await applyJobToTicket(c.env.DB, id, r.job, employeeId, t.job_number ? 'replaced ' + formatJobNumber(t.job_number) : 'attached later')
+    return c.json({ success: true, job: jobPreview(r.job) })
+  } catch (err: any) {
+    console.error('scaleTickets job attach error:', err); return c.json({ error: 'Server error' }, 500)
+  }
+})
+
 scaleTicketRoutes.post('/:id/assign', async (c) => {
   const id = c.req.param('id')
   try {
@@ -1097,10 +1220,17 @@ scaleTicketRoutes.get('/:id/receipt', async (c) => {
         location: 'Alberta, Canada',
         ticket_number: ticket.ticket_number,
         date: ticket.created_at,
-        customer: ticket.company_name || 'Walk-in',
-        contact: ticket.contact_name,
-        address: ticket.address,
-        city: ticket.city,
+        // A job ticket prints the origin frozen at weigh-in, not whatever the
+        // customer profile says today -- the receipt is the load's record.
+        customer: ticket.origin_company || ticket.company_name || 'Walk-in',
+        contact: ticket.origin_contact || ticket.contact_name,
+        address: ticket.job_number ? ticket.origin_address : ticket.address,
+        city: ticket.job_number ? [ticket.origin_city, ticket.origin_province, ticket.origin_postal_code].filter(Boolean).join(' ') : ticket.city,
+        job_number: ticket.job_number ? formatJobNumber(ticket.job_number as number) : null,
+        origin_zone: ticket.origin_zone,
+        origin_tire_count: ticket.origin_tire_count,
+        origin_tire_count_estimated: !!ticket.origin_tire_count_estimated,
+        origin_driver: ticket.origin_driver,
         material: ticket.tire_type,
         ticket_type: ticketTypeOf(ticket.ticket_type),
         weight_in: ticket.weight_in,
