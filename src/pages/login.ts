@@ -9,17 +9,6 @@ export function renderLogin(): string {
     </div>
     
     <div class="relative z-10 w-full max-w-md">
-      <!-- Roof Measurement Report promo banner -->
-      <div class="mb-6 flex items-center gap-3 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 backdrop-blur-sm border border-white/20 text-white/90 transition-all">
-        <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-rc-orange/90 flex items-center justify-center shadow-sm">
-          <i class="fas fa-house-chimney text-white text-sm"></i>
-        </div>
-        <div class="flex-1 min-w-0 leading-tight">
-          <p class="text-sm font-semibold">Roof Measurement Reports</p>
-          <p class="text-xs text-white/70">Accurate, contractor-ready &mdash; from <span class="font-semibold text-white">$5.95</span> per report.</p>
-        </div>
-      </div>
-
       <!-- Logo & Header -->
       <div class="text-center mb-8">
         <div class="inline-flex items-center justify-center w-20 h-20 bg-white rounded-2xl shadow-lg mb-4">

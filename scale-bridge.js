@@ -912,7 +912,10 @@ server.listen(HTTP_PORT, '127.0.0.1', () => {
   console.log(`║  Listening: http://localhost:${HTTP_PORT}                  ║`);
   console.log(`╚════════════════════════════════════════════════════╝`);
   console.log(`Available serial ports: ${listPorts().join(', ') || '(none)'}`);
-  startReading();
+  // Bluetooth is owned by Chrome on many stations. Camera/printer-only
+  // installs must not also open its SPP serial port. /reconfigure can still
+  // explicitly start serial reading when the operator chooses Bridge.
+  if (process.env.BRIDGE_SERIAL !== '0') startReading();
 });
 
 process.on('SIGINT',  () => { console.log('\n[bridge] shutting down'); closeStream(); process.exit(0); });
